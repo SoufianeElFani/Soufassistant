@@ -6,7 +6,7 @@ import { S } from './state.js';
 import { appendLimitNotice, hideAcBanner, refreshBgTasksStrip, showAcBanner } from './banners.js';
 import { clearScreen } from './commands.js';
 import { setStatus, updateSendBtn } from './composer.js';
-import { closePermission, dropDialog, pendingPerm, showPermissionPrompt, showUserDialog } from './dialogs.js';
+import { closePermission, dropDialog, showPermissionPrompt, showUserDialog } from './dialogs.js';
 import { autoContinueToggle, loginBtn, loginCodeForm, loginCodeInput, loginDesc, loginScreen, loginTitle, loginUrlEl, loginUrlSect, loginWaiting, modelSelect, permModeSelect, sessionsPanel, wsUrl } from './dom.js';
 import { relinkRenderedBubbles } from './links.js';
 import { applyModelCatalog, ensureModelOption, updateCtxHint } from './model.js';
@@ -206,9 +206,13 @@ export function handleServerMessage(msg) {
       break;
 
     case 'permission_resolved':
-      // The server auto-approved this pending prompt (the user switched the mode
-      // to Bypass/Accept edits mid-run) — just dismiss the card.
-      if (pendingPerm && pendingPerm.id === msg.id) closePermission();
+      // The server resolved this prompt without this tab's input: the mode was
+      // switched to Bypass/Accept edits mid-run, it was answered on another
+      // tab, or the run itself ended. closePermission() drops it from the
+      // queue whether or not it was the one currently on screen — a prompt
+      // queued behind another, resolved before its turn ever came, must not
+      // pop up stale once it would have been shown.
+      closePermission(msg.id);
       break;
 
     case 'result':

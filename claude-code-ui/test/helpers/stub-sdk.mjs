@@ -126,6 +126,35 @@ async function firstPromptMessage(prompt) {
   return { text: typeof c === 'string' ? c : JSON.stringify(c), it };
 }
 
+/** Run hooks then canUseTool for one scripted tool, and return its tool_result
+ *  event. Hooks first — a deny short-circuits the tool before canUseTool,
+ *  which is exactly why the /addon_configs guard is a hook and not canUseTool. */
+async function decideTool(t, id, options, signal) {
+  const hookResult = await runPreToolUseHooks(options, t.name, t.input || {}, id, signal);
+  let outcome;
+  if (hookResult.denied) {
+    outcome = { behavior: 'deny', message: hookResult.reason, via: 'hook' };
+  } else if (typeof options.canUseTool === 'function') {
+    const decision = await options.canUseTool(t.name, t.input || {}, {
+      signal: signal || new AbortController().signal,
+      suggestions: t.suggestions || [],
+      title: t.title,
+      description: t.description,
+    });
+    outcome = { ...decision, via: 'canUseTool' };
+  } else {
+    outcome = { behavior: 'allow', via: 'none' };
+  }
+  record({ kind: 'tool_decision', tool: t.name, id, outcome });
+
+  const denied = outcome.behavior === 'deny';
+  const output = denied ? (outcome.message || 'Denied') : (t.output ?? `${t.name} ran`);
+  return {
+    type: 'user',
+    message: { content: [{ type: 'tool_result', tool_use_id: id, content: output, is_error: denied || !!t.isError }] },
+  };
+}
+
 // `query()` stays synchronous — like the real SDK, it returns the iterator
 // object immediately; nothing here awaits before that return.
 export function query({ prompt, options = {} }) {
@@ -180,32 +209,24 @@ export function query({ prompt, options = {} }) {
         const t = step.tool;
         const id = t.id || `toolu_${Math.random().toString(36).slice(2, 10)}`;
         yield { type: 'assistant', message: { content: [{ type: 'tool_use', id, name: t.name, input: t.input || {} }] } };
+        yield await decideTool(t, id, options, signal);
 
-        // Hooks first — a deny short-circuits the tool before canUseTool, which
-        // is exactly why the /addon_configs guard is a hook and not canUseTool.
-        const hookResult = await runPreToolUseHooks(options, t.name, t.input || {}, id, signal);
-        let outcome;
-        if (hookResult.denied) {
-          outcome = { behavior: 'deny', message: hookResult.reason, via: 'hook' };
-        } else if (typeof options.canUseTool === 'function') {
-          const decision = await options.canUseTool(t.name, t.input || {}, {
-            signal: signal || new AbortController().signal,
-            suggestions: t.suggestions || [],
-            title: t.title,
-            description: t.description,
-          });
-          outcome = { ...decision, via: 'canUseTool' };
-        } else {
-          outcome = { behavior: 'allow', via: 'none' };
+      } else if (step.concurrentTools) {
+        // Two (or more) tool calls genuinely pending at once — a real turn can
+        // emit several tool_use blocks together, and the SDK does not wait for
+        // one's canUseTool to resolve before another's starts (confirmed live:
+        // a background subagent's own tool call can be mid-ask while the
+        // foreground turn is doing something else entirely). `step.tool`
+        // above cannot reproduce this — it awaits each decision in turn — so
+        // this exists specifically to exercise a client showing more than one
+        // pending permission request at the same time.
+        const withId = step.concurrentTools.map((t) =>
+          ({ t, id: t.id || `toolu_${Math.random().toString(36).slice(2, 10)}` }));
+        for (const { t, id } of withId) {
+          yield { type: 'assistant', message: { content: [{ type: 'tool_use', id, name: t.name, input: t.input || {} }] } };
         }
-        record({ kind: 'tool_decision', tool: t.name, id, outcome });
-
-        const denied = outcome.behavior === 'deny';
-        const output = denied ? (outcome.message || 'Denied') : (t.output ?? `${t.name} ran`);
-        yield {
-          type: 'user',
-          message: { content: [{ type: 'tool_result', tool_use_id: id, content: output, is_error: denied || !!t.isError }] },
-        };
+        const results = await Promise.all(withId.map(({ t, id }) => decideTool(t, id, options, signal)));
+        for (const r of results) yield r;
       }
     }
 

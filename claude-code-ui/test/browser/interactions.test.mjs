@@ -565,3 +565,53 @@ describe('the background-task strip during a live run', { skip }, () => {
 
   test('with a clean console', () => assert.deepEqual(errors, []));
 });
+
+describe('two permission prompts pending at once', { skip }, () => {
+  let h, browser, page, errors;
+  before(async () => {
+    h = await startServer({
+      scenario: {
+        runs: [{
+          steps: [{ concurrentTools: [
+            { name: 'Bash', input: { command: 'one' }, id: 'tool-a', output: 'ok' },
+            { name: 'Bash', input: { command: 'two' }, id: 'tool-b', output: 'ok' },
+          ] }],
+        }],
+      },
+    });
+    ({ browser, page, errors } = await launch(h));
+    await page.type('#prompt-input', 'do both');
+    await page.click('#send-btn');
+  });
+  after(async () => { if (browser) await browser.close(); if (h) await h.stop(); });
+
+  test('only one card shows at a time, and the strip counts both', async () => {
+    await page.waitForSelector('#permission-overlay:not(.hidden)', { timeout: 5000 });
+    const firstInput = await page.$eval('#perm-input', (el) => el.textContent);
+
+    // Set the first aside (without answering it) to see the strip: the second
+    // is queued, not shown, and both are reflected in the count rather than
+    // one overwriting the other or going unmentioned.
+    await page.click('#perm-later');
+    await page.waitForSelector('#question-strip:not(.hidden)', { timeout: 5000 });
+    assert.match(await page.$eval('#question-strip-text', (el) => el.textContent), /2/);
+
+    // Answer is the same card, not whichever is next — "later" doesn't let
+    // the second jump the queue.
+    await page.click('#question-strip-open');
+    assert.equal(await page.$eval('#perm-input', (el) => el.textContent), firstInput);
+
+    // Answering the first brings the second up on its own.
+    await page.click('#perm-allow');
+    await page.waitForFunction(
+      (prev) => document.getElementById('perm-input').textContent !== prev,
+      { timeout: 5000 }, firstInput);
+    assert.equal(await page.$eval('#permission-overlay', (el) => el.classList.contains('hidden')), false,
+      'the second prompt opened in its place');
+
+    await page.click('#perm-allow');
+    await page.waitForSelector('#permission-overlay.hidden', { timeout: 5000 });
+  });
+
+  test('with a clean console', () => assert.deepEqual(errors, []));
+});

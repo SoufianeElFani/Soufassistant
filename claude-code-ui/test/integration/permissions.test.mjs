@@ -254,6 +254,47 @@ describe('two tabs open on the same prompt', () => {
   });
 });
 
+describe('two tool calls needing permission at once', () => {
+  let h;
+  before(async () => {
+    // A single assistant turn making two tool calls together — the SDK does
+    // not wait for one's canUseTool to resolve before the other's starts (see
+    // stub-sdk.mjs's concurrentTools), the same as a main agent and a
+    // background subagent each asking independently.
+    h = await startServer({
+      scenario: {
+        runs: [{
+          steps: [{ concurrentTools: [
+            bashTool({ id: 'tool-a', input: { command: 'one' } }),
+            bashTool({ id: 'tool-b', input: { command: 'two' } }),
+          ] }],
+        }],
+      },
+    });
+  });
+  after(async () => { await h.stop(); });
+
+  test('both reach the wire as independent requests, and both get answered', async () => {
+    const c = await h.connect();
+    await c.waitFor('history');
+    c.send({ type: 'prompt', text: 'do both', permissionMode: 'ask' });
+
+    // permission_request's own `id` is a server-generated UUID for the prompt,
+    // not the tool_use block's id — match on the input each was raised for.
+    await c.waitFor(() => c.all('permission_request').length === 2);
+    const [reqA, reqB] = c.all('permission_request');
+    assert.notEqual(reqA.id, reqB.id, 'two independent prompts, not one reused');
+
+    c.send({ type: 'permission_response', id: reqA.id, decision: reqA.input.command === 'one' ? 'allow' : 'deny' });
+    c.send({ type: 'permission_response', id: reqB.id, decision: reqB.input.command === 'one' ? 'allow' : 'deny' });
+
+    const decisionA = await h.waitForRecord((r) => r.kind === 'tool_decision' && r.id === 'tool-a');
+    const decisionB = await h.waitForRecord((r) => r.kind === 'tool_decision' && r.id === 'tool-b');
+    assert.equal(decisionA.outcome.behavior, 'allow');
+    assert.equal(decisionB.outcome.behavior, 'deny');
+  });
+});
+
 describe('a tool prompt with nobody connected at all', () => {
   let h;
   before(async () => {

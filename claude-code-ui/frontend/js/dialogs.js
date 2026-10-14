@@ -21,14 +21,14 @@ export const dismissedDialogs = new Set();  // ids closed with ✕, re-openable 
 
 export function refreshQuestionStrip() {
   const dialogs = pendingDialogs.size;
-  const perms = pendingPerm ? 1 : 0;
+  const perms = pendingPerms.size;
   const overlayUp = !dialogOverlay.classList.contains('hidden') ||
                     !permOverlay.classList.contains('hidden');
   if (!(dialogs + perms) || overlayUp) { questionStrip.classList.add('hidden'); return; }
   questionStripText.textContent =
     dialogs && perms ? `${dialogs + perms} things need you`
       : dialogs ? (dialogs === 1 ? 'Claude has a question' : `Claude has ${dialogs} questions`)
-      : 'Claude needs permission';
+      : perms === 1 ? 'Claude needs permission' : `Claude needs ${perms} permissions`;
   questionStrip.classList.remove('hidden');
 }
 
@@ -39,12 +39,30 @@ questionStripOpen.onclick = () => {
 };
 
 // ── Permission prompt ──────────────────────────────────────────────────────
+// Every prompt still waiting (shown or queued behind another), keyed by id —
+// a main agent and a subagent can both have one in flight at once, and a
+// request is now broadcast to every tab (see permissions.js), so a reconnect
+// replay can resend one this tab already knows about. `pendingPerms` is the
+// full set; `pendingPerm` is whichever of them is on screen right now, or null.
 
-export let pendingPerm = null;   // the request itself, so it can be reopened after ✕
+export const pendingPerms = new Map();   // id → req, still waiting on an answer
+export let pendingPerm = null;
+
+// Nothing on screen and something queued — show the oldest of them. Called
+// after a new request arrives with nothing showing, and after one is resolved.
+function openNextPermission() {
+  if (pendingPerm) { refreshQuestionStrip(); return; }
+  const next = pendingPerms.values().next().value;
+  if (next) { pendingPerm = next; openPermission(); }
+  else refreshQuestionStrip();
+}
 
 export function showPermissionPrompt(req) {
-  pendingPerm = req;
-  openPermission();
+  // Map.set on an id already present just updates the stored request — a
+  // reconnect replay resending one this tab already has queued is a no-op
+  // beyond that, not a second entry.
+  pendingPerms.set(req.id, req);
+  openNextPermission();
 }
 
 export function openPermission() {
@@ -70,17 +88,26 @@ export function openPermission() {
 export function resolvePermission(decision) {
   if (!pendingPerm) return;
   S.ws.send(JSON.stringify({ type: 'permission_response', id: pendingPerm.id, decision }));
-  closePermission();
+  closePermission(pendingPerm.id);
 }
 
-// Answered, or resolved for us — nothing left to come back to.
-export function closePermission() {
-  pendingPerm = null;
-  permOverlay.classList.add('hidden');
-  refreshQuestionStrip();
+// The request is gone — answered on this tab or another, or cancelled by the
+// server (Stop, a new prompt, a session switch). `id` may belong to a card
+// that is not even the one on screen — a prompt queued behind another can be
+// resolved elsewhere before its turn comes, and it must not then pop up as a
+// stale, already-answered card once it would have been shown.
+export function closePermission(id) {
+  pendingPerms.delete(id);
+  if (pendingPerm && pendingPerm.id === id) {
+    pendingPerm = null;
+    permOverlay.classList.add('hidden');
+  }
+  openNextPermission();
 }
 
-// Set aside: still pending server-side, reachable from the strip.
+// Set aside: still pending server-side (and still queued, if others are too),
+// reachable from the strip — the one on screen specifically, not whichever is
+// next in the queue. Nothing else pops up in its place.
 export function laterPermission() {
   if (!pendingPerm) return;
   permOverlay.classList.add('hidden');
