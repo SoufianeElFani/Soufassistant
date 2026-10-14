@@ -91,10 +91,13 @@ function substitute(value, sessionId) {
   return value;
 }
 
-/** Run every PreToolUse hook, returning the first deny (matching SDK precedence). */
+/** Run every PreToolUse hook whose matcher accepts this tool, returning the
+ *  first deny (matching SDK precedence). An absent `matcher` runs on every
+ *  tool, exactly like the real SDK's PreToolUse matcher semantics. */
 async function runPreToolUseHooks(options, toolName, toolInput, toolUseID, signal) {
   const matchers = options.hooks?.PreToolUse || [];
   for (const matcher of matchers) {
+    if (matcher.matcher && matcher.matcher !== toolName) continue;
     for (const hook of matcher.hooks || []) {
       const out = await hook({ tool_name: toolName, tool_input: toolInput }, toolUseID, { signal });
       const spec = out?.hookSpecificOutput;
@@ -107,13 +110,30 @@ async function runPreToolUseHooks(options, toolName, toolInput, toolUseID, signa
   return { denied: false };
 }
 
+/**
+ * `prompt` is a plain string from an older scenario/assertion, or the real
+ * server's AsyncIterable<SDKUserMessage> (see server/lib/input-channel.js).
+ * For the iterable form, pulls just the first message and hands back its text
+ * plus the iterator itself — `generate()` below is what reads the rest, once
+ * its scripted steps are exhausted, so only one piece of code ever calls
+ * `it.next()`.
+ */
+async function firstPromptMessage(prompt) {
+  if (typeof prompt === 'string') return { text: prompt, it: null };
+  const it = prompt[Symbol.asyncIterator]();
+  const first = await it.next();
+  const c = first.done ? '' : (first.value?.message?.content ?? '');
+  return { text: typeof c === 'string' ? c : JSON.stringify(c), it };
+}
+
+// `query()` stays synchronous — like the real SDK, it returns the iterator
+// object immediately; nothing here awaits before that return.
 export function query({ prompt, options = {} }) {
   const run = scenario.runs?.[runIndex] || { steps: [{ text: 'ok' }] };
   runIndex += 1;
 
   // Resuming keeps the session id; a fresh run mints one, as the CLI does.
   const sessionId = options.resume || `stub-session-${++sessionCounter}`;
-  record({ kind: 'query', prompt, options: describeOptions(options), sessionId });
 
   let contextUsage = {
     totalTokens: 1000, maxTokens: 200000,
@@ -123,6 +143,9 @@ export function query({ prompt, options = {} }) {
   const signal = options.abortController?.signal;
 
   async function* generate() {
+    const { text: promptText, it } = await firstPromptMessage(prompt);
+    record({ kind: 'query', prompt: promptText, options: describeOptions(options), sessionId });
+
     // Every real run opens with system/init; scripts never have to say so.
     yield {
       type: 'system', subtype: 'init', session_id: sessionId,
@@ -187,15 +210,28 @@ export function query({ prompt, options = {} }) {
     }
 
     // …and every real run closes with a result, unless the script threw first.
-    if (run.noResult) return;
-    yield {
-      type: 'result', subtype: run.resultSubtype || 'success',
-      total_cost_usd: 0.01, num_turns: 1,
-      usage: { input_tokens: 10, output_tokens: 20, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 },
-    };
-    // A usage-limit rejection can throw *after* claiming success — the case the
-    // server has to see through. `throwAfterResult` reproduces it.
-    if (run.throwAfterResult) throw new Error(run.throwAfterResult);
+    if (!run.noResult) {
+      yield {
+        type: 'result', subtype: run.resultSubtype || 'success',
+        total_cost_usd: 0.01, num_turns: 1,
+        usage: { input_tokens: 10, output_tokens: 20, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 },
+      };
+      // A usage-limit rejection can throw *after* claiming success — the case
+      // the server has to see through. `throwAfterResult` reproduces it.
+      if (run.throwAfterResult) throw new Error(run.throwAfterResult);
+    }
+
+    // The script has nothing more scripted, but — exactly like the real
+    // CLI — that is not the same as the run being over: with a streamed
+    // prompt, the host keeps the channel open while a background task is
+    // still live, and this process has to stay alive and keep reading it
+    // until that channel closes. Each later message (the server injecting a
+    // prompt into a still-open, backgrounded run) is recorded as it arrives.
+    if (it) {
+      for (let r = await it.next(); !r.done; r = await it.next()) {
+        record({ kind: 'input', sessionId, text: r.value?.message?.content });
+      }
+    }
   }
 
   const iterator = generate();
@@ -209,6 +245,7 @@ export function query({ prompt, options = {} }) {
       if (run.modelsThrow) throw new Error(run.modelsThrow);
       return run.models || DEFAULT_MODELS;
     },
+    setModel: async (m) => { record({ kind: 'setModel', sessionId, model: m }); },
   };
 }
 

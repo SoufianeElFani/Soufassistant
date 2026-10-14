@@ -5,32 +5,76 @@
  * The run is owned by the app, not by the socket that started it. Its
  * AbortController is module-level, so navigating away mid-response does not
  * cancel it, and every event is broadcast rather than replied to.
+ *
+ * The prompt is a streamed AsyncIterable (`input-channel.js`), not a plain
+ * string — confirmed live: a string prompt makes the SDK close the CLI's
+ * stdin as soon as the turn's own `result` arrives, and once stdin is closed
+ * the CLI can no longer send ANY control request back to this host (a
+ * PreToolUse hook callback, a canUseTool ask). Every one is then denied
+ * locally inside the CLI with its canned "The user doesn't want to take this
+ * action right now" text — including a background subagent trying to deliver
+ * its report through SubagentHandback, which is exactly the failure this
+ * fixes. Keeping the channel open until every background task this run
+ * spawned has actually finished defers that close until it is genuinely safe.
  */
 import { query } from '@anthropic-ai/claude-agent-sdk';
 import {
-  WORK_DIR, PLUGINS, EFFORT_LEVELS, DEFAULT_PERMISSION_MODE,
+  WORK_DIR, PLUGINS, EFFORT_LEVELS, DEFAULT_PERMISSION_MODE, STALL_WARN_MS, STALL_CHECK_MS,
 } from './config.js';
 import { log, vlog } from './log.js';
 import { runtime } from './state.js';
 import { connections, send, broadcast } from './broadcast.js';
 import { isAuthError, isSubscriptionAuth } from './auth.js';
-import { listSessions, saveActive, isQuestionAnswer, truncateOutput } from './sessions.js';
+import { listSessions, saveActive, isQuestionAnswer, parseTaskNotification, truncateOutput } from './sessions.js';
 import { hooksFor, makeCanUseTool } from './permissions.js';
 import { askQuestion } from './dialogs.js';
 import { refreshHaLinks } from './ha-links.js';
 import { MCP_FREE_SETTINGS } from './mcp.js';
 import { usableSlashCommands } from './slash-commands.js';
+import { makeInputChannel } from './input-channel.js';
 import * as autoContinue from './auto-continue.js';
 
-/** How long the SDK may go quiet before the log says so. */
-const STALL_WARN_MS = 20000;
-const STALL_CHECK_MS = 15000;
+// STALL_WARN_MS / STALL_CHECK_MS (config.js): how long the SDK may go quiet
+// before the log says so, and how often it checks — only while a turn is
+// actively in flight. A run waiting on a background task is expected to be
+// quiet for a long time, so the watchdog is exempt in that phase (see
+// runPhase below) and instead logs an occasional heartbeat.
+const BACKGROUND_HEARTBEAT_TICKS = Math.max(1, Math.round(300000 / STALL_CHECK_MS)); // ~5 min
 
 export function abortActive() {
   if (runtime.activeQuery) { runtime.activeQuery.abort(); runtime.activeQuery = null; }
+  // Clear this eagerly too (not just in the run's own `finally`), so a prompt
+  // arriving in the gap between abort() and that cleanup cannot be pushed into
+  // a channel whose run is already being torn down.
+  if (runtime.activeRun) { runtime.activeRun.channel.close(); runtime.activeRun = null; }
+  if (runtime.backgroundTasks.size) {
+    runtime.backgroundTasks = new Map();
+    broadcast({ type: 'background_tasks', tasks: [] });
+  }
 }
 
-export async function runQuery(ws, state, { text, permissionMode, model, effort, autoAttempts = 0 }) {
+export async function runQuery(ws, { text, permissionMode, model, effort, autoAttempts = 0 }) {
+  // The previous turn already reported its `result`, but a background task it
+  // spawned (a subagent, a backgrounded shell command) is still running. Push
+  // the new message into that SAME still-open run instead of aborting it below
+  // — aborting would kill the background work, which is the bug this exists to
+  // avoid. (autoAttempts !== 0 is a headless auto-continue resume, which always
+  // starts its own run.)
+  if (autoAttempts === 0 && runtime.activeRun?.phase === 'background') {
+    for (const c of connections) if (c !== ws) send(c, { type: 'user', text });
+    runtime.activeRun.channel.push(text);
+    log('INFO', `prompt queued into backgrounded run (waiting on ${runtime.backgroundTasks.size} task(s)): promptLen=${text.length}`);
+    if (model && model !== runtime.activeRun.model) {
+      runtime.activeRun.model = model;
+      runtime.activeRun.q.setModel(model).catch((e) => log('WARN', `setModel on backgrounded run failed: ${e?.message || e}`));
+    }
+    // Mode changes for ask/acceptEdits/bypass/plan are already picked up live by
+    // makeCanUseTool reading runtime.activePermMode at call time; a run that
+    // started in 'auto' can't be live-switched regardless of this path.
+    if (permissionMode) runtime.activePermMode = permissionMode;
+    return;
+  }
+
   abortActive();
 
   // A run that is not itself the auto-continue firing supersedes any scheduled
@@ -74,7 +118,7 @@ export async function runQuery(ws, state, { text, permissionMode, model, effort,
     // 'plan' is SDK-native (read-only, produces a plan) but still routes through
     // canUseTool so the ExitPlanMode approval surfaces as a normal prompt.
     if (runtime.activePermMode === 'plan') opts.permissionMode = 'plan';
-    opts.canUseTool = makeCanUseTool(ws, state);
+    opts.canUseTool = makeCanUseTool();
   }
 
   // AskUserQuestion is intercepted before it runs (canUseTool, or the PreToolUse
@@ -136,22 +180,87 @@ export async function runQuery(ws, state, { text, permissionMode, model, effort,
   log('INFO', `query start: mode=${runtime.activePermMode} effort=${opts.effort || 'default'} ` +
     `model=${model || 'default'} resume=${resuming} promptLen=${text.length}`);
 
+  // Streamed input — see the file header. Kept open until every background
+  // task this run spawns has finished (maybeEndRun below), not just until the
+  // foreground turn's own `result`.
+  const channel = makeInputChannel(text);
+  runtime.activeRun = { channel, q: null, phase: 'turn', model, effort, permissionMode: runtime.activePermMode };
+
+  // Background tasks spawned by this run (subagents, backgrounded shell
+  // commands). `background_tasks_changed` is the authoritative membership
+  // signal (REPLACE semantics); `task_progress` only enriches the entries
+  // already there. Ambient tasks (housekeeping, not activity) are excluded.
+  let resultSeen = false;
+  let runPhase = 'turn';
+  let backgroundHeartbeatTicks = 0;
+
+  const syncBackgroundTasks = (tasks) => {
+    const next = new Map();
+    for (const t of (tasks || [])) {
+      if (t.ambient) continue;
+      const prev = runtime.backgroundTasks.get(t.task_id);
+      next.set(t.task_id, {
+        id: t.task_id, description: t.description, type: t.task_type,
+        lastTool: prev?.lastTool, summary: prev?.summary,
+      });
+    }
+    runtime.backgroundTasks = next;
+    broadcast({ type: 'background_tasks', tasks: [...next.values()] });
+    maybeEndRun();
+  };
+
+  const updateBackgroundTaskProgress = (event) => {
+    const t = runtime.backgroundTasks.get(event.task_id);
+    if (!t) return;
+    if (event.last_tool_name !== undefined) t.lastTool = event.last_tool_name;
+    if (event.summary !== undefined) t.summary = event.summary;
+    broadcast({ type: 'background_tasks', tasks: [...runtime.backgroundTasks.values()] });
+  };
+
+  /** Once the foreground turn has reported `result` AND no background task is
+   *  left running, the input channel can close — only then is this run
+   *  genuinely over. */
+  function maybeEndRun() {
+    if (!resultSeen) return;
+    if (runtime.backgroundTasks.size > 0) {
+      if (runPhase !== 'background') {
+        runPhase = 'background';
+        if (runtime.activeRun) runtime.activeRun.phase = 'background';
+        log('INFO', `turn finished; waiting on ${runtime.backgroundTasks.size} background task(s): ` +
+          [...runtime.backgroundTasks.values()].map((t) => t.description).join(', '));
+      }
+      return;
+    }
+    if (runPhase === 'background') log('INFO', 'background task(s) finished; ending run');
+    channel.close();
+  }
+
   // Stall watchdog — the reported "chat hangs" symptom. If no SDK event arrives
-  // for a while during an active run (long thinking, a slow tool, a retry, or
+  // for a while during an active TURN (long thinking, a slow tool, a retry, or
   // auto-compaction), log how long it has been quiet so the app log shows
-  // whether it is truly stuck or just working.
+  // whether it is truly stuck or just working. Exempt while waiting on a
+  // background task: that silence is expected, not a stall.
   let lastEventAt = Date.now();
   let lastEventKind = 'start';
   const watchdog = setInterval(() => {
     if (abortController.signal.aborted) return;
+    if (runPhase === 'background') {
+      backgroundHeartbeatTicks += 1;
+      if (backgroundHeartbeatTicks % BACKGROUND_HEARTBEAT_TICKS === 0) {
+        vlog(`still waiting on ${runtime.backgroundTasks.size} background task(s)`);
+      }
+      return;
+    }
     const idleS = Math.round((Date.now() - lastEventAt) / 1000);
     if (idleS * 1000 >= STALL_WARN_MS) {
       log('WARN', `query quiet for ${idleS}s (last event: ${lastEventKind}) — still awaiting the SDK`);
     }
   }, STALL_CHECK_MS);
 
+  let q;
   try {
-    const q = query({ prompt: text, options: opts });
+    q = query({ prompt: channel.iterable, options: opts });
+    runtime.activeRun.q = q;
     for await (const event of q) {
       lastEventAt = Date.now();
       lastEventKind = event.type === 'system' ? `system/${event.subtype}` : event.type;
@@ -180,6 +289,20 @@ export async function runQuery(ws, state, { text, permissionMode, model, effort,
         broadcast({ type: 'compacted', trigger: m.trigger, preTokens: m.pre_tokens, postTokens: m.post_tokens });
         await reportContextUsage(q);
 
+      } else if (event.type === 'system' && event.subtype === 'background_tasks_changed') {
+        syncBackgroundTasks(event.tasks);
+
+      } else if (event.type === 'system' && event.subtype === 'task_progress') {
+        updateBackgroundTaskProgress(event);
+
+      } else if (event.type === 'system' && event.subtype === 'task_notification') {
+        // A background task ending — the chat-visible "background agent
+        // finished" chip (see sessions.js lineToItems for the stored-transcript
+        // equivalent). Ambient/non-transcript tasks say nothing here either.
+        if (!event.ambient && !event.skip_transcript) {
+          broadcast({ type: 'task_notice', taskId: event.task_id, status: event.status, summary: event.summary });
+        }
+
       } else if (event.type === 'assistant') {
         for (const block of (event.message?.content || [])) {
           if (block.type === 'text' && block.text) {
@@ -194,7 +317,20 @@ export async function runQuery(ws, state, { text, permissionMode, model, effort,
 
       } else if (event.type === 'user') {
         const content = event.message?.content;
-        if (Array.isArray(content)) {
+        const originKind = event.origin?.kind;
+        // A background task's own notification, or a delivered SubagentHandback
+        // report, arriving live — never raw harness XML, never a user bubble.
+        // Mirrors sessions.js's lineToItems for the exact same record read back
+        // from the stored transcript after a reload.
+        if (originKind === 'task-notification') {
+          const notificationText = typeof content === 'string' ? content : '';
+          const n = parseTaskNotification(notificationText) || {};
+          broadcast({ type: 'task_notice', taskId: n.taskId || null,
+            status: n.status || 'completed', summary: n.summary || 'Background task finished' });
+        } else if (originKind === 'peer' && typeof event.origin.body === 'string') {
+          broadcast({ type: 'agent_report', from: event.origin.name || event.origin.from || 'background agent',
+            text: event.origin.body });
+        } else if (Array.isArray(content)) {
           for (const block of content) {
             if (block.type !== 'tool_result') continue;
             const raw = typeof block.content === 'string'
@@ -246,8 +382,15 @@ export async function runQuery(ws, state, { text, permissionMode, model, effort,
           outputTokens: event.usage?.output_tokens ?? 0,
           cacheReadTokens: event.usage?.cache_read_input_tokens ?? 0,
           cacheWriteTokens: event.usage?.cache_creation_input_tokens ?? 0,
+          background: runtime.backgroundTasks.size > 0,
         });
         await reportContextUsage(q);
+        // A single streamed query can legitimately emit more than one `result`
+        // — confirmed live: once for the foreground turn, then another each
+        // time a background task's completion hands control back for a short
+        // follow-up turn. Only close the channel once nothing is left running.
+        resultSeen = true;
+        maybeEndRun();
       }
     }
   } catch (err) {
@@ -280,7 +423,13 @@ export async function runQuery(ws, state, { text, permissionMode, model, effort,
     }
   } finally {
     clearInterval(watchdog);
+    channel.close();   // idempotent — tidy up on an error/abort path too
     if (runtime.activeQuery === abortController) runtime.activeQuery = null;
+    if (runtime.activeRun && runtime.activeRun.q === q) runtime.activeRun = null;
+    if (runtime.backgroundTasks.size) {
+      runtime.backgroundTasks = new Map();
+      broadcast({ type: 'background_tasks', tasks: [] });
+    }
     if (abortController.signal.aborted) {
       log('INFO', `query aborted by user after ${((Date.now() - startedAt) / 1000).toFixed(1)}s`);
       broadcast({ type: 'aborted' });

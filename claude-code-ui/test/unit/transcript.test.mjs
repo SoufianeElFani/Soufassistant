@@ -7,7 +7,7 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  blockText, isCommandEcho, isQuestionAnswer, lineToItems, truncateOutput,
+  blockText, isCommandEcho, isHarnessEcho, isQuestionAnswer, lineToItems, parseTaskNotification, truncateOutput,
 } from '../../server/lib/sessions.js';
 
 const at = '2026-07-15T09:30:00.000Z';
@@ -41,6 +41,47 @@ describe('isCommandEcho', () => {
   test('leaves an ordinary message alone', () => {
     assert.equal(isCommandEcho('please compact the chat'), false);
     assert.equal(isCommandEcho(undefined), false);
+  });
+});
+
+describe('isHarnessEcho', () => {
+  test('recognises a stray task-notification or system-reminder, not just command echoes', () => {
+    assert.equal(isHarnessEcho('<task-notification>\n<task-id>x</task-id>\n</task-notification>'), true);
+    assert.equal(isHarnessEcho('<system-reminder>be careful</system-reminder>'), true);
+    assert.equal(isHarnessEcho('<command-name>/compact</command-name>'), true);
+  });
+
+  test('leaves an ordinary message alone', () => {
+    assert.equal(isHarnessEcho('is the task notification system working?'), false);
+  });
+});
+
+describe('parseTaskNotification', () => {
+  test('pulls task-id, status and summary out of the real tag shape', () => {
+    // The exact shape a background-task notification is injected as — seen
+    // live, same CLI build this app ships (sdk 0.3.284 / CLI 2.1.284).
+    const text = '<task-notification>\n<task-id>b792jzxbl</task-id>\n' +
+      '<tool-use-id>toolu_01QRDfZkuu5QF1jWCqFTSN8s</tool-use-id>\n' +
+      '<output-file>/tmp/tasks/b792jzxbl.output</output-file>\n' +
+      '<status>completed</status>\n' +
+      '<summary>Background command "grep foo" completed (exit code 0)</summary>\n' +
+      '</task-notification>';
+    assert.deepEqual(parseTaskNotification(text), {
+      taskId: 'b792jzxbl', status: 'completed',
+      summary: 'Background command "grep foo" completed (exit code 0)',
+    });
+  });
+
+  test('falls back to a generic summary when a field is missing', () => {
+    const result = parseTaskNotification('<task-notification>\n<status>failed</status>\n</task-notification>');
+    assert.equal(result.taskId, null);
+    assert.equal(result.status, 'failed');
+    assert.equal(result.summary, 'Background task finished');
+  });
+
+  test('returns null for text that is not a task-notification', () => {
+    assert.equal(parseTaskNotification('just a normal message'), null);
+    assert.equal(parseTaskNotification(undefined), null);
   });
 });
 
@@ -154,5 +195,53 @@ describe('lineToItems', () => {
 
   test('ignores a line type it does not know', () => {
     assert.deepEqual(lineToItems({ type: 'system', message: { content: 'x' } }), []);
+  });
+
+  test('a stray task-notification never renders as a user bubble', () => {
+    // The injected record that caused the original bug: a `user`-role line
+    // stamped origin.kind:'task-notification', its content the raw harness XML.
+    const text = '<task-notification>\n<task-id>aba7acb45617cd7ac</task-id>\n' +
+      '<status>completed</status>\n<summary>Subagent report delivered</summary>\n</task-notification>';
+    const items = lineToItems({
+      type: 'user', timestamp: at, origin: { kind: 'task-notification' },
+      message: { role: 'user', content: text },
+    });
+    assert.deepEqual(items, [{
+      kind: 'task_notice', taskId: 'aba7acb45617cd7ac', status: 'completed',
+      summary: 'Subagent report delivered', ts,
+    }]);
+  });
+
+  test('a task-notification with no parseable fields still never becomes a user item', () => {
+    const items = lineToItems({
+      type: 'user', origin: { kind: 'task-notification' },
+      message: { role: 'user', content: 'The subagent ended without delivering a report through SubagentHandback' },
+    });
+    assert.equal(items.length, 1);
+    assert.equal(items[0].kind, 'task_notice');
+    assert.notEqual(items[0].kind, 'user');
+  });
+
+  test('a delivered SubagentHandback report renders labelled, not as the user', () => {
+    const items = lineToItems({
+      type: 'user', timestamp: at,
+      origin: { kind: 'peer', from: 'agent-aba7acb45617cd7ac', name: 'background agent', body: 'All done.' },
+      message: { role: 'user', content: 'ignored — origin.body is the real text' },
+    });
+    assert.deepEqual(items, [{ kind: 'agent_report', from: 'background agent', text: 'All done.', ts }]);
+  });
+
+  test('other non-human origins are dropped, never shown as the user', () => {
+    for (const kind of ['channel', 'coordinator', 'observer', 'auto-continuation', 'observer-activity']) {
+      const items = lineToItems({ type: 'user', origin: { kind }, message: { role: 'user', content: 'machine text' } });
+      assert.deepEqual(items, [], `origin.kind=${kind} was not dropped`);
+    }
+  });
+
+  test('origin:human and an absent origin still render as an ordinary user bubble', () => {
+    const withHuman = lineToItems({ type: 'user', origin: { kind: 'human' }, message: { content: 'hi' } });
+    assert.deepEqual(withHuman, [{ kind: 'user', text: 'hi' }]);
+    const withoutOrigin = lineToItems({ type: 'user', message: { content: 'hi' } });
+    assert.deepEqual(withoutOrigin, [{ kind: 'user', text: 'hi' }]);
   });
 });

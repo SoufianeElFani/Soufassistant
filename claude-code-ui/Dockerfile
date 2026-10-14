@@ -66,7 +66,7 @@ WORKDIR /config
 
 # Copy application files
 # (bump SCRIPTS_VER to force Docker layer re-copy on next build)
-ARG SCRIPTS_VER=27
+ARG SCRIPTS_VER=28
 COPY server/index.js /opt/server/index.js
 COPY server/lib/ /opt/server/lib/
 COPY frontend/ /opt/frontend/

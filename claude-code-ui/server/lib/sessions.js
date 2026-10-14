@@ -49,6 +49,46 @@ export function isCommandEcho(text) {
     (text.includes('<command-name>') || text.includes('<local-command-stdout>'));
 }
 
+/**
+ * Any harness-authored envelope that can land as a `user`-role transcript line
+ * without being a thing the human actually typed: a slash-command echo, a
+ * stray task-notification (see below), or a system reminder. Generic beyond
+ * isCommandEcho() because origin alone does not always distinguish these —
+ * some CLI builds write a task-notification's body without stamping origin.
+ */
+export function isHarnessEcho(text) {
+  return typeof text === 'string' &&
+    (isCommandEcho(text) || text.includes('<task-notification>') || text.includes('<system-reminder>'));
+}
+
+/**
+ * `origin.kind` values the SDK stamps on a `user`-role message that was never
+ * typed by the human at the keyboard: a background task finishing
+ * ('task-notification'), another of the user's own sessions sending a message
+ * ('peer'), or anything else machine-originated. 'human' and an absent origin
+ * (older transcripts, or this app's own synthesized turns) are the only kinds
+ * rendered as an ordinary user bubble.
+ */
+const NON_HUMAN_ORIGIN_KINDS = new Set([
+  'task-notification', 'peer', 'channel', 'coordinator', 'observer', 'auto-continuation', 'observer-activity',
+]);
+
+/**
+ * Pull the handful of fields a task-notification's injected text carries, for
+ * the cases (older CLI builds) where it arrives as plain content rather than a
+ * stamped origin. Tolerant of tag order and missing fields — this is read-only
+ * display, never something to act on.
+ */
+export function parseTaskNotification(text) {
+  if (typeof text !== 'string' || !text.includes('<task-notification>')) return null;
+  const field = (tag) => text.match(new RegExp(`<${tag}>([^<]*)</${tag}>`))?.[1];
+  return {
+    taskId: field('task-id') || null,
+    status: field('status') || 'completed',
+    summary: field('summary') || 'Background task finished',
+  };
+}
+
 // The two messages formatQuestionDenial() can produce. Fixed strings, so
 // matching them is safe — and only ever consulted for a tool_result whose
 // tool_use isn't in `toolNames` (a transcript truncated above the call).
@@ -88,12 +128,36 @@ export function lineToItems(line, toolNames = new Map()) {
 
   if (line.type === 'user') {
     const content = msg.content;
+    const originKind = line.origin?.kind;
+
+    // A task-notification is the harness telling the host a background task
+    // finished — never something the human typed. It must never render as a
+    // user bubble, live or after reloading history (see lineToItems tests).
+    if (originKind === 'task-notification') {
+      const text = typeof content === 'string' ? content : blockText(content);
+      const n = parseTaskNotification(text) || {};
+      push({ kind: 'task_notice', taskId: n.taskId || null, status: n.status || 'completed',
+        summary: n.summary || 'Background task finished' });
+      return items;
+    }
+    // A delivered SubagentHandback report: a peer session (here, a background
+    // subagent) sending a message, with the harness envelope already stripped
+    // into `body`. Shown as a labelled report, not as if the user said it.
+    if (originKind === 'peer' && typeof line.origin.body === 'string') {
+      push({ kind: 'agent_report', from: line.origin.name || line.origin.from || 'background agent',
+        text: line.origin.body });
+      return items;
+    }
+    // Any other non-human origin (channel, coordinator, observer, …): never a
+    // user bubble, but not worth a dedicated rendering either.
+    if (NON_HUMAN_ORIGIN_KINDS.has(originKind)) return items;
+
     if (typeof content === 'string') {
-      if (content.trim() && !isCommandEcho(content)) push({ kind: 'user', text: content });
+      if (content.trim() && !isHarnessEcho(content)) push({ kind: 'user', text: content });
     } else if (Array.isArray(content)) {
       for (const b of content) {
         if (b.type === 'text' && b.text) {
-          if (!isCommandEcho(b.text)) push({ kind: 'user', text: b.text });
+          if (!isHarnessEcho(b.text)) push({ kind: 'user', text: b.text });
         } else if (b.type === 'tool_result') {
           const raw = blockText(b.content);
           const answered = isQuestionAnswer(toolNames.get(b.tool_use_id), !!b.is_error, raw);
@@ -132,9 +196,14 @@ export function sessionTitle(id) {
     for (const ln of readFileSync(sessionFile(id), 'utf8').split('\n')) {
       if (!ln.trim()) continue;
       let obj; try { obj = JSON.parse(ln); } catch { continue; }
-      if (obj.type !== 'user' || obj.isMeta || obj.isSidechain) continue;
+      if (obj.type !== 'user' || obj.isMeta || obj.isSidechain || obj.isCompactSummary) continue;
+      // A task-notification, a delivered subagent report, or any other
+      // non-human origin was never typed by the user and must not become the
+      // title — same rule as lineToItems().
+      if (NON_HUMAN_ORIGIN_KINDS.has(obj.origin?.kind)) continue;
       const c = obj.message?.content;
       const text = typeof c === 'string' ? c : Array.isArray(c) ? (c.find((b) => b.type === 'text')?.text || '') : '';
+      if (isHarnessEcho(text) || parseTaskNotification(text)) continue;
       const t = (text || '').replace(/\s+/g, ' ').trim();
       if (t) return t.length > 80 ? t.slice(0, 80) + '…' : t;
     }

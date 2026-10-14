@@ -443,6 +443,63 @@ Selectable in the UI per-prompt; the **default for new chats** comes from the `d
 
 **Reasoning effort:** the Settings panel has an effort selector (Low→Max) sent as `effort` on the prompt; the server sets `opts.effort` only when a level is chosen (else the SDK model default, high). Higher effort means longer, quieter thinking — a common cause of the "chat looks stuck" perception.
 
+## Background Tasks
+
+An `Agent` (subagent) or a backgrounded shell command can keep running after the
+model's own reply has already ended and the SDK has reported `result`. That used
+to break every permission mode, confirmed live against the real SDK/CLI (0.3.284
+/ 2.1.284): **`run-query.js` passes the prompt as a streamed `AsyncIterable`
+(`lib/input-channel.js`), never a plain string.** A string prompt makes the SDK
+mark the query single-turn, and once the session goes idle after `result` it
+closes the CLI's stdin — even while a background task is still running. From
+then on the CLI can no longer send **any** control request back to this host (a
+PreToolUse hook callback, a `canUseTool` ask): every one is denied *inside the
+CLI itself*, with its canned "The user doesn't want to take this action right
+now" text, before any host code runs at all. A background subagent trying to
+deliver its report through SubagentHandback loses exactly this way — repro'd
+with a real 120s backgrounded sleep: the hand-back was denied ~110s after
+`result`, with no PreToolUse hook log preceding it. Keeping the channel open
+until nothing is left running fixes it for every mode (ask/acceptEdits/plan/
+bypass go through `canUseTool`; `auto` goes through the PreToolUse hook — both
+need the same open channel).
+
+- **Run phase.** `runtime.activeRun = {channel, q, phase, …}`: `phase` is
+  `'turn'` while the model is actively responding, `'background'` once that
+  turn's own `result` has arrived but a task it spawned is still live. The
+  channel only closes (`maybeEndRun()` in `run-query.js`) once `resultSeen` **and**
+  `runtime.backgroundTasks` is empty — a single streamed query can legitimately
+  emit more than one `result`, one per follow-up turn, which is expected and not
+  treated as a fresh prompt.
+- **Task tracking.** `system/background_tasks_changed` is the authoritative
+  membership signal (REPLACE semantics — swap the set, don't diff it; `ambient`
+  tasks are excluded, they're housekeeping not activity). `task_progress` only
+  enriches entries already there (`lastTool`/`summary`). `task_notification` is
+  what becomes the chat-visible `task_notice` (see Interactive Tools below) —
+  it is not relied on for membership.
+- **A prompt arriving while `phase === 'background'`** is pushed into the same
+  still-open channel (`runQuery` in `run-query.js`) rather than aborting it —
+  aborting would kill the background task, which is the bug this exists to
+  avoid. `abortActive()` (Stop, new chat, session switch) still ends it, closing
+  the channel and clearing `runtime.backgroundTasks`.
+- **The stall watchdog is exempt in the background phase** — that silence is
+  expected, not a stall — and logs an occasional heartbeat (~5 min) instead.
+  `STALL_WARN_MS`/`STALL_CHECK_MS` (`config.js`) are overridable so a test can
+  see the watchdog actually fire without a real 20s wait; the idle measurement
+  itself rounds to whole seconds, so an override still needs to clear a 1s floor.
+- **Wire protocol:** `background_tasks` (the full current list, replayed on
+  reconnect alongside `history.background`), `task_notice` (one background
+  task ending), `agent_report` (a delivered SubagentHandback report, live). The
+  UI shows a strip above the composer while the list is non-empty
+  (`frontend/js/banners.js`'s `refreshBgTasksStrip`).
+- **Never raw harness XML.** A background task's own `<task-notification>` and
+  a delivered hand-back report arrive as `user`-role transcript lines stamped
+  `origin.kind` (`'task-notification'` / `'peer'`) — never `'human'` and never
+  unstamped. `sessions.js`'s `lineToItems`/`sessionTitle` route every non-human
+  origin away from an ordinary user bubble/title; `isHarnessEcho` and
+  `parseTaskNotification` do the same for older-CLI shapes with no origin at
+  all. This covers both the live stream and a reloaded transcript — the actual
+  incident was a `<task-notification>` rendering as if the user had typed it.
+
 ## The model picker
 
 **The `<option>` list in `index.html` is a fallback, not the source of truth. Do
@@ -480,7 +537,7 @@ When a **claude.ai subscription** hits its **5-hour** usage limit mid-run, the S
 - **State is server-owned**, persisted to `/data/auto-continue.json` as `{ enabled, pending }`. The toggle is *not* localStorage (the resume must fire with **no browser open**). `enabled` is the user toggle; `pending` is a scheduled resume `{ resetsAt, rateLimitType, model, effort, permissionMode, attempts }`.
 - **Survives restarts.** On boot, `loadAutoContinue()` + a re-arm block reschedule a saved `pending` (fires ~immediately if `resetsAt` already elapsed during downtime). `setTimeout`'s ~24.8-day ceiling covers a 5-hour wait.
 - **Loop safety.** `attempts` is capped at `AUTO_CONTINUE_MAX_ATTEMPTS` (3): if a resume is immediately re-limited it backs off and eventually gives up (`auto_continue_gaveup`).
-- **The resume** is a headless `runQuery` (a fake `{ readyState: 3 }` socket, shared `autoResumeState`) with a short "continue where you left off" prompt, reusing the interrupted run's model/effort/permission mode. If that run needs a **permission prompt** and clients are connected, `canUseTool` broadcasts it to any tab; if **no** client is connected it denies (rather than hanging) so the run ends cleanly. A manual prompt / new chat / session switch supersedes a pending resume (`cancelAutoContinue`).
+- **The resume** is a headless `runQuery` (a fake `{ readyState: 3 }` socket) with a short "continue where you left off" prompt, reusing the interrupted run's model/effort/permission mode. If that run needs a **permission prompt**, it is broadcast to whatever's connected — and now **waits** even if nothing is, exactly like a question, rather than denying to end the run cleanly (see `pendingPermissions` under Interactive Tools above). An unattended resume can therefore sit waiting on an unanswered prompt until someone opens the app. A manual prompt / new chat / session switch supersedes a pending resume (`cancelAutoContinue`).
 - **When it's off, the limit is still surfaced.** `autoContinue.offer` (persisted alongside `enabled`/`pending`) records a limit that stopped a run while nothing could be scheduled. The client shows the reset time and a **Resume automatically** button; pressing it just sends `set_auto_continue`, and the server schedules *that* offer rather than only affecting the next limit. An offer is dropped on a new prompt / new session / session switch, or once `resetsAt` is more than `LIMIT_OFFER_GRACE_MS` past (`liveLimitOffer()`).
 - **Wire protocol:** server→client `auto_continue_pending` (banner + countdown), `auto_continue_resuming`, `auto_continue_cancelled`, `auto_continue_gaveup`, `auto_continue_state`, `limit_notice` (the in-transcript note at the point the run stopped), `limit_offer` / `limit_offer_cleared`, plus raw `rate_limit`; client→server `set_auto_continue`, `cancel_auto_continue`. Connect `config` carries `autoContinue` + `autoContinueSupported`, and replays `auto_continue_pending` or `limit_offer`.
 - **Testing without a real limit:** `GET /diag/autocontinue?simulate=<seconds>` (debug option on) arms a resume that fires after N seconds against the active session, exercising the full schedule→resume path.
@@ -499,9 +556,9 @@ Reported symptom: a response stops coming, then resumes minutes later (not a tru
 
 - **AskUserQuestion** is intercepted before the tool runs, and never executes. The SDK's own dialog transport is not the route it takes: the tool call completes inside the CLI subprocess with a canned "The user did not answer the questions." and no `request_user_dialog` is ever sent, whatever `supportedDialogKinds`/`toolConfig` declare. (That silent failure is why the tool used to be in `disallowedTools`.) Instead:
   - `canUseTool` short-circuits `AskUserQuestion`, emits the existing `user_dialog` message, and turns the answer into a **`deny` whose message is the user's answer** — `canUseTool` has no "succeeded with this result" shape, and a denial's message is what reaches the model as the tool result. See `formatQuestionDenial()`.
-  - `auto` mode has no `canUseTool`, so there the same interception runs as a **PreToolUse hook** (`askQuestionHook`), which fires in every mode and short-circuits ahead of `canUseTool`. `hooksFor(mode)` composes it with the `/addon_configs` guard.
+  - `auto` mode has no `canUseTool`, so there the same interception runs as a **PreToolUse hook** (`askQuestionHook`), registered only for `auto` and scoped to `matcher: 'AskUserQuestion'` — every other tool call in `auto` mode skips it rather than round-tripping through it for nothing. `hooksFor(mode)` composes it with the (unmatched, sees every call) `/addon_configs` guard.
   - Because the answer arrives as `is_error: true`, both the live stream and `parseSession` correlate `tool_use` id → tool name and flag it `answered` so the UI renders it as an answer, not a failure (`isQuestionAnswer()`).
-  - Pending questions live in a **module-level** `pendingDialogs` map, not per-connection, and **wait indefinitely** — a tab disconnecting (backgrounded app, phone asleep, closed browser) does *not* cancel one, however long it's been. A question belongs to the run, not to the socket that happened to be open when it was asked: any tab can answer it, and one that connects later — in ten minutes or tomorrow — is shown every entry still in `pendingDialogs` and can answer it then. The only things that end the wait are an actual answer, Skip, or the run itself ending (the tool call's own abort signal — Stop, a new prompt, a session switch). This used to auto-cancel on the last disconnect on the theory that nobody would come back; a phone backgrounding its browser drops the WebSocket routinely, so that read as the question silently vanishing while you were away. **Permission prompts don't get the same treatment** — `state.pendingPermissions` is still per-connection and is still denied immediately on that connection's `close` (and on the initial ask, if nobody's connected at all); fixing that would mean hoisting it to a module-level map with the same reconnect-replay plumbing as `pendingDialogs`, not yet done.
+  - Pending questions live in a **module-level** `pendingDialogs` map, not per-connection, and **wait indefinitely** — a tab disconnecting (backgrounded app, phone asleep, closed browser) does *not* cancel one, however long it's been. A question belongs to the run, not to the socket that happened to be open when it was asked: any tab can answer it, and one that connects later — in ten minutes or tomorrow — is shown every entry still in `pendingDialogs` and can answer it then. The only things that end the wait are an actual answer, Skip, or the run itself ending (the tool call's own abort signal — Stop, a new prompt, a session switch). This used to auto-cancel on the last disconnect on the theory that nobody would come back; a phone backgrounding its browser drops the WebSocket routinely, so that read as the question silently vanishing while you were away. **Permission prompts now get the same treatment.** `permissions.js`'s `pendingPermissions` is module-level too — a prompt is `broadcast()` to every connected tab (not just the one that triggered it), replayed to a tab that connects afterwards (`greet()`), and answerable from any of them; answering on one dismisses it on the rest via `permission_resolved`. It is **not** denied just because nobody is connected at the moment it's raised (including a headless auto-continue resume with no browser open) — it waits, exactly like a question. Only an abort (Stop, a new prompt, a session switch, or the run itself ending) ends it.
   - `onUserDialog` + `supportedDialogKinds` + `toolConfig` are still registered — the documented contract, harmless, and it feeds the same map should a future CLI build start using it. If it ever does, remove the by-hand path rather than leaving the two racing.
 - **Questions and permission prompts can be set aside.** ✕ (or a backdrop tap) hides the card without answering; the request stays pending server-side and `#question-strip` above the composer is the way back. A dismissed question is not re-opened by the reconnect replay.
 - **Context indicator** uses `query.getContextUsage()` (cache-inclusive `totalTokens` / `maxTokens` / `autoCompactThreshold` / `isAutoCompactEnabled`), broadcast as `context_usage` after each result and after compaction. The frontend shows tokens and **% toward auto-compaction**. The old input+output math undercounted because it ignored `cache_read_input_tokens`.

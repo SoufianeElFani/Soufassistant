@@ -3,7 +3,7 @@
  * every message the server sends.
  */
 import { S } from './state.js';
-import { appendLimitNotice, hideAcBanner, showAcBanner } from './banners.js';
+import { appendLimitNotice, hideAcBanner, refreshBgTasksStrip, showAcBanner } from './banners.js';
 import { clearScreen } from './commands.js';
 import { setStatus, updateSendBtn } from './composer.js';
 import { closePermission, dropDialog, pendingPerm, showPermissionPrompt, showUserDialog } from './dialogs.js';
@@ -13,7 +13,7 @@ import { applyModelCatalog, ensureModelOption, updateCtxHint } from './model.js'
 import { renderSessions } from './sessions.js';
 import { setAutoContinueSupported } from './settings.js';
 import { hideThinking, showThinking } from './thinking.js';
-import { appendAssistantText, appendCompactedDivider, appendErrorBubble, appendInfoLine, appendResultLine, appendToolResult, appendToolUse, appendUserBubble, endToolGroup, renderHistory } from './transcript.js';
+import { appendAgentReport, appendAssistantText, appendCompactedDivider, appendErrorBubble, appendInfoLine, appendResultLine, appendTaskNotice, appendToolResult, appendToolUse, appendUserBubble, endToolGroup, renderHistory } from './transcript.js';
 
 // ── WebSocket ─────────────────────────────────────────────────────────────
 
@@ -137,12 +137,31 @@ export function handleServerMessage(msg) {
       renderHistory(msg.items || []);
       S.isRunning = !!msg.running;
       if (S.isRunning) showThinking();
+      // The task list itself follows right behind, in the same greeting burst
+      // (see ws-protocol.js's greet()) — this just avoids a flash of "nothing
+      // running" in between for a run that is backgrounded.
+      if (!msg.background) { S.backgroundTasks = []; refreshBgTasksStrip(); }
       updateSendBtn();
+      break;
+
+    case 'background_tasks':
+      S.backgroundTasks = msg.tasks || [];
+      refreshBgTasksStrip();
+      break;
+
+    case 'task_notice':
+      appendTaskNotice(msg);
+      break;
+
+    case 'agent_report':
+      appendAgentReport(msg);
       break;
 
     case 'cleared':
       clearScreen();
       S.isRunning = false;
+      S.backgroundTasks = [];
+      refreshBgTasksStrip();
       updateSendBtn();
       break;
 
@@ -244,6 +263,8 @@ export function handleServerMessage(msg) {
       S.lastAssistantBubble = null;
       endToolGroup();
       S.isRunning = false;
+      S.backgroundTasks = [];
+      refreshBgTasksStrip();
       updateSendBtn();
       break;
 

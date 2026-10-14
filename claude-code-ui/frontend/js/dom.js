@@ -73,6 +73,8 @@ export const promptNextBtn  = document.getElementById('prompt-next');
 export const questionStrip     = document.getElementById('question-strip');
 export const questionStripText = document.getElementById('question-strip-text');
 export const questionStripOpen = document.getElementById('question-strip-open');
+export const bgTasksStrip      = document.getElementById('bg-tasks-strip');
+export const bgTasksText       = document.getElementById('bg-tasks-text');
 
 export const cmdMenu = document.getElementById('cmd-menu');
 export const attachInput   = document.getElementById('attach-input');

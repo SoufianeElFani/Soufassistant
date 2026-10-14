@@ -212,15 +212,45 @@ describe('the browser going away mid-prompt', () => {
   });
   after(async () => { await h.stop(); });
 
-  test('denies the pending permission rather than hanging the run', async () => {
+  test('leaves the permission pending — a later tab is shown it and can still answer', async () => {
     const c = await h.connect();
     await c.waitFor('history');
     c.send({ type: 'prompt', text: 'do it', permissionMode: 'ask' });
-    await c.waitFor('permission_request');
+    const req = await c.waitFor('permission_request');
     await c.close();
 
+    // The prompt belongs to the run, not to the tab that asked it — a new tab
+    // connecting afterwards is replayed the exact same request on greet().
+    const c2 = await h.connect();
+    const replayed = await c2.waitFor('permission_request');
+    assert.equal(replayed.id, req.id);
+    assert.equal(replayed.toolName, 'Bash');
+
+    c2.send({ type: 'permission_response', id: req.id, decision: 'allow' });
     const decision = await h.waitForRecord((r) => r.kind === 'tool_decision');
-    assert.equal(decision.outcome.behavior, 'deny');
+    assert.equal(decision.outcome.behavior, 'allow');
+  });
+});
+
+describe('two tabs open on the same prompt', () => {
+  let h;
+  before(async () => {
+    h = await startServer({ scenario: { runs: [{ steps: [{ tool: bashTool() }] }] } });
+  });
+  after(async () => { await h.stop(); });
+
+  test('answering on one dismisses it on the other', async () => {
+    const a = await h.connect();
+    const b = await h.connect();
+    await Promise.all([a.waitFor('history'), b.waitFor('history')]);
+    a.send({ type: 'prompt', text: 'do it', permissionMode: 'ask' });
+
+    const req = await a.waitFor('permission_request');
+    await b.waitFor('permission_request');   // broadcast, not sent only to `a`
+
+    a.send({ type: 'permission_response', id: req.id, decision: 'allow' });
+    const resolved = await b.waitFor('permission_resolved');
+    assert.equal(resolved.id, req.id);
   });
 });
 
@@ -233,15 +263,23 @@ describe('a tool prompt with nobody connected at all', () => {
   });
   after(async () => { await h.stop(); });
 
-  test('is denied, not left waiting forever', async () => {
+  test('waits — it is not denied just because nobody is connected yet', async () => {
     const c = await h.connect();
     await c.waitFor('history');
     c.send({ type: 'prompt', text: 'do it', permissionMode: 'ask' });
     await h.waitForRecord((r) => r.kind === 'query');
     await c.close();
 
+    // Nobody was connected at the moment the SDK asked — broadcasting to zero
+    // clients is a no-op, so the prompt just sits in pendingPermissions. A tab
+    // that connects later is shown it and can answer it, exactly like an
+    // AskUserQuestion with nobody around to ask.
+    const c2 = await h.connect();
+    const req = await c2.waitFor('permission_request');
+    assert.equal(req.toolName, 'Bash');
+
+    c2.send({ type: 'permission_response', id: req.id, decision: 'allow' });
     const decision = await h.waitForRecord((r) => r.kind === 'tool_decision');
-    assert.equal(decision.outcome.behavior, 'deny');
-    await h.waitForLog('no client is connected — denying');
+    assert.equal(decision.outcome.behavior, 'allow');
   });
 });

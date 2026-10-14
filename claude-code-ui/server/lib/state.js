@@ -36,4 +36,34 @@ export const runtime = {
 
   /** Link targets so replies can turn entity ids into Home Assistant links. */
   haLinks: { entities: [], automations: {} },
+
+  /**
+   * The in-flight run's input channel and phase, alongside `activeQuery`
+   * (which stays the abort handle for everything that must cancel it). Non-null
+   * exactly when `activeQuery` is.
+   *
+   *   phase: 'turn' while the model is actively responding to the prompt that
+   *     started this run; 'background' once that turn's `result` has arrived
+   *     but a background task it spawned (a subagent, a backgrounded shell
+   *     command) is still running — the SDK's own `result` does not mean the
+   *     run is over in that case, only that the foreground turn is.
+   *   channel: the AsyncIterable<SDKUserMessage> queue handed to the SDK as
+   *     `prompt`, kept open across the whole run. A run-query.js detail,
+   *     leaked onto `runtime` only so a prompt arriving while `phase ===
+   *     'background'` can be pushed into the SAME run instead of aborting it
+   *     (which would kill the background work) and starting a new one.
+   *   q: the SDK's Query object, for `setModel()` when a queued prompt picks a
+   *     different model.
+   */
+  activeRun: null,
+
+  /**
+   * Live background tasks for the in-flight run (task_id → {description, type,
+   * lastTool, summary}), excluding anything flagged `ambient` (housekeeping,
+   * not activity — see SDKTaskStartedMessage). Mirrors `background_tasks`,
+   * broadcast on every change and replayed to a newly (re)connected client the
+   * same way `pendingDialogs` is, since a background task belongs to the run,
+   * not to the tab that happened to be open when it started.
+   */
+  backgroundTasks: new Map(),
 };

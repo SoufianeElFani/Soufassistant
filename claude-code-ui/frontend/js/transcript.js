@@ -364,6 +364,47 @@ export function appendInfoBubble(text) {
   scrollBottom();
 }
 
+// A background task (a subagent, a backgrounded shell command) finishing up
+// after the model's own reply already ended. The server has already stripped
+// this down to {status, summary} — see sessions.js's parseTaskNotification —
+// so what lands here is never the harness's raw <task-notification> XML.
+export function appendTaskNotice({ status, summary }) {
+  endToolGroup();
+  S.lastAssistantBubble = null;
+  const div = document.createElement('div');
+  // Matches the other metadata pills (appendResultLine, appendInfoLine): no
+  // per-message timestamp — the pill itself is the "when", right where it
+  // happened in the transcript.
+  div.className = 'result-line task-notice';
+  const verb = status === 'failed' ? 'failed' : status === 'stopped' ? 'stopped' : 'finished';
+  div.textContent = `Background agent ${verb}: ${summary}`;
+  messagesEl.appendChild(div);
+  scrollBottom();
+}
+
+// A report a background subagent delivered through SubagentHandback — model
+// output, not the user's own words (see sessions.js: origin.kind === 'peer').
+// Collapsible, like a folded tool-call group, so a long report doesn't push
+// the reply that actually matters off screen.
+export function appendAgentReport({ from, text, ts }) {
+  endToolGroup();
+  S.lastAssistantBubble = null;
+  const details = document.createElement('details');
+  details.className = 'agent-report';
+  const summary = document.createElement('summary');
+  summary.textContent = `Report from ${from || 'background agent'}`;
+  addTime(summary, ts);
+  // mkBubble('assistant'), not a bare div — the markdown typography (headings,
+  // lists, code blocks) is scoped to .bubble-assistant .bubble-content in CSS.
+  const bubble = mkBubble('assistant');
+  const content = bubble.querySelector('.bubble-content');
+  content._rawMd = text;
+  renderMarkdown(content, text);
+  details.append(summary, bubble);
+  messagesEl.appendChild(details);
+  scrollBottom();
+}
+
 // Rebuild the chat from a persisted transcript (on connect / reconnect).
 // A reconnect replays the *whole* transcript, and clearScreen() empties the
 // list — which resets scrollTop to 0 and re-pins S.stickToBottom. Left alone,
@@ -391,6 +432,8 @@ export function renderHistory(items) {
                             S.usage.cacheWriteTokens += it.cacheWriteTokens || 0;
                             break;
         case 'error':       S.lastAssistantBubble = null; appendErrorBubble(it.message); break;
+        case 'task_notice': appendTaskNotice(it); break;
+        case 'agent_report': appendAgentReport(it); break;
       }
     }
     S.lastAssistantBubble = null;

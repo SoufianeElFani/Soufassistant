@@ -17,6 +17,17 @@ describe('the session list', () => {
         'two': [userLine('Tidy the dashboard')],
         // No user message at all — an empty shell the CLI left behind.
         'junk': [assistantLine([{ type: 'text', text: 'orphaned' }])],
+        // Only a background-task notification, never a real human message —
+        // same shell-session case as 'junk', just via a different route.
+        'notif-only': [userLine('<task-notification><status>completed</status></task-notification>',
+          { origin: { kind: 'task-notification' } })],
+        // The notification arrives first; the title should skip it and come
+        // from the real message that follows.
+        'notif-then-real': [
+          userLine('<task-notification><status>completed</status></task-notification>',
+            { origin: { kind: 'task-notification' } }),
+          userLine('Check the thermostat schedule'),
+        ],
       },
       data: { 'active-session.json': { sessionId: 'one' } },
     });
@@ -35,6 +46,19 @@ describe('the session list', () => {
     const c = await h.connect();
     const s = await c.waitFor('sessions');
     assert.equal(s.sessions.find((x) => x.id === 'junk'), undefined);
+  });
+
+  test('hides a session that only ever got a background-task notification', async () => {
+    const c = await h.connect();
+    const s = await c.waitFor('sessions');
+    assert.equal(s.sessions.find((x) => x.id === 'notif-only'), undefined);
+  });
+
+  test('titles from the first real message, skipping a leading task-notification', async () => {
+    const c = await h.connect();
+    const s = await c.waitFor('sessions');
+    const row = s.sessions.find((x) => x.id === 'notif-then-real');
+    assert.equal(row.title, 'Check the thermostat schedule');
   });
 
   test('switching loads that transcript and tells every tab', async () => {
@@ -90,6 +114,12 @@ describe('reading a transcript', () => {
           { type: 'user', timestamp: new Date().toISOString(), message: { role: 'user', content: [
             { type: 'tool_result', tool_use_id: 'tu1', content: 'file list' },
           ] } },
+          // A background task finishing, and a subagent's delivered report —
+          // never a user bubble, never raw harness XML (the bug this fixes).
+          userLine('<task-notification><task-id>t1</task-id><status>completed</status>' +
+            '<summary>Background agent finished</summary></task-notification>',
+            { origin: { kind: 'task-notification' } }),
+          userLine('ignored', { origin: { kind: 'peer', name: 'background agent', body: 'Report text.' } }),
           'not json at all',
         ],
       },
@@ -101,10 +131,29 @@ describe('reading a transcript', () => {
   test('drops slash-command echoes, meta and sidechain lines, and survives a corrupt line', async () => {
     const c = await h.connect();
     const hist = await c.waitFor('history');
-    assert.deepEqual(hist.items.map((i) => i.kind), ['user', 'text', 'tool_use', 'tool_result']);
+    assert.deepEqual(hist.items.map((i) => i.kind),
+      ['user', 'text', 'tool_use', 'tool_result', 'task_notice', 'agent_report']);
     assert.equal(hist.items[0].text, 'a real question');
     assert.equal(hist.items[2].name, 'Bash');
     assert.equal(hist.items[3].output, 'file list');
+  });
+
+  test('a background-task notification never reaches the chat as a user message', async () => {
+    const c = await h.connect();
+    const hist = await c.waitFor('history');
+    const notice = hist.items.find((i) => i.kind === 'task_notice');
+    assert.equal(notice.status, 'completed');
+    assert.equal(notice.summary, 'Background agent finished');
+    // No raw harness XML anywhere in the rendered history, live or reloaded.
+    assert.ok(!hist.items.some((i) => typeof i.text === 'string' && i.text.includes('<task-notification>')));
+  });
+
+  test("a delivered subagent report is labelled, not shown as the user's own message", async () => {
+    const c = await h.connect();
+    const hist = await c.waitFor('history');
+    const report = hist.items.find((i) => i.kind === 'agent_report');
+    assert.equal(report.from, 'background agent');
+    assert.equal(report.text, 'Report text.');
   });
 });
 

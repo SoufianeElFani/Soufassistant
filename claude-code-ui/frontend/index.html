@@ -201,6 +201,15 @@
       <button id="ac-banner-cancel" class="ac-banner-cancel" title="Cancel auto-continue">Cancel</button>
     </div>
 
+    <!-- A background task (a subagent, a backgrounded shell command) the model
+         spawned and is still finishing up after its own reply ended. Purely
+         informational — nothing here needs a response, so it uses the "offer"
+         (non-active) banner styling rather than the question strip's. -->
+    <div id="bg-tasks-strip" class="ac-banner ac-banner-offer hidden">
+      <span class="ac-banner-icon" aria-hidden="true">&#8987;</span>
+      <span id="bg-tasks-text" class="ac-banner-text"></span>
+    </div>
+
     <!-- A question or permission request that's still waiting after the popup was
          closed to read the chat. Not a second popup: the way back to the one that
          is already there. -->

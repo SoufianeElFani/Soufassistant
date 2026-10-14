@@ -14,7 +14,7 @@ import {
 } from './config.js';
 import { log } from './log.js';
 import { runtime } from './state.js';
-import { connections, send, broadcast } from './broadcast.js';
+import { broadcast } from './broadcast.js';
 import { askQuestion, formatQuestionDenial, askQuestionHook } from './dialogs.js';
 
 /**
@@ -73,57 +73,55 @@ export const ADDON_CONFIGS_HOOKS = ADDON_CONFIGS_HOOK
   ? { PreToolUse: [{ hooks: [ADDON_CONFIGS_HOOK] }] }
   : undefined;
 
-/** PreToolUse hooks for a run: the guard, plus the question interceptor in `auto`. */
+/**
+ * PreToolUse hooks for a run: the guard, plus the question interceptor in
+ * `auto`. The question interceptor is scoped to AskUserQuestion by matcher —
+ * every other tool call in `auto` mode used to round-trip through it too
+ * (checking `tool_name !== 'AskUserQuestion'` and returning `{continue:true}`
+ * unchanged), one more control-protocol message per call for nothing.
+ */
 export function hooksFor(mode) {
   const pre = [];
-  if (ADDON_CONFIGS_HOOK) pre.push(ADDON_CONFIGS_HOOK);
-  if (mode === 'auto') pre.push(askQuestionHook);
-  return pre.length ? { PreToolUse: [{ hooks: pre }] } : undefined;
+  if (ADDON_CONFIGS_HOOK) pre.push({ hooks: [ADDON_CONFIGS_HOOK] });
+  if (mode === 'auto') pre.push({ matcher: 'AskUserQuestion', hooks: [askQuestionHook] });
+  return pre.length ? { PreToolUse: pre } : undefined;
 }
 
 /**
- * Shared permission state for headless auto-continue runs. A tool prompt during
- * an auto-resume has no originating browser socket, so it is surfaced to — and
- * answered by — any connected client through this module-level state rather than
- * hanging on a socket that was never open.
+ * Pending permission prompts, keyed by request id — module-level, not
+ * per-connection. A prompt belongs to the run that asked it, not to the socket
+ * that happened to be open at the time: closing that tab (backgrounding the
+ * app, a phone sleeping) must not auto-deny a tool call that is still
+ * genuinely waiting on an answer, any more than an AskUserQuestion does (see
+ * dialogs.js's pendingDialogs, which this mirrors). It also covers a headless
+ * auto-continue resume, which has no originating socket at all: the same map,
+ * answerable from any tab that connects.
  */
-export const autoResumeState = { pendingPermissions: new Map() };
+export const pendingPermissions = new Map();   // id → { toolName, resolve }
 
-/**
- * Resolve a prompt the user answered. The prompt may belong to this client's run
- * or to a headless resume, which any tab may answer.
- */
-export function resolvePermission(state, id, decision) {
-  const entry = state.pendingPermissions.get(id) || autoResumeState.pendingPermissions.get(id);
+/** Resolve a prompt the user answered, from any connected tab. */
+export function resolvePermission(id, decision) {
+  const entry = pendingPermissions.get(id);
   if (!entry) return false;
-  state.pendingPermissions.delete(id);
-  autoResumeState.pendingPermissions.delete(id);
+  pendingPermissions.delete(id);
   entry.resolve(decision);
+  // The prompt is now replayed to every connected tab (see ws-protocol.js's
+  // greet()), so answering it on one must dismiss it on the others too.
+  broadcast({ type: 'permission_resolved', id });
   return true;
 }
 
 /**
  * Switching to a more permissive mode mid-prompt should not leave a card on
- * screen that the new mode would now allow — across every tab, and including a
- * headless resume's prompt.
+ * screen that the new mode would now allow — across every tab.
  */
 export function resolvePromptsAllowedBy(mode) {
   if (mode !== 'bypass' && mode !== 'acceptEdits') return;
   const permits = (toolName) => mode === 'bypass' || EDIT_TOOLS.has(toolName);
 
-  for (const conn of connections) {
-    const pending = conn._state?.pendingPermissions;
-    if (!pending) continue;
-    for (const [id, entry] of pending) {
-      if (!permits(entry.toolName)) continue;
-      pending.delete(id);
-      entry.resolve('allow');
-      send(conn, { type: 'permission_resolved', id });
-    }
-  }
-  for (const [id, entry] of autoResumeState.pendingPermissions) {
+  for (const [id, entry] of pendingPermissions) {
     if (!permits(entry.toolName)) continue;
-    autoResumeState.pendingPermissions.delete(id);
+    pendingPermissions.delete(id);
     entry.resolve('allow');
     broadcast({ type: 'permission_resolved', id });
   }
@@ -136,7 +134,7 @@ export function resolvePromptsAllowedBy(mode) {
  * mode it was built with, which is what makes switching modes mid-prompt take
  * effect immediately.
  */
-export function makeCanUseTool(ws, state) {
+export function makeCanUseTool() {
   return (toolName, input, options) => {
     // A question is Claude asking the human something, not an action needing
     // approval — it never reaches the permission modes below.
@@ -172,17 +170,11 @@ export function makeCanUseTool(ws, state) {
         alwaysLabel: describeSuggestions(suggestions),
       };
 
-      if (ws.readyState === 1) {
-        send(ws, req);
-      } else if (connections.size > 0) {
-        // Headless run (e.g. auto-continue): no originating socket, so ask
-        // whichever tabs are connected.
-        broadcast(req);
-      } else {
-        log('INFO', `permission needed for ${toolName} but no client is connected — denying`);
-        resolve({ behavior: 'deny', message: 'No interactive client connected to approve this tool.' });
-        return;
-      }
+      // Broadcast, not just sent to the asking tab — the prompt belongs to the
+      // run, not to whichever socket happened to be open when it was raised,
+      // exactly like askQuestion(). A second tab open at the time sees it too,
+      // and a disconnected/headless run still reaches whoever is around.
+      broadcast(req);
 
       // 'allow' (this call) | 'always' (this call + persist the rule) | 'deny'
       const finish = (decision) => {
@@ -196,9 +188,15 @@ export function makeCanUseTool(ws, state) {
         }
       };
 
-      state.pendingPermissions.set(id, { toolName, resolve: finish });
+      // `req` is kept too (not just toolName/resolve) so a tab connecting
+      // after the prompt was raised — not just one that was open for it — can
+      // be shown the same card on replay (see ws-protocol.js's greet()).
+      pendingPermissions.set(id, { toolName, req, resolve: finish });
+      // The only things that end the wait: an answer, or the call's own abort
+      // signal (Stop, a new prompt, a session switch, or — for a backgrounded
+      // run — the whole run finally ending). A disconnecting tab does not.
       options.signal.addEventListener('abort', () => {
-        state.pendingPermissions.delete(id);
+        if (pendingPermissions.delete(id)) broadcast({ type: 'permission_resolved', id });
         resolve({ behavior: 'deny', message: 'Aborted' });
       }, { once: true });
     });

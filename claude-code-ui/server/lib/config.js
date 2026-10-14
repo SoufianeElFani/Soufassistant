@@ -81,3 +81,11 @@ export const AUTO_CONTINUE_PROMPT =
 // window keeps it on screen for a while after the reset, so "you can send again
 // now" is still visible when you next look.
 export const LIMIT_OFFER_GRACE_MS = 30 * 60 * 1000;
+
+// ── Stall watchdog (run-query.js) ──────────────────────────────────────────
+// How long the SDK may go quiet before the log says so, and how often it
+// checks — only while a turn is actively in flight; waiting on a background
+// task is expected to be quiet (see runPhase in run-query.js). Overridable so
+// a test can see the watchdog actually fire without a real 20s wait.
+export const STALL_WARN_MS = parseInt(process.env.STALL_WARN_MS || '20000', 10);
+export const STALL_CHECK_MS = parseInt(process.env.STALL_CHECK_MS || '15000', 10);

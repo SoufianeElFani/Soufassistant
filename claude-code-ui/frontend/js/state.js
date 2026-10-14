@@ -39,6 +39,11 @@ export const S = {
   /** A usage limit that stopped a run while auto-continue was off. */
   limitOffer: null,
 
+  /** Background tasks (a subagent, a backgrounded shell command) the server
+   *  reports still running after the foreground turn's own `result` — see
+   *  run-query.js's runPhase. Empty when nothing is running in the background. */
+  backgroundTasks: [],
+
   /** Scroll anchoring: whether the viewport is pinned to the bottom, and whether
    *  the transcript is being rebuilt wholesale (so the appends do not each drag
    *  the viewport around). */

@@ -699,6 +699,31 @@ pre:hover > .copy-btn, .copy-btn:focus { opacity: 1; }
   flex-shrink: 0;
 }
 
+/* A background task (subagent, backgrounded shell command) finishing up after
+   the model's own reply already ended — see server/lib/sessions.js's
+   task_notice. Just the pill; .result-line carries everything else. */
+.task-notice { align-self: center; }
+
+/* A report delivered through SubagentHandback (origin.kind:'peer'/agent_report)
+   — model output, not the user's own words, and collapsible like a tool-call
+   group so a long report doesn't push the reply that matters off screen. */
+.agent-report { align-self: flex-start; width: 100%; flex-shrink: 0; }
+.agent-report > summary {
+  cursor: pointer; user-select: none; list-style: none;
+  display: flex; align-items: center; gap: 8px;
+  padding: 5px 11px; margin-bottom: 6px;
+  border: 1px solid var(--tool-border); background: var(--tool-bg);
+  border-radius: var(--radius-sm);
+  font-size: 11px; font-weight: 700; color: #7ba3d4;
+  text-transform: uppercase; letter-spacing: 0.07em;
+}
+.agent-report > summary::-webkit-details-marker { display: none; }
+.agent-report > summary .msg-time {
+  display: inline; margin-top: 0; text-transform: none; letter-spacing: normal;
+  font-weight: 400;
+}
+.agent-report .bubble { max-width: 100%; }
+
 /* Context compaction divider */
 .compacted-divider {
   align-self: center;

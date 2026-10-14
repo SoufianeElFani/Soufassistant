@@ -194,7 +194,7 @@ export function registerDiagRoutes(app) {
   app.get('/diag/feed', async (req, res) => {
     const q = (req.query.q || 'Say hello in three words.').toString();
     const headlessWs = { readyState: 3 };   // never open, never in `connections`
-    await runQuery(headlessWs, { pendingPermissions: new Map() }, { text: q, permissionMode: 'auto' });
+    await runQuery(headlessWs, { text: q, permissionMode: 'auto' });
     const items = parseSession(runtime.activeSessionId);
     res.json({ activeSessionId: runtime.activeSessionId, count: items.length, last: items.slice(-6) });
   });

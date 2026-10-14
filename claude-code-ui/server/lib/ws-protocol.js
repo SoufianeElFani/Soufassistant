@@ -14,7 +14,7 @@ import {
 } from './auth.js';
 import { listSessions, parseSession, deleteSession, saveActive } from './sessions.js';
 import { pendingDialogs, answerDialog } from './dialogs.js';
-import { resolvePermission, resolvePromptsAllowedBy } from './permissions.js';
+import { pendingPermissions, resolvePermission, resolvePromptsAllowedBy } from './permissions.js';
 import { saveAttachments, describeAttachments } from './uploads.js';
 import { runQuery, abortActive } from './run-query.js';
 import * as autoContinue from './auto-continue.js';
@@ -38,7 +38,19 @@ function greet(ws) {
   send(ws, { type: 'models', models: runtime.cachedModels });
   send(ws, { type: 'ha_links', entities: runtime.haLinks.entities, automations: runtime.haLinks.automations });
   send(ws, { type: 'sessions', sessions: listSessions(), activeId: runtime.activeSessionId });
-  send(ws, { type: 'history', items: parseSession(runtime.activeSessionId), running: !!runtime.activeQuery });
+  send(ws, {
+    type: 'history',
+    items: parseSession(runtime.activeSessionId),
+    running: !!runtime.activeQuery,
+    // The foreground turn is done but a background task it spawned (a
+    // subagent, a backgrounded shell command) is still running — distinct from
+    // `running` so the UI can show "finishing up in the background" rather
+    // than either idle or the ordinary thinking indicator.
+    background: runtime.backgroundTasks.size > 0,
+  });
+  if (runtime.backgroundTasks.size) {
+    send(ws, { type: 'background_tasks', tasks: [...runtime.backgroundTasks.values()] });
+  }
 
   // Replay a scheduled resume so a reconnecting tab shows the countdown, or —
   // when nothing is scheduled — the standing offer to turn one on.
@@ -58,6 +70,10 @@ function greet(ws) {
   for (const [id, d] of pendingDialogs) {
     send(ws, { type: 'user_dialog', id, dialogKind: 'askUserQuestion', payload: d.payload });
   }
+
+  // Likewise a permission prompt: it belongs to the run, not to whichever tab
+  // was open when it was asked (see permissions.js's pendingPermissions).
+  for (const [, entry] of pendingPermissions) send(ws, entry.req);
 }
 
 function broadcastSessions() {
@@ -79,12 +95,12 @@ const handlers = {
     if (proc && proc.stdin) proc.stdin.write(msg.code + '\n');
   },
 
-  prompt(ws, msg, state) {
+  prompt(ws, msg) {
     if (Array.isArray(msg.attachments) && msg.attachments.length) {
       msg.text = describeAttachments(msg.text, saveAttachments(msg.attachments));
     }
     delete msg.attachments;   // do not carry the base64 payload any further
-    runQuery(ws, state, msg);
+    runQuery(ws, msg);
   },
 
   abort() {
@@ -125,10 +141,11 @@ const handlers = {
     broadcastSessions();
   },
 
-  permission_response(_ws, msg, state) {
+  permission_response(_ws, msg) {
     // 'allow' | 'always' | 'deny' — 'always' also persists the SDK's suggested
-    // rule so this tool stops prompting.
-    resolvePermission(state, msg.id, msg.decision);
+    // rule so this tool stops prompting. Answerable from any tab — the prompt
+    // is not tied to the one that raised it (see permissions.js).
+    resolvePermission(msg.id, msg.decision);
   },
 
   user_dialog_response(_ws, msg) {
@@ -160,9 +177,6 @@ export function attach(wss) {
   wss.on('connection', (ws) => {
     connections.add(ws);
 
-    const state = { pendingPermissions: new Map() };
-    ws._state = state;   // exposed so set_perm_mode can resolve prompts across tabs
-
     greet(ws);
 
     ws.on('message', (raw) => {
@@ -171,7 +185,7 @@ export function attach(wss) {
       const handler = handlers[msg.type];
       if (!handler) return;
       try {
-        handler(ws, msg, state);
+        handler(ws, msg);
       } catch (e) {
         log('ERROR', `handling ${msg.type} failed: ${e?.message || e}`);
       }
@@ -180,15 +194,15 @@ export function attach(wss) {
     ws.on('close', () => {
       connections.delete(ws);
       // The active query is deliberately NOT aborted: it keeps running and
-      // persisting, so the chat is complete when the user navigates back. Only
-      // this client's pending permission prompts are cleared, so the run does not
-      // hang waiting on a browser that has gone.
-      for (const entry of state.pendingPermissions.values()) entry.resolve('deny');
-      state.pendingPermissions.clear();
-      // Questions are NOT cleared here. They are not tied to a connection — a
-      // phone backgrounding its browser drops the socket routinely, and that used
-      // to auto-answer the question "closed without answering" behind the user's
-      // back. The run itself owns the wait (via the tool call's abort signal), so
+      // persisting, so the chat is complete when the user navigates back.
+      // Pending permission prompts and questions are NOT cleared here either —
+      // neither is tied to a connection. A phone backgrounding its browser
+      // drops the socket routinely, and auto-denying (or auto-answering) on
+      // that used to read as the request silently vanishing while the user was
+      // away. Both belong to the run, not the socket that happened to be open
+      // when they were raised: any tab may still answer, including one that
+      // connects later (see greet()'s replay, and dialogs.js / permissions.js).
+      // The run itself owns the wait via the tool call's own abort signal, so
       // Stop, a new prompt, or a session switch already end it correctly.
     });
   });

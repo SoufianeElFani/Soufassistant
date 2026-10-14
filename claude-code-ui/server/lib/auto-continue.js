@@ -19,7 +19,6 @@ import { log, vlog } from './log.js';
 import { broadcast } from './broadcast.js';
 import { runtime } from './state.js';
 import { isSubscriptionAuth } from './auth.js';
-import { autoResumeState } from './permissions.js';
 
 /**
  * `enabled` is the user toggle; `pending` is a scheduled resume; `offer` is the
@@ -119,8 +118,10 @@ function fire() {
   broadcast({ type: 'auto_continue_resuming', attempts: pending.attempts });
 
   // Headless run: a fake never-open socket, so send() no-ops and it is not in
-  // `connections`. Its user message still broadcasts to real tabs.
-  runQuery({ readyState: 3 }, autoResumeState, {
+  // `connections`. Its user message still broadcasts to real tabs, and any
+  // permission prompt it raises goes to the shared pendingPermissions map
+  // (module-level, not per-connection), answerable from whichever tab connects.
+  runQuery({ readyState: 3 }, {
     text: AUTO_CONTINUE_PROMPT,
     permissionMode: pending.permissionMode,
     model: pending.model,

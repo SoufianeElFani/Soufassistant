@@ -487,3 +487,81 @@ describe('leaving a chat when nothing is running', { skip }, () => {
 
   test('with a clean console', () => assert.deepEqual(errors, []));
 });
+
+describe('a background task in the reloaded history', { skip }, () => {
+  let h, browser, page, errors;
+  before(async () => {
+    h = await startServer({
+      sessions: {
+        's': [
+          userLine('spawn a background agent'),
+          assistantLine([{ type: 'text', text: 'spawned it' }]),
+          userLine('<task-notification>\n<task-id>bg9</task-id>\n<status>completed</status>\n' +
+            '<summary>Background agent finished</summary>\n</task-notification>',
+            { origin: { kind: 'task-notification' } }),
+          userLine('ignored — origin.body is the real text',
+            { origin: { kind: 'peer', name: 'background agent', body: 'All done, nothing broke.' } }),
+        ],
+      },
+      data: { 'active-session.json': { sessionId: 's' } },
+    });
+    ({ browser, page, errors } = await launch(h));
+    await page.waitForSelector('.bubble', { timeout: 5000 });
+  });
+  after(async () => { if (browser) await browser.close(); if (h) await h.stop(); });
+
+  test('shows a readable chip and report, never the raw harness XML', async () => {
+    const chip = await page.$eval('.task-notice', (el) => el.textContent);
+    assert.match(chip, /Background agent finished: Background agent finished/);
+
+    const reportSummary = await page.$eval('.agent-report summary', (el) => el.textContent);
+    assert.match(reportSummary, /Report from background agent/);
+    const reportBody = await page.$eval('.agent-report .bubble-content', (el) => el.textContent);
+    assert.match(reportBody, /All done, nothing broke\./);
+
+    const bodyText = await page.$eval('#messages', (el) => el.textContent);
+    assert.ok(!bodyText.includes('<task-notification>'), 'no raw harness XML anywhere in the transcript');
+    assert.ok(!bodyText.includes('ignored — origin.body'), 'the placeholder content, not origin.body, must never render');
+  });
+
+  test('with a clean console', () => assert.deepEqual(errors, []));
+});
+
+describe('the background-task strip during a live run', { skip }, () => {
+  let h, browser, page, errors;
+  const usage = { input_tokens: 1, output_tokens: 1, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 };
+  before(async () => {
+    h = await startServer({
+      scenario: {
+        runs: [{
+          steps: [
+            { emit: { type: 'system', subtype: 'background_tasks_changed',
+              tasks: [{ task_id: 'bgA', task_type: 'local_agent', description: 'Checking the boiler log' }] } },
+            { text: 'spawned' },
+            { emit: { type: 'result', subtype: 'success', total_cost_usd: 0.01, num_turns: 1, usage } },
+            { sleep: 300 },
+            { emit: { type: 'system', subtype: 'background_tasks_changed', tasks: [] } },
+            { emit: { type: 'result', subtype: 'success', total_cost_usd: 0.02, num_turns: 1, usage } },
+          ],
+          noResult: true,
+        }],
+      },
+    });
+    ({ browser, page, errors } = await launch(h));
+  });
+  after(async () => { if (browser) await browser.close(); if (h) await h.stop(); });
+
+  test('appears while a background task is running and clears once it is done', async () => {
+    await page.type('#prompt-input', 'spawn it');
+    await page.click('#send-btn');
+
+    await page.waitForFunction(
+      () => !document.getElementById('bg-tasks-strip').classList.contains('hidden'), { timeout: 5000 });
+    assert.match(await page.$eval('#bg-tasks-text', (el) => el.textContent), /Checking the boiler log/);
+
+    await page.waitForFunction(
+      () => document.getElementById('bg-tasks-strip').classList.contains('hidden'), { timeout: 5000 });
+  });
+
+  test('with a clean console', () => assert.deepEqual(errors, []));
+});

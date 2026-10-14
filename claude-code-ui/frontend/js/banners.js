@@ -5,7 +5,7 @@
 import { S } from './state.js';
 import { completeFromMenu, hideCmdMenu, isMenuOpen, menuIndex, moveMenu, updateCmdMenu } from './commands.js';
 import { resizeTextarea, updateSendBtn } from './composer.js';
-import { acBanner, acBannerCancel, acBannerEnable, acBannerText, autoContinueToggle, inputForm, messagesEl, permModeSelect, promptInput, settingsBtn, settingsPanel } from './dom.js';
+import { acBanner, acBannerCancel, acBannerEnable, acBannerText, autoContinueToggle, bgTasksStrip, bgTasksText, inputForm, messagesEl, permModeSelect, promptInput, settingsBtn, settingsPanel } from './dom.js';
 import { scrollBottom } from './scroll.js';
 import { endToolGroup } from './transcript.js';
 
@@ -94,6 +94,21 @@ export function appendLimitNotice({ resetsAt, scheduled, supported }) {
 
   messagesEl.appendChild(div);
   scrollBottom();
+}
+
+// A background task (a subagent, a backgrounded shell command) the model
+// spawned and that outlived its own reply — S.backgroundTasks, kept current by
+// connection.js's 'background_tasks' handler and the 'history'/'background'
+// replay on reconnect. Purely informational: there's nothing to answer, so it
+// just shows or hides, with no strip/popup pairing like the question strip has.
+export function refreshBgTasksStrip() {
+  const tasks = S.backgroundTasks;
+  if (!tasks.length) { bgTasksStrip.classList.add('hidden'); return; }
+  const label = tasks.length === 1
+    ? `Background task running: ${tasks[0].description}`
+    : `${tasks.length} background tasks running`;
+  bgTasksText.textContent = label;
+  bgTasksStrip.classList.remove('hidden');
 }
 
 // Restore + persist the permission mode so it survives navigating away. The
