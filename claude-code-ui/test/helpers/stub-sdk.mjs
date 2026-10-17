@@ -48,7 +48,7 @@ const DEFAULT_MODELS = [
   { value: 'claude-fable-5-1', displayName: 'Fable 5.1', description: 'Fable 5.1 - most capable for your hardest and longest-running tasks' },
   { value: 'claude-opus-5-5', displayName: 'Opus 5.5', description: 'Opus 5.5 - best for everyday, complex tasks' },
   { value: 'claude-sonnet-5-5', displayName: 'Sonnet 5.5', description: 'Sonnet 5.5 - efficient for routine tasks. Generally recommended for most coding tasks' },
-  { value: 'claude-haiku-4-5', displayName: 'Haiku 4.5', description: 'Haiku 4.5 - fastest for quick answers. Lower cost but less capable than Sonnet 4.6.' },
+  { value: 'claude-haiku-5-5', displayName: 'Haiku 5.5', description: 'Haiku 5.5 - fastest for quick answers. Lower cost but less capable than Sonnet 5.5.' },
 ];
 if (SCENARIO_FILE) {
   try { scenario = JSON.parse(readFileSync(SCENARIO_FILE, 'utf8')); }
