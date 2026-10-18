@@ -26,7 +26,7 @@ describe('the dispatcher', () => {
     const r = await runTool('ha-tools', ['--help']);
     assert.equal(r.code, 0);
     for (const sub of ['timeline', 'history', 'stats', 'logs', 'automation', 'trace-watch',
-      'config-check', 'reload', 'lovelace', 'ws']) {
+      'config-check', 'reload', 'lovelace', 'ws', 'running', 'trace-stuck', 'trace-latest', 'traces']) {
       assert.match(r.stdout, new RegExp(`\\b${sub}\\b`), `--help does not mention ${sub}`);
     }
   });

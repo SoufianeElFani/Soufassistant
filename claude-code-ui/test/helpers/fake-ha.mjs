@@ -28,8 +28,14 @@ export const TOKEN = 'fake-supervisor-token';
  * logs      — { 'core/logs': string | (req) => string } (text/plain, ANSI and all)
  * status    — { 'core/logs': 404 } to force an HTTP status
  * authFails — reject the auth handshake
+ * port      — listen here instead of an ephemeral port (the parity harness needs 80)
+ *
+ * A command handler is called as handler(msg, { push }). `push(event)` sends an
+ * `event` frame on that command's subscription id — for subscribe_trigger and
+ * render_template — and may be called after the handler has returned.
+ * `ping` is answered with a `pong` frame, as real HA does, unless overridden.
  */
-export async function startFakeHa({ commands = {}, rest = {}, logs = {}, status = {}, authFails = false } = {}) {
+export async function startFakeHa({ commands = {}, rest = {}, logs = {}, status = {}, authFails = false, port: listenPort = 0 } = {}) {
   const requests = [];
 
   const http = createServer(async (req, res) => {
@@ -58,7 +64,7 @@ export async function startFakeHa({ commands = {}, rest = {}, logs = {}, status 
     res.end('404: Not Found');
   });
 
-  await new Promise((resolve) => http.listen(0, '127.0.0.1', resolve));
+  await new Promise((resolve) => http.listen(listenPort, '127.0.0.1', resolve));
   const port = http.address().port;
 
   const wss = new WebSocketServer({ server: http, path: '/core/api/websocket' });
@@ -78,6 +84,12 @@ export async function startFakeHa({ commands = {}, rest = {}, logs = {}, status 
 
       requests.push({ ws: msg.type, message: msg });
       const handler = commands[msg.type];
+      if (handler === undefined && msg.type === 'ping') {
+        return ws.send(JSON.stringify({ id: msg.id, type: 'pong' }));
+      }
+      if (handler === undefined && msg.type === 'unsubscribe_events') {
+        return ws.send(JSON.stringify({ id: msg.id, type: 'result', success: true, result: null }));
+      }
       if (handler === undefined) {
         return ws.send(JSON.stringify({
           id: msg.id, type: 'result', success: false,
@@ -85,7 +97,8 @@ export async function startFakeHa({ commands = {}, rest = {}, logs = {}, status 
         }));
       }
       try {
-        const result = typeof handler === 'function' ? handler(msg) : handler;
+        const push = (event) => ws.send(JSON.stringify({ id: msg.id, type: 'event', event }));
+        const result = typeof handler === 'function' ? handler(msg, { push }) : handler;
         ws.send(JSON.stringify({ id: msg.id, type: 'result', success: true, result }));
       } catch (e) {
         ws.send(JSON.stringify({
@@ -118,7 +131,7 @@ export function toolsBin() {
   if (binDir) return binDir;
   binDir = mkdtempSync(path.join(tmpdir(), 'ha-tools-bin-'));
   const dispatcher = path.join(SCRIPTS, 'ha-tools.sh');
-  for (const name of ['ha-tools', 'ha-history', 'ha-stats', 'ha-timeline', 'ha-lovelace', 'ha-logs']) {
+  for (const name of ['ha-tools', 'ha-history', 'ha-stats', 'ha-timeline', 'ha-lovelace', 'ha-logs', 'ha-ws-client']) {
     symlinkSync(dispatcher, path.join(binDir, name));
   }
   return binDir;

@@ -351,13 +351,20 @@ ha-tools reload                               # reload automations (or: reload a
 ha-tools reload template --expect cover.x     # ...and fail if the entity isn't there
 ha-tools trace-watch automation.x --timeout 2h  # block until it really fires
 
+# What is executing right now, and where is a long run waiting? (scripts AND automations)
+ha-ws-client running                          # who is running, for how long, in what mode
+ha-ws-client trace-stuck script.x             # which step/branch it is on, and what it waits for
+ha-ws-client trace-timeline script.x          # every step of the newest run, in order
+ha-ws-client traces --domain script           # stored script runs  (--domain automation = default)
+
 # Times from ha-tools are in HA's timezone with an offset (2026-08-12 23:27:42+01:00);
 # the container clock is UTC. Pass --utc for UTC. Don't hand-convert epoch floats.
 
-# ha-ws-client also has fixed-window helpers for quick checks:
+# ha-ws-client also has fixed-window helpers for quick checks (last 24h; add hours):
 ha-ws-client history sensor.temperature       # recent state-change history
 ha-ws-client stats sensor.temperature         # recent long-term statistics
-ha-ws-client logbook                          # recent logbook entries
+ha-ws-client logbook                          # recent logbook entries (or: logbook light.hall 6)
+# Every ha-ws-client command takes --help (usage + examples) and --json/--compact/--utc.
 
 # ha-logs — Home Assistant logs. There is NO /config/home-assistant.log and the
 # REST endpoint /api/error_log returns 404 (both removed in HA 2025.11 when Core

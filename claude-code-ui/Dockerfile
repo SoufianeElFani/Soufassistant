@@ -51,22 +51,12 @@ RUN case "${BUILD_ARCH}" in \
     esac \
     && ln -sf "$SDK_BIN" /usr/local/bin/claude
 
-# Download ha-ws-client binary (gives Claude a CLI tool to query HA WebSocket API)
-RUN case "${BUILD_ARCH}" in \
-    aarch64) HA_ARCH="linux-arm64" ;; \
-    amd64)   HA_ARCH="linux-amd64" ;; \
-    esac \
-    && curl -fL \
-       "https://github.com/schoolboyqueue/home-assistant-blueprints/releases/download/v1.8.1/ha-ws-client-${HA_ARCH}" \
-       -o /usr/local/bin/ha-ws-client \
-    && chmod +x /usr/local/bin/ha-ws-client
-
 RUN mkdir -p /config/claude-config
 WORKDIR /config
 
 # Copy application files
 # (bump SCRIPTS_VER to force Docker layer re-copy on next build)
-ARG SCRIPTS_VER=28
+ARG SCRIPTS_VER=29
 COPY server/index.js /opt/server/index.js
 COPY server/lib/ /opt/server/lib/
 COPY frontend/ /opt/frontend/
@@ -81,13 +71,14 @@ RUN chmod +x /run.sh \
 # `ha-tools` — this app's HA helpers behind one entry point: history / stats /
 # lovelace (Node, over the WebSocket API), logs (Supervisor journald — needed
 # because HA 2025.11 removed /config/home-assistant.log and the Core
-# `/api/error_log` endpoint), and a `ws` passthrough to ha-ws-client.
+# `/api/error_log` endpoint), and everything the third-party ha-ws-client binary
+# used to do — states, services, registries, traces — which is now built in.
 #
 # Each subcommand keeps its own name as a symlink back to the dispatcher, which
 # reads argv[0] to pick the subcommand — so `ha-logs` and `ha-tools logs` are
 # one command, not two that can drift apart.
 RUN ln -sf /opt/scripts/ha-tools.sh /usr/local/bin/ha-tools \
-    && for tool in ha-history ha-stats ha-timeline ha-lovelace ha-logs; do \
+    && for tool in ha-history ha-stats ha-timeline ha-lovelace ha-logs ha-ws-client; do \
         ln -sf /opt/scripts/ha-tools.sh "/usr/local/bin/$tool"; \
     done
 

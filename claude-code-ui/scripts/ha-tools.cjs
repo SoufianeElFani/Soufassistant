@@ -15,7 +15,14 @@
  *   automation   <list | show | yaml> …
  *   config-check [--no-log-scan]
  *   reload       [domain] [--expect entity_id] [--no-log-scan]
- *   trace-watch  <automation> [--timeout 15m] [--interval 10s]
+ *   trace-watch  <automation|script> [--timeout 15m] [--interval 10s] [--domain]
+ *
+ * Everything ha-ws-client (the third-party Go binary this used to wrap) did now
+ * lives in commands/*.cjs: states and services (basic), registries (registry),
+ * fixed-window history (ws-history), live subscriptions (monitor), and the
+ * automation/script trace suite plus `running` and `trace-stuck` (traces).
+ * `ha-ws-client` is kept as another name for ha-tools, which sends it here with
+ * `ws` as the first argument — see "ws mode" below.
  *
  * Two conventions hold across all of them, because the consumer is an agent
  * reading stdout rather than a human squinting at it:
@@ -34,9 +41,40 @@ const { run, die, usage, printJSON, timeRange } = require('./lib/ha-ws.cjs');
 const { core, coreLogTail } = require('./lib/ha-rest.cjs');
 const { newLines, parseConfigErrors } = require('./lib/ha-log-scan.cjs');
 const { parseDuration, parseWindow, clock, inWindow, toMillis } = require('./lib/ha-time.cjs');
+const { haClock, resolveAutomation } = require('./lib/ha-common.cjs');
+const { execute } = require('./lib/ha-command.cjs');
+const { resolveTraceItem, validateDomain } = require('./commands/traces.cjs');
+const { UsageError } = require('./lib/ha-args.cjs');
 
-const [sub, ...args] = process.argv.slice(2);
-const CMD = process.env.HA_TOOLS_CMD || `ha-tools ${sub || ''}`.trim();
+/*
+ * ws mode. `ha-ws-client <command>` (and `ha-tools ws <command>`) arrive here as
+ * `ws <command> …`. Three of its commands share a name with a native ha-tools
+ * command that takes a date range instead of "the last N hours", so in ws mode
+ * they map onto the ws-* definitions. Global flags may come before the command
+ * (`ha-ws-client --json state x`), as they always could.
+ */
+const WS_RENAMES = { history: 'ws-history', stats: 'ws-stats', timeline: 'ws-timeline' };
+const WS_VALUE_FLAGS = new Set(['--format', '--output', '--max-items', '--from', '--to']);
+
+let [sub, ...args] = process.argv.slice(2);
+let wsMode = false;
+let userSub = sub;
+if (sub === 'ws') {
+  wsMode = true;
+  const lead = [];
+  let rest = args;
+  while (rest.length && rest[0].startsWith('-') && !['-h', '--help', '--version'].includes(rest[0])) {
+    const n = WS_VALUE_FLAGS.has(rest[0]) && !rest[0].includes('=') ? 2 : 1;
+    lead.push(...rest.slice(0, n));
+    rest = rest.slice(n);
+  }
+  [sub, ...args] = rest;
+  args = lead.concat(args);
+  userSub = sub;
+  if (WS_RENAMES[sub]) sub = WS_RENAMES[sub];
+}
+const BASE_CMD = process.env.HA_TOOLS_CMD || 'ha-tools';
+const CMD = wsMode ? `${BASE_CMD} ${userSub || ''}`.trim() : (process.env.HA_TOOLS_CMD || `ha-tools ${sub || ''}`.trim());
 const CONFIG_DIR = process.env.HA_CONFIG_DIR || '/config';
 
 const VALID_PERIODS = new Set(['5minute', 'hour', 'day', 'week', 'month']);
@@ -55,7 +93,8 @@ const USAGE = {
   'config-check': `${CMD} [--no-log-scan]`,
   reload: `${CMD} [domain] [--expect <entity_id>]… [--expect-timeout 8s] [--no-log-scan]\n` +
     `                (default domain: automation; 'all' reloads everything reloadable)`,
-  'trace-watch': `${CMD} <entity_id|id> [--timeout 15m] [--interval 10s] [--format text|json] [--utc]`,
+  'trace-watch': `${CMD} <entity_id|id> [--domain script|automation] [--timeout 15m] [--interval 10s] ` +
+    `[--format text|json] [--utc]`,
 };
 
 /* ---------------------------------------------------------------- arguments */
@@ -112,21 +151,6 @@ function parseRangeArgs(name, accepts = {}) {
 /* ------------------------------------------------------------------- shared */
 
 /**
- * The clock every command prints with: Home Assistant's configured timezone,
- * read from the running instance. The container is UTC, so trusting the local
- * clock here would silently shift every timestamp we report.
- */
-async function haClock(ws, utc) {
-  if (utc) return clock('UTC');
-  try {
-    const config = await ws.send({ type: 'get_config' });
-    return clock(config?.time_zone || 'UTC');
-  } catch {
-    return clock('UTC');
-  }
-}
-
-/**
  * Flatten a `history/history_during_period` response into plain rows.
  *
  * HA's shape is awkward: an object keyed by entity_id whose first element is a
@@ -144,32 +168,6 @@ function flattenHistory(result) {
     }
   }
   return rows.sort((a, b) => a.ms - b.ms);
-}
-
-/** Resolve an entity_id, object_id, numeric id, or alias to one automation. */
-async function resolveAutomation(ws, ref) {
-  const states = await ws.send({ type: 'get_states' });
-  const automations = (states || []).filter((s) => s.entity_id.startsWith('automation.'));
-  const needle = String(ref).toLowerCase();
-
-  const match = automations.find((s) =>
-    s.entity_id.toLowerCase() === needle ||
-    s.entity_id.toLowerCase() === `automation.${needle}` ||
-    String(s.attributes?.id) === String(ref) ||
-    String(s.attributes?.friendly_name || '').toLowerCase() === needle);
-
-  if (!match) {
-    throw new Error(
-      `no automation matching "${ref}" — try \`ha-tools automation list\` ` +
-      `(matched on entity_id, numeric id, or friendly name)`);
-  }
-  return {
-    entity_id: match.entity_id,
-    id: match.attributes?.id ? String(match.attributes.id) : null,
-    alias: match.attributes?.friendly_name || null,
-    state: match.state,
-    last_triggered: match.attributes?.last_triggered || null,
-  };
 }
 
 /* ----------------------------------------------------------------- commands */
@@ -681,8 +679,14 @@ async function missingEntities(ids, { timeoutMs = 8000, intervalMs = 500 } = {})
 // a trace — and "it fired but the condition stopped it" is usually the answer
 // you're looking for.
 function traceWatch() {
-  const ref = args.find((a) => !a.startsWith('-'));
-  if (!ref) usage(USAGE['trace-watch']);
+  const VALUE_FLAGS = new Set(['--timeout', '--interval', '--format', '--domain']);
+  const positional = [];
+  for (let i = 0; i < args.length; i++) {
+    if (VALUE_FLAGS.has(args[i])) i++;
+    else if (!args[i].startsWith('-')) positional.push(args[i]);
+  }
+  const ref = positional[0];
+  if (!ref || args.includes('-h') || args.includes('--help')) usage(USAGE['trace-watch']);
 
   const flag = (name, fallback) => {
     const i = args.indexOf(name);
@@ -695,6 +699,7 @@ function traceWatch() {
   try {
     timeoutMs = parseDuration(timeoutRaw, '--timeout');
     intervalMs = parseDuration(intervalRaw, '--interval');
+    validateDomain({ opt: { domain: flag('--domain', undefined) } });
   } catch (e) {
     console.error(`Error: ${e.message}`);
     usage(USAGE['trace-watch']);
@@ -703,12 +708,17 @@ function traceWatch() {
   const utc = args.includes('--utc');
 
   return run(async (ws) => {
-    const found = await resolveAutomation(ws, ref);
-    if (!found.id) die(`Error: ${found.entity_id} has no internal id, so it has no traces`);
+    let found;
+    try {
+      found = await resolveTraceItem(ws, ref, flag('--domain', undefined));
+    } catch (e) {
+      if (e instanceof UsageError) { console.error(`Error: ${e.message}`); usage(USAGE['trace-watch']); }
+      throw e;
+    }
     const c = await haClock(ws, utc);
 
     const listTraces = async () =>
-      (await ws.send({ type: 'trace/list', domain: 'automation', item_id: found.id })) || [];
+      (await ws.send({ type: 'trace/list', domain: found.domain, item_id: found.item_id })) || [];
     const seen = new Set((await listTraces()).map((t) => t.run_id));
     const deadline = Date.now() + timeoutMs;
 
@@ -725,8 +735,8 @@ function traceWatch() {
         const newest = fresh[fresh.length - 1];
         const detail = await ws.send({
           type: 'trace/get',
-          domain: 'automation',
-          item_id: found.id,
+          domain: found.domain,
+          item_id: found.item_id,
           run_id: newest.run_id,
         });
         printTrace(found, newest, detail, c, format);
@@ -734,7 +744,7 @@ function traceWatch() {
       }
       if (Date.now() >= deadline) {
         console.error(`No new trace for ${found.entity_id} within the timeout — ` +
-          `it has not fired. (Its triggers may never have occurred; this is not an error.)`);
+          `it has not ${found.domain === 'script' ? 'run' : 'fired'}. (Its triggers may never have occurred; this is not an error.)`);
         process.exit(1);
       }
       await new Promise((r) => setTimeout(r, Math.min(intervalMs, Math.max(0, deadline - Date.now()) + 1)));
@@ -767,12 +777,12 @@ function printTrace(found, trace, detail, c, format) {
   console.log(`  script_execution: ${verdict}${verdict === 'failed_conditions' ? '  (a condition blocked it)' : ''}`);
   if (summary.last_step) console.log(`  last_step:        ${summary.last_step}`);
   if (summary.error) console.log(`  error:            ${summary.error}`);
-  console.log(`  full trace:       ha-ws-client trace-debug ${found.entity_id} ${summary.run_id}`);
+  console.log(`  full trace:       ha-tools trace-debug ${found.entity_id} ${summary.run_id}`);
 }
 
 /* --------------------------------------------------------------- dispatch */
 
-const COMMANDS = {
+const NATIVE = {
   history,
   stats,
   timeline,
@@ -783,8 +793,54 @@ const COMMANDS = {
   'trace-watch': traceWatch,
 };
 
+// Everything commands/*.cjs defines, behind the same lookup.
+const DEFS = {};
+for (const mod of ['basic', 'registry', 'ws-history', 'monitor', 'traces']) {
+  for (const def of require(`./commands/${mod}.cjs`).commands) DEFS[def.name] = def;
+}
+const COMMANDS = { ...NATIVE };
+for (const name of Object.keys(DEFS)) COMMANDS[name] = () => execute(DEFS[name], args, CMD);
+
+const CATEGORIES = [
+  ['Entities & services', ['ping', 'state', 'states', 'states-json', 'states-filter', 'config', 'services', 'call', 'template', 'fire-event', 'device-health', 'compare']],
+  ['Registries', ['entities', 'devices', 'areas']],
+  ['History (last N hours)', ['logbook', 'history', 'history-full', 'attrs', 'timeline', 'syslog', 'stats', 'stats-multi', 'context']],
+  ['Live', ['watch', 'monitor', 'monitor-multi', 'analyze']],
+  ['Automations & scripts', ['running', 'traces', 'trace', 'trace-latest', 'trace-summary', 'trace-vars', 'trace-timeline',
+    'trace-trigger', 'trace-actions', 'trace-debug', 'trace-stuck', 'trace-watch', 'automation-config', 'blueprint-inputs']],
+];
+
+function wsHelp() {
+  const lines = [`Usage: ${BASE_CMD} [global options] <command> [args]`, '',
+    'Home Assistant over the WebSocket API. Built into this app (it used to be a separate binary).', ''];
+  for (const [title, names] of CATEGORIES) {
+    lines.push(`${title}:`);
+    for (const n of names) {
+      const def = DEFS[WS_RENAMES[n] || n];
+      const text = def ? def.summary.split(/(?<=\.)\s/)[0] : n === 'trace-watch' ? 'Block until an automation or script runs, then report its trace' : '';
+      lines.push(`  ${n.padEnd(18)}${text}`);
+    }
+    lines.push('');
+  }
+  lines.push('Global options (any position): --json  --compact  --format json|compact|default  --no-headers',
+    '  --no-timestamps  --show-age  --max-items N  --from DATE  --to DATE  --utc',
+    '',
+    `Run \`${BASE_CMD} <command> --help\` for a command's options and examples.`,
+    'Traces take --domain script|automation, or a qualified id: script.foo / automation.foo.');
+  return lines.join('\n');
+}
+
+if (wsMode) {
+  if (!sub || ['-h', '--help', 'help'].includes(sub)) { console.log(wsHelp()); process.exit(0); }
+  if (sub === '--version' || sub === '-v') { console.log('built into the Claude Code UI app (formerly the ha-ws-client binary)'); process.exit(0); }
+  if (sub === 'update') {
+    console.error('ha-ws-client is built into this app; update the app instead.');
+    process.exit(2);
+  }
+}
+
 if (!COMMANDS[sub]) {
-  console.error(`ha-tools: unknown subcommand '${sub || ''}' — expected one of: ` +
+  console.error(`ha-tools: unknown subcommand '${wsMode ? userSub || '' : sub || ''}' — expected one of: ` +
     `${Object.keys(COMMANDS).join(', ')}`);
   process.exit(2);
 }

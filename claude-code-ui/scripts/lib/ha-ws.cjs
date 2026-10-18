@@ -59,6 +59,7 @@ function timeRange({ from, to, days }) {
 /**
  * Open an authenticated connection. Resolves with:
  *   send(message)  → Promise of the command's `result` (rejects on error)
+ *   subscribe(msg, onEvent) → Promise of { id, unsubscribe() }
  *   close()        → close the socket
  */
 function connect() {
@@ -68,6 +69,7 @@ function connect() {
   return new Promise((resolve, reject) => {
     const ws = new WebSocket(WS_URL);
     const pending = new Map();
+    const subscriptions = new Map();
     let nextId = 1;
     let settled = false;
 
@@ -93,18 +95,49 @@ function connect() {
         ws.close();
       } else if (msg.type === 'auth_ok') {
         settled = true;
+        const send = (message, id = nextId++) =>
+          new Promise((res, rej) => {
+            pending.set(id, { res, rej });
+            ws.send(JSON.stringify({ ...message, id }));
+          });
         resolve({
-          send(message) {
+          send,
+          /**
+           * Start a subscription (subscribe_trigger, render_template, …).
+           * `onEvent(event)` is called for every pushed event; the returned
+           * promise resolves once HA has accepted the subscription, so no event
+           * can be missed between the two. unsubscribe() is best-effort.
+           */
+          async subscribe(message, onEvent) {
             const id = nextId++;
-            return new Promise((res, rej) => {
-              pending.set(id, { res, rej });
-              ws.send(JSON.stringify({ ...message, id }));
-            });
+            subscriptions.set(id, onEvent);
+            try {
+              await send(message, id);
+            } catch (e) {
+              subscriptions.delete(id);
+              throw e;
+            }
+            return {
+              id,
+              async unsubscribe() {
+                subscriptions.delete(id);
+                try { await send({ type: 'unsubscribe_events', subscription: id }); } catch { /* closing anyway */ }
+              },
+            };
           },
           close() {
             ws.close();
           },
         });
+      } else if (msg.type === 'event') {
+        const onEvent = subscriptions.get(msg.id);
+        if (onEvent) onEvent(msg.event);
+      } else if (msg.type === 'pong') {
+        // `ping` is answered with a pong, not a result.
+        const handler = pending.get(msg.id);
+        if (!handler) return;
+        pending.delete(msg.id);
+        handler.res(null);
       } else if (msg.type === 'result') {
         const handler = pending.get(msg.id);
         if (!handler) return;

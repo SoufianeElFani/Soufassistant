@@ -7,8 +7,9 @@ A browser-based Claude Code interface running as an HA app. Provides a chat UI b
 ```
 browser  ←→  WebSocket  ←→  server/lib/  ←→  @anthropic-ai/claude-agent-sdk
                                   ↓
-                          ha-ws-client (third-party Go binary; states, calls, templates)
-                          ha-tools (this app's helpers: history / stats / lovelace / logs)
+                          ha-tools, also installed as ha-ws-client (this app's helpers:
+                            states, services, registries, history, automation & script
+                            traces, running work, dashboards, logs)
                           plugins/homeassistant-config/
 ```
 
@@ -19,8 +20,11 @@ browser  ←→  WebSocket  ←→  server/lib/  ←→  @anthropic-ai/claude-ag
 - **`plugins/homeassistant-config/`** — Local plugin with SKILL.md and pre-save YAML validation hook
 - **`scripts/`** — `ha-context.sh` (writes the generated HA context to `~/.claude/ha-context.md`), `browser-capture.sh` (auth flow URL capture), and the `ha-tools` helper suite:
   - `ha-tools.sh` — dispatcher; the single entry point (see below)
-  - `ha-tools.cjs` — the subcommands (`history`, `stats`, `timeline`, `lovelace`, `automation`, `config-check`, `reload`, `trace-watch`)
-  - `lib/ha-ws.cjs` — shared connect/auth/request client
+  - `ha-tools.cjs` — the native subcommands (`history`, `stats`, `timeline`, `lovelace`, `automation`, `config-check`, `reload`, `trace-watch`) and the dispatch for everything below
+  - `commands/*.cjs` — what the `ha-ws-client` binary used to do, now ours: `basic` (states, services, templates), `registry`, `ws-history`, `monitor`, and `traces` (automation **and script** traces, `running`, `trace-stuck`); see **ha-tools** below
+  - `lib/ha-ws.cjs` — shared connect/auth/request client (and subscriptions)
+  - `lib/ha-args.cjs`, `lib/ha-output.cjs`, `lib/ha-command.cjs` — argument parsing, the three output shapes, and the `--help`/usage/clock wrapper every `commands/*.cjs` command gets
+  - `lib/ha-trace.cjs` — pure trace helpers (config-at-path, open steps, breadcrumbs), unit-tested
   - `lib/ha-time.cjs` — one clock for all output (see "Time" below)
   - `lib/ha-rest.cjs` — the few Supervisor REST endpoints with no WebSocket equivalent
   - `lib/ha-log-scan.cjs` — pure helpers for reading the errors HA logs about itself during an operation
@@ -117,6 +121,7 @@ asserts the two manifests agree on anything they share.
 | `test/integration/` | boots the real `server/index.js` in a child process and drives the real WebSocket protocol. The Agent SDK is replaced by a **scripted stub** via a module-resolution hook (`--import test/helpers/sdk-loader.mjs`), so production code is untouched and no 240 MB SDK is needed |
 | `test/cli/` | runs the real `ha-tools` / `ha-logs` / `ha-context` against a fake Home Assistant (WebSocket + Supervisor REST) |
 | `test/browser/` | drives the actual UI in headless Chrome, and asserts a clean console — in a no-build-step app there is nothing else to catch a typo'd identifier. `ui.test.mjs` is the main flow plus the two phone-layout suites (the app alone, and the app inside a stand-in for HA's panel page — request-interception serves that shell same-origin, and it is deliberately 100px taller than the screen, which is the geometry that broke), `modules.test.mjs` proves every module loads and runs, `interactions.test.mjs` goes deeper into the paths no wire assertion can stand in for (setting a question aside, paging a dialog, opening a folded run, find navigation, scroll anchoring) |
+| `test/parity/` | `npm run test:parity` — the old `ha-ws-client` binary (pinned by sha256) and the built-in one, run against the same fake HA inside an unprivileged user+network namespace (the old binary hard-codes `ws://supervisor`), `--json` compared command by command. Not part of `npm test`: it downloads a binary |
 | `test/live/` | the part only the real thing can answer: does the Supervisor token authenticate, do the tools reach a live instance, is the log endpoint still there. Read-only by default |
 
 The integration tests are **characterisation tests**: they were written against
@@ -255,7 +260,8 @@ Patterns for interacting with HA at runtime:
 
 | Tool | Use case | Auth |
 |------|----------|------|
-| **ha-ws-client** | Entity states, service calls, templates, registry search, traces, recent history | `$SUPERVISOR_TOKEN` auto |
+| **ha-ws-client** (= `ha-tools ws`) | Entity states, service calls, templates, registry search, recent history, live monitoring. Built in — it used to be a downloaded Go binary | `$SUPERVISOR_TOKEN` auto |
+| **ha-ws-client traces / trace-\* / running / trace-stuck** | Automation **and script** traces (`--domain script\|automation`, or `script.x`), what is executing right now and for how long, and which step an unfinished run is waiting on | `$SUPERVISOR_TOKEN` auto |
 | **ha-tools history** / **stats** (`ha-history`, `ha-stats`) | History / long-term statistics over a date range (`--days`, `--from`, `--to`) — wraps `history/history_during_period` + `recorder/statistics_during_period` | `$SUPERVISOR_TOKEN` auto |
 | **ha-tools timeline** (`ha-timeline`) | Several entities' state changes merged onto one clock (`--between HH:MM-HH:MM`) — the core automation-debugging move | `$SUPERVISOR_TOKEN` auto |
 | **ha-tools automation** | `list` / `show` (config HA has loaded) / `yaml` (its block in `automations.yaml`, numbered) | `$SUPERVISOR_TOKEN` auto |
@@ -271,11 +277,12 @@ Patterns for interacting with HA at runtime:
 ### ha-tools
 
 `ha-tools` is this app's own helpers behind one entry point — `history`, `stats`,
-`lovelace`, `logs`, plus `ws` as a passthrough to the ha-ws-client binary, so
-`ha-tools --help` maps every HA command available in the container.
+`lovelace`, `logs`, the trace commands, and `ws <command>` for everything
+`ha-ws-client` used to do, so `ha-tools --help` maps every HA command available
+in the container.
 
 Each subcommand is **also** installed under its own name (`ha-history`,
-`ha-stats`, `ha-lovelace`, `ha-logs`). Those are symlinks back to
+`ha-stats`, `ha-lovelace`, `ha-logs`, `ha-ws-client`). Those are symlinks back to
 `scripts/ha-tools.sh`, which reads `argv[0]` to pick the subcommand — one
 implementation, two spellings, so they can't drift apart. Usage text echoes
 whichever name was used (via `$HA_TOOLS_CMD`). Keeping the individual names
@@ -285,7 +292,66 @@ they're the names already in users' habits.
 The WebSocket subcommands share `scripts/lib/ha-ws.cjs`, which owns the connect →
 `auth_required` → `auth_ok` handshake and turns each command into a promise keyed
 on the message id. Add a new WebSocket helper by adding a function to
-`ha-tools.cjs` — not another top-level script.
+`ha-tools.cjs` — or, for a command with positional arguments and the shared flags,
+a definition in `commands/*.cjs` (see below) — not another top-level script.
+
+#### The ha-ws-client commands (`commands/*.cjs`)
+
+Each is a plain definition — `{ name, usage, summary, flags, min, examples, run }` —
+and `lib/ha-command.cjs` supplies argument parsing, `--help` (stdout, exit 0, with
+examples), usage errors (stderr, exit 2), the HA-timezone clock and the output
+shapes. So every command behaves alike and a new one is mostly its `run()`.
+
+- **Global flags work in any position**, including before the command
+  (`ha-ws-client --json state x`): `--json`, `--compact`, `--format`,
+  `--no-headers`, `--no-timestamps`, `--show-age`, `--max-items`, `--from`, `--to`,
+  plus `--utc`. A flag the command doesn't declare is rejected, not ignored.
+- **`--json` is the envelope the Go tool printed**, on one line:
+  `{"success":true,"command":…,"data":…,"count":…}`. Anything parsing it keeps working.
+  Where the Go tool re-serialised HA's data through a struct (dropping most fields), `data`
+  is HA's raw value — a superset.
+- **Three names collide with native commands** — `history`, `stats`, `timeline`.
+  Native `ha-tools history` takes a date range; `ha-ws-client history` takes "last N
+  hours". In `ws` mode they map onto `ws-history`/`ws-stats`/`ws-timeline`, so neither
+  meaning changed.
+- **`ha-ws-client update` no longer exists** (it self-updated a binary); it says so and exits 2.
+- **`fire-event` is new** — SKILL.md documented it but the Go tool never had it.
+
+#### Traces, scripts and running work (`commands/traces.cjs`)
+
+HA's trace API is domain-generic (`trace/list` / `trace/get` take `domain:
+"automation" | "script"`); the Go tool hard-coded `automation`. Every trace command now
+takes `--domain script|automation` **or** reads it from `script.x` / `automation.x`
+(a conflict is exit 2; a bare name tries automation first and falls back to script,
+saying so on stderr).
+
+- **item_id.** An automation's trace key is its `attributes.id`. A script's was verified
+  live to be its **object id** (`nick_blind_creep_open`); the resolver still checks the
+  trace list and falls back to the registry `unique_id`, rather than assuming.
+- **Newest run = newest `timestamp.start`, never "the first listed".** HA lists traces
+  **oldest first** (verified live), so the Go tool's `traces[0]` "latest" was actually
+  the *oldest* stored run for `trace-latest` / `trace-summary` / `automation-config`.
+- **Script steps are `sequence/…`, not `action/…`.** The Go tool's `trace-actions` kept
+  only `action/` paths, so it was empty for scripts; it is now every step except
+  top-level trigger/condition. Nested paths (`sequence/1/parallel/0/sequence/2`,
+  `…/choose/0/sequence/0`, `…/default/0`, `…/if/condition/0`, `…/then/0`,
+  `…/repeat/sequence/0`) resolve back into the config via `lib/ha-trace.cjs`'s
+  `configAt()`. HA writes the word `condition` under `if` where the config has the
+  list directly — a real-instance finding the fixtures didn't have.
+- **Timeline and vars are chronological.** The Go tool iterated a map, so order was random.
+- **`running`** lists scripts that are `on` and automations with `current > 0` (an
+  automation's `on` only means *enabled*), joined to the running traces (`state:
+  running`) for how long. If no running trace is stored the duration is `null`/`?` —
+  never guessed from `last_triggered`. The **effect** column states what the mode does
+  to the next trigger (`single` → dropped, `queued` → queues or drops when full, …);
+  it never says "stuck", per the design rules below.
+- **`trace-stuck`** finds open steps: one a trace records as mid-wait (`delay` with
+  `done: false`, `wait` with `completed: false`), or the trace's own `last_step` with no
+  result yet. The first kind is *explicit*; the second is flagged `[inferred from
+  last_step]`. A parallel script can wait in several branches — all are listed, deepest
+  first. A step with a `child_id` (a script call) is followed into the child's run, to a
+  depth of 5. A `wait_template` is rendered once, now, without the run's variables
+  (and says so); `--no-render` skips that.
 
 #### Design rules (the consumer is an agent, not a person)
 
@@ -295,7 +361,7 @@ agent believes it and spends three tool calls acting on it.
 
 - **Never state an inferred cause as fact.** Say what failed
   (`websocket automation/config failed (…)`), not what you guess caused it. The
-  upstream `ha-ws-client automation-config` announces "blueprint automation with
+  the old upstream `ha-ws-client automation-config` announced "blueprint automation with
   no stored traces" from a branch that can only run when the automation is *not*
   a blueprint, and while traces exist — that message cost an agent several calls.
 - **Empty is `[]`, broken is a non-zero exit.** `success: true` with a `null`
@@ -321,12 +387,20 @@ hands out three formats depending on the API — epoch floats (history), UTC ISO
 (state attributes), local (`now()` in templates) — and an agent doing arithmetic
 across two of them gets it wrong quietly. `toMillis()` normalises all three.
 
-`ha-ws-client` is deliberately **not** absorbed: it's a third-party MIT Go binary
-([schoolboyqueue/home-assistant-blueprints](https://github.com/schoolboyqueue/home-assistant-blueprints),
-source at `scripts/ha-ws-client-go/`), downloaded per-arch in the Dockerfile.
-Vendoring it would mean owning ~30 Go files and cross-compilation for no gain.
+`ha-ws-client` was a third-party MIT Go binary
+([schoolboyqueue/home-assistant-blueprints](https://github.com/schoolboyqueue/home-assistant-blueprints)
+v1.8.1, downloaded per-arch in the Dockerfile) and was deliberately left alone while it
+was good enough. **It was absorbed on 2026-10-18**: it hard-coded the `automation` trace
+domain, reported the *oldest* run as the latest, panicked now and then ("concurrent write
+to websocket connection" in `stats-multi`), and could not be extended without owning Go
+and cross-compilation. The name stays as an alias of `ha-tools` so every documented
+spelling keeps working; `scripts/commands/NOTICE` carries its MIT licence.
+**`npm run test:parity` is the regression net**: it runs the pinned old binary and the
+built-in implementation against the same fake Home Assistant and compares their `--json`
+for every command, with each *intended* difference written down in the test (anything
+else is a regression). Run it before changing a ported command.
 
-Both it and the WebSocket subcommands connect to
+Everything here connects to
 `ws://supervisor/core/api/websocket` with `$SUPERVISOR_TOKEN`. Lovelace is
 WebSocket-only (the REST `/api/lovelace/*` endpoints 404). Full command reference
 is in `plugins/homeassistant-config/skills/homeassistant-config/SKILL.md`.
@@ -581,7 +655,7 @@ Reported symptom: a response stops coming, then resumes minutes later (not a tru
 |------|---------|
 | `config.yaml` | App manifest, options schema |
 | `build.yaml` | Docker build args (base image) |
-| `Dockerfile` | Image build: Node, Agent SDK binary, ha-ws-client, ha-lovelace/ha-history/ha-stats wrappers, plugin |
+| `Dockerfile` | Image build: Node, Agent SDK binary, the `ha-tools` symlinks (ha-ws-client, ha-lovelace, ha-history, …), plugin |
 | `run.sh` | Entrypoint: env init, packages, HA context, start server |
 | `server/index.js` | Composition root — wires `server/lib/` and listens |
 | `server/lib/` | The server proper, one module per concern (see **Server layout**) |

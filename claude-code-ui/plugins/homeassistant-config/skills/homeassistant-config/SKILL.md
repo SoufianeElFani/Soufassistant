@@ -344,7 +344,8 @@ actions:
 ## Live HA Access Tools
 
 **IMPORTANT — tool selection rules:**
-- Use **ha-ws-client** for entity states, service calls, template rendering, registry search, traces, and recent history.
+- Use **ha-ws-client** for entity states, service calls, template rendering, registry search, and recent history.
+- Use **ha-ws-client traces / trace-latest / trace-timeline …** for what an **automation or a script** actually did on a run, **`ha-ws-client running`** for what is executing right now and for how long, and **`ha-ws-client trace-stuck <entity>`** for which step an unfinished run is waiting on. All of them take `--domain script|automation`, or just a qualified id (`script.x`, `automation.x`).
 - Use **ha-history** / **ha-stats** when you need history or long-term statistics over a specific date range (`--days N`, `--from`, `--to`).
 - Use **ha-timeline** when the question involves **more than one entity** — "what happened, in what order?". Do not fetch each entity separately and merge by hand.
 - Use **ha-tools automation show** to see the config HA currently has loaded, and **ha-tools automation yaml** to see that automation's block in `automations.yaml` with line numbers.
@@ -358,7 +359,8 @@ All tools authenticate automatically using `$SUPERVISOR_TOKEN` — no additional
 
 `ha-history`, `ha-stats`, `ha-timeline`, `ha-lovelace` and `ha-logs` are also
 subcommands of a single **`ha-tools`** command (`ha-tools history …`,
-`ha-tools logs …`, and `ha-tools ws …` for ha-ws-client). Both spellings are the
+`ha-tools logs …`, and `ha-tools ws …` for ha-ws-client, which is built into this
+app — `ha-ws-client` and `ha-tools ws` are the same command). Both spellings are the
 same command — use whichever reads better. **`ha-tools --help`** lists every HA
 command available in this container, which is the quickest way to check what you
 have.
@@ -447,7 +449,7 @@ ha-ws-client template '{{ state_attr("climate.thermostat", "current_temperature"
 # BusyBox `date` on this Alpine image has no -d/-v flags and will fail)
 ha-ws-client history sensor.temperature       # recent fixed-window state history
 ha-ws-client stats sensor.temperature         # recent fixed-window statistics
-ha-ws-client logbook                           # recent logbook entries
+ha-ws-client logbook                           # recent logbook entries (or: logbook light.hall 6)
 # An empty result means the entity simply has no recorded changes in the window.
 
 # For a specific DATE RANGE, use these helpers (they compute the range in Node):
@@ -483,6 +485,45 @@ ha-ws-client services --json
 # Diagnostics
 ha-ws-client compare sensor.temp_bedroom sensor.temp_living_room
 ```
+
+Every `ha-ws-client` command takes `--help` (usage and examples) and the same flags,
+in any position: `--json` (one line, `{"success":true,"command":…,"data":…}`),
+`--compact`, `--no-headers`, `--max-items N`, `--utc`. Times print in Home Assistant's
+timezone with an explicit offset.
+
+### Traces, scripts and "what is running right now"
+
+```bash
+# What is executing right now? Automations AND scripts, longest-running first.
+ha-ws-client running
+#   ENTITY                        MODE    RUNS  RUNNING FOR  STARTED   LAST TRIGGERED  EFFECT            LAST STEP
+#   script.nick_blind_creep_open  single  1/1   0:42:13      …+01:00   …+01:00         new runs dropped  sequence[1] › parallel branch 1 › sequence[0]
+# A `mode: single` script that is still running silently drops every new trigger — that
+# is what EFFECT says. RUNNING FOR is "?" when HA stores no running trace for it.
+
+# Which branch is hung, and what is it waiting on?
+ha-ws-client trace-stuck script.nick_blind_creep_open
+#   waiting at: sequence[1] › parallel branch 1 › sequence[0]
+#     wait_template "{{ is_state('binary_sensor.stairs', 'off') }}" (timeout 00:30:00)
+#     here for 0:42:00 — timeout 00:30:00 — template currently renders: false
+#   also waiting at: sequence[1] › parallel branch 0 › sequence[0]
+#     delay 0:05:00 — remaining: overdue by 0:37:00
+# A script that calls another script is followed into the child's run.
+
+# The traces themselves — automations and scripts alike
+ha-ws-client traces script.nick_blind_creep_open          # stored runs, newest first
+ha-ws-client traces --domain script --max-items 10        # every script's recent runs
+ha-ws-client trace-latest script.nick_blind_creep_open    # the newest run, in full (JSON)
+ha-ws-client trace-timeline script.nick_blind_creep_open  # every step in order, with its place in the config
+ha-ws-client trace-actions script.nick_blind_creep_open <run_id>
+ha-ws-client trace-summary automation.hall_light_off      # counts + latest run + what started it
+```
+
+`[run_id]` is optional on every per-run command — the newest run is used. Step paths
+read like the config: `sequence/1/parallel/0/sequence/2` is the third step of the first
+parallel branch of the second step; scripts use `sequence/…` where automations use
+`action/…`. `trace-stuck` marks a step `[inferred from last_step]` when the trace records
+no result for it yet, rather than claiming it is waiting.
 
 ### Editing an automation safely (check → reload → verify)
 
@@ -556,8 +597,8 @@ Notes that matter when reading the output:
   `Traceback` line, so widen with `-n` and read the surrounding context.
 - `--follow` streams forever — always wrap it: `timeout 30 ha-logs --follow`.
 
-For an automation that misbehaved, prefer the **trace** (`ha-ws-client`) over the
-log — it shows the actual step-by-step evaluation. Use logs for integration
+For an automation or script that misbehaved, prefer the **trace** (`ha-ws-client
+trace-timeline <entity>`) over the log — it shows the actual step-by-step evaluation. Use logs for integration
 errors, startup failures, and anything that never reached a trace.
 
 ### REST API via supervisor proxy (curl — use for dashboard editing)

@@ -10,6 +10,7 @@
     "test:server": "NODE_PATH= node --test test/integration/",
     "test:cli": "NODE_PATH= node --test test/cli/",
     "test:browser": "NODE_PATH= node --test test/browser/",
+    "test:parity": "NODE_PATH= node test/parity/run.mjs",
     "test:live": "NODE_PATH= node test/live/run.mjs"
   },
   "//scripts": "NODE_PATH is cleared because some hosts export a global one, which would otherwise satisfy imports from outside this project and hide a missing dependency.",

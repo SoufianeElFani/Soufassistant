@@ -69,7 +69,7 @@ install **Claude Code UI** from the App store — or do it manually:
 Claude uses pre-installed CLI tools (via Bash) plus the Supervisor REST API, all
 authenticated automatically with `$SUPERVISOR_TOKEN`:
 
-- **`ha-ws-client`** — entity states, service calls, Jinja templates, and registry search over the HA WebSocket API.
+- **`ha-ws-client`** — entity states, service calls, Jinja templates, registry search and live monitoring over the HA WebSocket API, plus **automation and script traces**: `ha-ws-client running` shows what is executing right now and for how long, and `ha-ws-client trace-stuck script.x` shows which step an unfinished run is waiting on. (Built in — it is the same command as `ha-tools ws`.)
 - **`ha-tools`** — this app's own helpers, under one command (each is also available under its own name):
   - `ha-tools timeline` (`ha-timeline`) — several entities' state changes merged onto one clock (`--between 22:00-07:00`), which is how most automation timing bugs get found.
   - `ha-tools history` / `ha-tools stats` (`ha-history`, `ha-stats`) — history and long-term statistics over a date range (`--days`, `--from`, `--to`).
@@ -93,7 +93,7 @@ easily.
 
 ```
 browser  ⇄  WebSocket  ⇄  server/index.js  (Node + @anthropic-ai/claude-agent-sdk)
-                                 ├── ha-ws-client                  (HA WebSocket API)
+                                 ├── ha-ws-client                  (states, services, traces, running work)
                                  ├── ha-tools timeline             (multi-entity event timeline)
                                  ├── ha-tools history / stats      (date-range history & stats)
                                  ├── ha-tools automation           (loaded config, YAML, traces)
@@ -108,7 +108,7 @@ HA Supervisor → Ingress proxy → port 7681 → chat UI
 ## Credits
 
 - [heytcass/home-assistant-addons](https://github.com/heytcass/home-assistant-addons) — the original Claude Terminal app and HA integration patterns the context generation is adapted from (MIT)
-- [schoolboyqueue](https://github.com/schoolboyqueue/home-assistant-blueprints) — the `ha-ws-client` Go binary
+- [schoolboyqueue](https://github.com/schoolboyqueue/home-assistant-blueprints) — the `ha-ws-client` Go binary this app used to download; its commands were ported into the built-in `ha-tools` (MIT, see `claude-code-ui/scripts/commands/NOTICE`)
 - [Anthropic](https://www.anthropic.com) — Claude and the Claude Agent SDK
 
 ## License

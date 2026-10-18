@@ -241,6 +241,46 @@ async function main() {
     assert(!/error|unauthor/i.test(out), out.trim());
   });
 
+  await check('ha-ws-client (built in) answers ping, config and a template', async () => {
+    assert(/^Pong!/m.test(await inContainer('ha-ws-client ping')), 'no pong');
+    const cfg = JSON.parse(await inContainer('ha-ws-client config --json'));
+    assert(cfg.success && cfg.data.time_zone, 'config has no time_zone');
+    const tpl = JSON.parse(await inContainer(`ha-ws-client template '{{ 1 + 1 }}' --json`));
+    assert(tpl.data.result === '2', `template rendered ${JSON.stringify(tpl.data)}`);
+    return cfg.data.time_zone;
+  });
+
+  await check('ha-ws-client running lists what is executing (read-only)', async () => {
+    const parsed = JSON.parse(await inContainer('ha-ws-client running --json'));
+    assert(parsed.success && Array.isArray(parsed.data.running), 'no running list');
+    assert(parsed.data.timezone && parsed.data.timezone !== 'UTC',
+      `timezone reported as ${parsed.data.timezone} — should be your HA timezone`);
+    for (const r of parsed.data.running) {
+      assert(r.entity_id && r.mode !== undefined, `incomplete row: ${JSON.stringify(r)}`);
+      if (r.started) assert(/[+-]\d{2}:\d{2}$/.test(r.started), `timestamp without an offset: ${r.started}`);
+    }
+    return `${parsed.data.count} running`;
+  });
+
+  await check('ha-ws-client trace-latest on a script equals a raw trace/get', async () => {
+    // Pick any script that has a stored trace; nothing is started.
+    const list = JSON.parse(await inContainer('ha-ws-client traces --domain script --json'));
+    const sample = (list.data || [])[0];
+    if (!sample) return 'no stored script traces to compare';
+    const entity = `script.${sample.item_id}`;
+    const ours = JSON.parse(await inContainer(`ha-ws-client trace-latest ${entity} --json`));
+    // The raw side talks to HA directly through the same client library, with no
+    // resolver, newest-first sort or formatting of ours in between.
+    const raw = JSON.parse(await inContainer(
+      `NODE_PATH=/opt/server/node_modules node -e "` +
+      `const {connect}=require('/opt/scripts/lib/ha-ws.cjs');(async()=>{const ws=await connect();` +
+      `const l=(await ws.send({type:'trace/list',domain:'script',item_id:'${sample.item_id}'})).sort((a,b)=>Date.parse(b.timestamp.start)-Date.parse(a.timestamp.start));` +
+      `const d=await ws.send({type:'trace/get',domain:'script',item_id:'${sample.item_id}',run_id:l[0].run_id});` +
+      `console.log(JSON.stringify(d));ws.close()})()"`));
+    assert(JSON.stringify(ours.data) === JSON.stringify(raw), `${entity}: trace-latest differs from a raw trace/get`);
+    return `${entity} run ${raw.run_id}`;
+  });
+
   await check('ha-logs reads the real Core log', async () => {
     const out = await inContainer('ha-logs core -n 20 2>&1 | head -c 2000');
     assert(!/returned HTTP/.test(out), out.trim().split('\n')[0]);
