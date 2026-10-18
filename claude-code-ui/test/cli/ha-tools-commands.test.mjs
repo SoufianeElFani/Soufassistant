@@ -304,6 +304,19 @@ describe('history shows Home Assistant time', () => {
     assert.deepEqual(reqs(ha, 'logbook/get_events').at(-1).entity_ids, ['light.hall']);
   });
 
+  test('timeline takes the hours first or last, like every other command takes them last', async () => {
+    const { ha } = await world();
+    try {
+      const last = await wsc(['timeline', 'sensor.temperature', 'light.hall', '6', '--json'], { ha });
+      const first = await wsc(['timeline', '6', 'sensor.temperature', 'light.hall', '--json'], { ha });
+      assert.equal(last.code, 0, last.stderr);
+      assert.deepEqual(last.json.data.map((r) => r.entity_id), first.json.data.map((r) => r.entity_id));
+      const twice = await wsc(['timeline', '6', 'light.hall', '12'], { ha });
+      assert.equal(twice.code, 2);
+      assert.match(twice.stderr, /give the hours once/);
+    } finally { await ha.close(); }
+  });
+
   test('timeline merges entities onto one clock', async () => {
     const r = await wsc(['timeline', '6', 'sensor.temperature', 'light.hall', '--json'], { ha });
     const rows = r.json.data;
@@ -924,3 +937,14 @@ describe('what an agent relies on staying true', () => {
   });
 });
 
+
+describe('lovelace on a dashboard with no stored config', () => {
+  test('says why and what to do, instead of HA\'s bare "No config found."', async () => {
+    const ha = await startFakeHa({ commands: { 'lovelace/config': () => { throw new Error('{"code":"config_not_found","message":"No config found."}'); } } });
+    try {
+      const r = await wsc(['lovelace', 'get'], { ha });
+      assert.equal(r.code, 1);
+      assert.match(r.stderr, /the default dashboard has no stored config — it is auto-generated or in YAML mode/);
+    } finally { await ha.close(); }
+  });
+});

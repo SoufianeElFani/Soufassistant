@@ -162,9 +162,9 @@ const history = {
 const timeline = {
   name: 'timeline',
   range: true,
-  usage: '[hours] <entity_id> [entity_id…] [--between HH:MM-HH:MM] [window options]',
+  usage: '<entity_id> [entity_id…] [hours] [--between HH:MM-HH:MM] [window options]',
   summary: 'Several entities\' state changes merged onto one clock — the core move for "what happened, in what order?".',
-  details: 'A leading number is the hours to look back (`timeline 6 light.a light.b`). --between keeps only a time of day,\n' +
+  details: 'A bare number (first or last) is the hours to look back (`timeline light.a light.b 6`). --between keeps only a time of day,\n' +
     'and may wrap midnight (22:00-07:00). An entity with no events in the window is called out on stderr, since\n' +
     '"no events" and "typo\'d the entity_id" otherwise look identical.',
   flags: { ...WINDOW_FLAGS, between: 'string' },
@@ -172,7 +172,7 @@ const timeline = {
   formats: ['tsv'],
   examples: [
     ['light.hall binary_sensor.stairs --days 3 --between 22:00-07:00'],
-    ['6 light.hall binary_sensor.stairs', 'last 6 hours'],
+    ['light.hall binary_sensor.stairs 6', 'last 6 hours'],
     ['light.hall --days 1 --format tsv'],
   ],
   min: 1,
@@ -182,9 +182,13 @@ const timeline = {
     }
   },
   async run({ ws, pos, opt, out }) {
-    let hoursArg;
-    let entities = pos;
-    if (/^\d+(\.\d+)?$/.test(pos[0])) [hoursArg, ...entities] = pos;
+    // The hours may come first or last (`timeline 6 a b`, `timeline a b 6`); an entity_id
+    // always has a dot, so a bare number can only be hours.
+    const isHours = (p) => /^\d+(\.\d+)?$/.test(p);
+    const numbers = pos.filter(isHours);
+    if (numbers.length > 1) throw new UsageError(`give the hours once, not ${numbers.join(' and ')}`);
+    const hoursArg = numbers[0];
+    const entities = pos.filter((p) => !isHours(p));
     if (!entities.length) throw new UsageError('give at least one entity_id');
     const r = timeRange(opt, hoursArg);
     const result = await ws.send({

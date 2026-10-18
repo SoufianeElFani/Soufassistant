@@ -39,7 +39,18 @@ const lovelace = {
       case 'get': {
         const message = { type: 'lovelace/config', force: true };
         if (rest[0]) message.url_path = rest[0];
-        out.data(await ws.send(message), { command: 'lovelace' });
+        let config;
+        try {
+          config = await ws.send(message);
+        } catch (e) {
+          // HA's own wording ("No config found.") does not say why, or what to do.
+          if (/config_not_found/.test(e.message)) {
+            throw new Error(`${rest[0] ? `dashboard "${rest[0]}"` : 'the default dashboard'} has no stored config — it is auto-generated ` +
+              `or in YAML mode, so there is nothing to read here (YAML dashboards are files under /config; \`lovelace list\` shows the storage-mode ones)`);
+          }
+          throw e;
+        }
+        out.data(config, { command: 'lovelace' });
         return;
       }
 
