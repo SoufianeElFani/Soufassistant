@@ -64,6 +64,7 @@ export const EFFORT_LEVELS = new Set(['low', 'medium', 'high', 'xhigh', 'max']);
 export const UPLOAD_DIR = path.join(DATA_DIR, 'uploads');
 export const ACTIVE_FILE = path.join(DATA_DIR, 'active-session.json');
 export const AUTO_CONTINUE_FILE = path.join(DATA_DIR, 'auto-continue.json');
+export const NOTIFY_FILE = path.join(DATA_DIR, 'notify.json');
 
 /**
  * Claude Code's canonical transcript store, keyed on the project directory —

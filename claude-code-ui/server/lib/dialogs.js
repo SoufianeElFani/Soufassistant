@@ -19,6 +19,7 @@
  */
 import { randomUUID } from 'crypto';
 import { broadcast } from './broadcast.js';
+import { notify, clearAttention } from './notify.js';
 
 export const pendingDialogs = new Map();   // id → { payload, resolve }
 
@@ -54,11 +55,16 @@ export function askQuestion(toolInput, signal) {
     const id = randomUUID();
     pendingDialogs.set(id, { payload: toolInput, resolve });
     broadcast({ type: 'user_dialog', id, dialogKind: 'askUserQuestion', payload: toolInput });
+    notify('question', {
+      title: 'Claude has a question',
+      message: toolInput?.questions?.[0]?.question || toolInput?.questions?.[0]?.header || 'Waiting for your answer',
+    });
     signal?.addEventListener('abort', () => {
       if (pendingDialogs.delete(id)) {
         // Without telling the clients, the question would sit on screen as
         // still-waiting after Stop had already ended the turn.
         broadcast({ type: 'user_dialog_cancelled', id });
+        if (!pendingDialogs.size) clearAttention();
         resolve(null);
       }
     }, { once: true });
@@ -71,6 +77,7 @@ export function answerDialog(id, result) {
   if (!entry) return false;
   pendingDialogs.delete(id);
   broadcast({ type: 'user_dialog_cancelled', id });   // close it on every other tab
+  if (!pendingDialogs.size) clearAttention();
   entry.resolve(result || null);
   return true;
 }

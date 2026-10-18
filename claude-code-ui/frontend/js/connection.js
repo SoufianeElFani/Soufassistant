@@ -9,6 +9,7 @@ import { setStatus, updateSendBtn } from './composer.js';
 import { closePermission, dropDialog, showPermissionPrompt, showUserDialog } from './dialogs.js';
 import { autoContinueToggle, loginBtn, loginCodeForm, loginCodeInput, loginDesc, loginScreen, loginTitle, loginUrlEl, loginUrlSect, loginWaiting, modelSelect, permModeSelect, sessionsPanel, wsUrl } from './dom.js';
 import { relinkRenderedBubbles } from './links.js';
+import { announcePresence, applyNotifyState, attentionCue, showNotifyTestResult } from './notify.js';
 import { applyModelCatalog, ensureModelOption, updateCtxHint } from './model.js';
 import { renderSessions } from './sessions.js';
 import { setAutoContinueSupported } from './settings.js';
@@ -20,7 +21,7 @@ import { appendAgentReport, appendAssistantText, appendCompactedDivider, appendE
 export function connect() {
   S.ws = new WebSocket(wsUrl);
 
-  S.ws.onopen    = () => { S.isConnected = true;  setStatus('connected'); };
+  S.ws.onopen    = () => { S.isConnected = true;  setStatus('connected'); announcePresence(); };
   S.ws.onclose   = () => { S.isConnected = false; S.isRunning = false; setStatus('disconnected'); updateSendBtn(); setTimeout(connect, 3000); };
   S.ws.onerror   = () => S.ws.close();
   S.ws.onmessage = (e) => handleServerMessage(JSON.parse(e.data));
@@ -88,6 +89,14 @@ export function handleServerMessage(msg) {
       // is the source of truth — just reflect it.
       if (msg.autoContinue != null) autoContinueToggle.checked = !!msg.autoContinue;
       setAutoContinueSupported(msg.autoContinueSupported !== false);
+      break;
+
+    case 'notify_state':
+      applyNotifyState(msg);
+      break;
+
+    case 'notify_test':
+      showNotifyTestResult(msg);
       break;
 
     case 'auth_status':
@@ -202,6 +211,7 @@ export function handleServerMessage(msg) {
 
     case 'permission_request':
       hideThinking();
+      attentionCue('Claude needs permission', msg.title || `Allow ${msg.toolName}?`);
       showPermissionPrompt(msg);
       break;
 
@@ -227,6 +237,7 @@ export function handleServerMessage(msg) {
       S.usage.cacheWriteTokens += msg.cacheWriteTokens || 0;
       S.isRunning = false;
       updateSendBtn();
+      if (!msg.background) attentionCue('Claude finished', 'Your reply is ready.');
       break;
 
     case 'context_usage':
@@ -245,6 +256,7 @@ export function handleServerMessage(msg) {
 
     case 'user_dialog':
       hideThinking();
+      attentionCue('Claude has a question', msg.payload?.questions?.[0]?.question || 'Waiting for your answer');
       showUserDialog(msg);
       break;
 

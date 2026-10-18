@@ -32,6 +32,7 @@ import { refreshHaLinks } from './ha-links.js';
 import { MCP_FREE_SETTINGS } from './mcp.js';
 import { usableSlashCommands } from './slash-commands.js';
 import { makeInputChannel } from './input-channel.js';
+import { notify } from './notify.js';
 import * as autoContinue from './auto-continue.js';
 
 // STALL_WARN_MS / STALL_CHECK_MS (config.js): how long the SDK may go quiet
@@ -100,7 +101,13 @@ export async function runQuery(ws, { text, permissionMode, model, effort, autoAt
   // and the SDK persists it to the session store, so nothing is recorded here).
   for (const c of connections) if (c !== ws) send(c, { type: 'user', text });
 
-  const opts = { cwd: WORK_DIR, abortController, plugins: PLUGINS, settings: MCP_FREE_SETTINGS };
+  // The CLI only sends `session_state_changed` (idle / running / requires_action)
+  // when asked — it is the SDK's own "the turn is over" signal, which is what the
+  // reply notification keys off rather than a guess from `result`.
+  const opts = {
+    cwd: WORK_DIR, abortController, plugins: PLUGINS, settings: MCP_FREE_SETTINGS,
+    env: { ...process.env, CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS: '1' },
+  };
   if (model) opts.model = model;
   // Only override effort when the UI asked for a level; otherwise the SDK's own
   // model default applies.
@@ -191,6 +198,10 @@ export async function runQuery(ws, { text, permissionMode, model, effort, autoAt
   // signal (REPLACE semantics); `task_progress` only enriches the entries
   // already there. Ambient tasks (housekeeping, not activity) are excluded.
   let resultSeen = false;
+  // If this CLI never sends session_state_changed, the run's genuine end (the
+  // `finally` below) stands in for it, so a reply is still announced.
+  let sawStateEvents = false;
+  let failed = false;
   let runPhase = 'turn';
   let backgroundHeartbeatTicks = 0;
 
@@ -288,6 +299,13 @@ export async function runQuery(ws, { text, permissionMode, model, effort, autoAt
         log('INFO', `compaction (${m.trigger || 'manual'}): ${m.pre_tokens || '?'} → ${m.post_tokens || '?'} tokens`);
         broadcast({ type: 'compacted', trigger: m.trigger, preTokens: m.pre_tokens, postTokens: m.post_tokens });
         await reportContextUsage(q);
+
+      } else if (event.type === 'system' && event.subtype === 'session_state_changed') {
+        sawStateEvents = true;
+        vlog(`session state: ${event.state}`);
+        if (event.state === 'idle') {
+          notify('reply', { title: 'Claude finished', message: 'Your reply is ready.' });
+        }
 
       } else if (event.type === 'system' && event.subtype === 'background_tasks_changed') {
         syncBackgroundTasks(event.tasks);
@@ -419,6 +437,8 @@ export async function runQuery(ws, { text, permissionMode, model, effort, autoAt
           saveActive();
         }
         broadcast({ type: 'error', message });
+        failed = true;
+        notify('stopped', { title: 'Claude stopped', message: message.slice(0, 200) });
       }
     }
   } finally {
@@ -435,6 +455,10 @@ export async function runQuery(ws, { text, permissionMode, model, effort, autoAt
       broadcast({ type: 'aborted' });
     }
 
+    if (!sawStateEvents && !failed && !limitHit && !abortController.signal.aborted && resultSeen) {
+      notify('reply', { title: 'Claude finished', message: 'Your reply is ready.' });
+    }
+
     // The new or updated session (and its title) should appear in the list.
     broadcast({ type: 'sessions', sessions: listSessions(), activeId: runtime.activeSessionId });
 
@@ -444,6 +468,7 @@ export async function runQuery(ws, { text, permissionMode, model, effort, autoAt
       broadcast({ type: 'ha_links', entities: runtime.haLinks.entities, automations: runtime.haLinks.automations }));
 
     if (limitHit && !abortController.signal.aborted) {
+      notify('stopped', { title: 'Claude hit the usage limit', message: 'The 5-hour limit was reached.' });
       autoContinue.handleLimitHit(limitHit, {
         model, effort,
         permissionMode: permissionMode || DEFAULT_PERMISSION_MODE,

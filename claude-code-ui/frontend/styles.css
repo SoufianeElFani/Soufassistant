@@ -1164,3 +1164,10 @@ pre:hover > .copy-btn, .copy-btn:focus { opacity: 1; }
   .bubble { max-width: 95%; }
   .send-btn { width: 38px; height: 38px; }
 }
+
+.settings-btn {
+  margin-left: auto; padding: 6px 12px; font-size: 13px; cursor: pointer;
+  color: var(--text); background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+.settings-btn:hover { border-color: #555; }

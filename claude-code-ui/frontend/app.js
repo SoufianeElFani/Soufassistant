@@ -20,6 +20,7 @@
  *   attachments.js  images and files
  *   sessions.js     the sessions panel
  *   settings.js     model, effort, auto-continue
+ *   notify.js       presence, title badge, notification settings
  *   banners.js      the usage-limit banner
  *   model.js        model dropdown and the context meter
  *   thinking.js     the working indicator
@@ -41,6 +42,7 @@ import './js/dialogs.js';
 import './js/find.js';
 import './js/sessions.js';
 import './js/settings.js';
+import './js/notify.js';
 import './js/banners.js';
 import './js/scroll.js';
 import './js/promptnav.js';

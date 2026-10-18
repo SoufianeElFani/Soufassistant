@@ -15,7 +15,8 @@ import {
 import { log } from './log.js';
 import { runtime } from './state.js';
 import { broadcast } from './broadcast.js';
-import { askQuestion, formatQuestionDenial, askQuestionHook } from './dialogs.js';
+import { askQuestion, formatQuestionDenial, askQuestionHook, pendingDialogs } from './dialogs.js';
+import { notify, clearAttention } from './notify.js';
 
 /**
  * Render the SDK's suggested permission rules into a short human label for the
@@ -108,7 +109,13 @@ export function resolvePermission(id, decision) {
   // The prompt is now replayed to every connected tab (see ws-protocol.js's
   // greet()), so answering it on one must dismiss it on the others too.
   broadcast({ type: 'permission_resolved', id });
+  clearIfSettled();
   return true;
+}
+
+/** The phone notification is about "something is waiting"; take it down once nothing is. */
+function clearIfSettled() {
+  if (!pendingPermissions.size && !pendingDialogs.size) clearAttention();
 }
 
 /**
@@ -125,6 +132,7 @@ export function resolvePromptsAllowedBy(mode) {
     entry.resolve('allow');
     broadcast({ type: 'permission_resolved', id });
   }
+  clearIfSettled();
 }
 
 /**
@@ -175,6 +183,10 @@ export function makeCanUseTool() {
       // exactly like askQuestion(). A second tab open at the time sees it too,
       // and a disconnected/headless run still reaches whoever is around.
       broadcast(req);
+      notify('permission', {
+        title: 'Claude needs permission',
+        message: options.title || `Allow ${toolName}?`,
+      });
 
       // 'allow' (this call) | 'always' (this call + persist the rule) | 'deny'
       const finish = (decision) => {
@@ -196,7 +208,7 @@ export function makeCanUseTool() {
       // signal (Stop, a new prompt, a session switch, or — for a backgrounded
       // run — the whole run finally ending). A disconnecting tab does not.
       options.signal.addEventListener('abort', () => {
-        if (pendingPermissions.delete(id)) broadcast({ type: 'permission_resolved', id });
+        if (pendingPermissions.delete(id)) { broadcast({ type: 'permission_resolved', id }); clearIfSettled(); }
         resolve({ behavior: 'deny', message: 'Aborted' });
       }, { once: true });
     });

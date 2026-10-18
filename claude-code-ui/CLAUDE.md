@@ -617,6 +617,32 @@ When a **claude.ai subscription** hits its **5-hour** usage limit mid-run, the S
 - **Testing without a real limit:** `GET /diag/autocontinue?simulate=<seconds>` (debug option on) arms a resume that fires after N seconds against the active session, exercising the full schedule→resume path.
 - **A rejection can still throw, and the throw lies.** Confirmed live: `rate_limit_event(status:'rejected')` fires (setting `limitHit`) — then the query still emits a `'result'` event claiming `subtype:'success'` (cost $0, 1 turn) — then the async generator *throws*, landing in the `catch` block with `err.message` like `"Claude Code returned an error result: You've hit your session limit · resets 1am (Europe/London)"`. None of that later noise is trustworthy: `limitHit`, set from the real `rate_limit_event`, is. So once `limitHit` is set for a run, the `'result'` handler no longer touches an `endedSuccessfully` flag (removed — a `'success'` subtype can't override a rejection that already happened), and the `catch` block skips both the generic `error` broadcast (the `finally` block's `limit_notice` already explains it) **and** the stale-resume-id drop (`resuming` branch) — that drop used to fire here every time, silently swapping `activeSessionId` to `null` so the *next* prompt started a brand-new session instead of resuming the interrupted one. Nothing was actually lost (the old transcript is still on disk, just no longer `activeSessionId`, findable in the session list), but it read as if the conversation had vanished.
 
+## Notifications
+
+"Tell me when Claude needs me" is **server-delivered through Home Assistant**, not
+a browser feature: a phone that has backgrounded the page drops the WebSocket and
+suspends JS, so only the server (which outlives the socket) can reach it. The cues
+are the SDK's own, not heuristics:
+
+- **needs permission** — `canUseTool` being invoked (`permissions.js`);
+- **asks a question** — `askQuestion()` (`dialogs.js`), which covers the
+  `canUseTool` and auto-mode hook paths;
+- **reply finished** — `system/session_state_changed` with `state: 'idle'`, the
+  SDK's "authoritative turn-over signal". The CLI only emits it when
+  `CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS=1`, which `run-query.js` passes via
+  `opts.env`. If a CLI never sends it, the run's genuine end (the `finally`) stands
+  in. **Not** `result`: one run can emit several.
+
+`server/lib/notify.js` owns settings (`/data/notify.json`, server-owned like
+auto-continue), the pure `shouldPush()` rule (service chosen, kind enabled, no
+visible tab, 10 s per-kind cooldown), the `notify.<service>` call (tag
+`claude-code-ui`, `url`/`clickAction` = the ingress panel), a matching
+`claude_code_ui_attention` bus event, and `clear_notification` once nothing is
+pending. Tabs report `presence` (`visibilityState` + focus); a dropped socket
+counts as not watching. `frontend/js/notify.js` adds the title badge / optional
+`Notification` for desktop. Wire: `presence`, `set_notify`, `test_notify` →
+`notify_state`, `notify_test`.
+
 ## Logging & the "chat hangs" symptom
 
 Reported symptom: a response stops coming, then resumes minutes later (not a true hang — usually long silent thinking, a slow tool, a retry/backoff, or auto-compaction). Instrumentation added for it:

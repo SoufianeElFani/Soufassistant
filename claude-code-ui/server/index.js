@@ -23,6 +23,7 @@
  *   ha-auth.js        the HA admin-token guard those routes sit behind
  *   uploads.js        attachments
  *   ha-links.js       entity/automation link targets
+ *   notify.js         pushing "needs attention" through Home Assistant
  *   mcp.js            stripping persisted MCP servers at startup
  */
 import { createServer } from 'http';
@@ -43,6 +44,7 @@ import { registerDiagRoutes } from './lib/diag.js';
 import { attach } from './lib/ws-protocol.js';
 import { runQuery } from './lib/run-query.js';
 import * as autoContinue from './lib/auto-continue.js';
+import * as notifier from './lib/notify.js';
 
 // ── HTTP ─────────────────────────────────────────────────────────────────────
 const app = express();
@@ -72,6 +74,7 @@ autoContinue.setResumeRunner(runQuery);
 sanitizeMcpState();
 loadActive();
 autoContinue.load();
+notifier.load();
 cleanupUploads();          // drop attachments older than a week
 refreshHaLinks();          // populate entity/automation link targets
 autoContinue.rearmOnBoot();

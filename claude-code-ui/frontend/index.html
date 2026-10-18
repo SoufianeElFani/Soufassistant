@@ -100,6 +100,24 @@
       <p class="settings-hint" id="auto-continue-hint">
         Resume automatically when the 5-hour usage limit resets.
       </p>
+      <div class="settings-row">
+        <label for="notify-service">Notify</label>
+        <select id="notify-service" class="settings-select"><option value="">Off</option></select>
+      </div>
+      <div class="settings-row settings-row-toggle">
+        <label for="notify-reply">When a reply finishes</label>
+        <input type="checkbox" id="notify-reply" class="settings-toggle" checked>
+      </div>
+      <div class="settings-row settings-row-toggle">
+        <label for="notify-attention">When Claude needs me</label>
+        <input type="checkbox" id="notify-attention" class="settings-toggle" checked>
+      </div>
+      <div class="settings-row">
+        <button type="button" id="notify-test" class="settings-btn">Send test</button>
+      </div>
+      <p class="settings-hint" id="notify-hint">
+        Sent through Home Assistant (e.g. the companion app) while no tab is open and visible.
+      </p>
     </div>
 
     <div id="login-screen" class="login-screen hidden">

@@ -18,6 +18,7 @@ import { pendingPermissions, resolvePermission, resolvePromptsAllowedBy } from '
 import { saveAttachments, describeAttachments } from './uploads.js';
 import { runQuery, abortActive } from './run-query.js';
 import * as autoContinue from './auto-continue.js';
+import * as notifier from './notify.js';
 
 /** Everything a newly connected (or reconnected) tab needs to render the app. */
 function greet(ws) {
@@ -28,6 +29,7 @@ function greet(ws) {
     autoContinue: autoContinue.autoContinue.enabled,
     autoContinueSupported: isSubscriptionAuth(),
   });
+  sendNotifyState(ws);
   send(ws, { type: 'auth_status', authenticated: isAuthenticated() && !runtime.credentialsExpired });
   if (runtime.credentialsExpired) send(ws, { type: 'auth_expired', subscription: isSubscriptionAuth() });
   // A login is mid-flight (reconnected while waiting to paste the code) — restore
@@ -74,6 +76,11 @@ function greet(ws) {
   // Likewise a permission prompt: it belongs to the run, not to whichever tab
   // was open when it was asked (see permissions.js's pendingPermissions).
   for (const [, entry] of pendingPermissions) send(ws, entry.req);
+}
+
+function sendNotifyState(ws) {
+  notifier.listNotifyServices().then((services) =>
+    send(ws, { type: 'notify_state', ...notifier.notifySettings, services }));
 }
 
 function broadcastSessions() {
@@ -170,6 +177,21 @@ const handlers = {
 
   cancel_auto_continue() {
     autoContinue.cancel('user');
+  },
+
+  // Whether this tab is on screen right now. The push is suppressed while any
+  // tab is — a dropped or hidden socket is exactly the phone-in-pocket case.
+  presence(ws, msg) {
+    ws.visible = !!msg.visible;
+  },
+
+  set_notify(_ws, msg) {
+    notifier.setSettings(msg);
+    broadcast({ type: 'notify_state', ...notifier.notifySettings });
+  },
+
+  async test_notify(ws) {
+    send(ws, { type: 'notify_test', ...(await notifier.sendTest()) });
   },
 };
 

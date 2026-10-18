@@ -41,7 +41,9 @@ export async function startFakeHa({ commands = {}, rest = {}, logs = {}, status 
   const http = createServer(async (req, res) => {
     const url = new URL(req.url, 'http://fake');
     const route = url.pathname.replace(/^\/+/, '');
-    requests.push({ method: req.method, route, query: Object.fromEntries(url.searchParams) });
+    let body = '';
+    for await (const chunk of req) body += chunk;
+    requests.push({ method: req.method, route, query: Object.fromEntries(url.searchParams), body });
 
     if (status[route]) {
       res.writeHead(status[route], { 'content-type': 'text/plain' });
