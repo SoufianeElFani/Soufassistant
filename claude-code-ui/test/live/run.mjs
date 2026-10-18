@@ -246,20 +246,21 @@ async function main() {
     const cfg = JSON.parse(await inContainer('ha-tools config --json'));
     assert(cfg.success && cfg.data.time_zone, 'config has no time_zone');
     const tpl = JSON.parse(await inContainer(`ha-tools template '{{ 1 + 1 }}' --json`));
-    assert(tpl.data.result === '2', `template rendered ${JSON.stringify(tpl.data)}`);
+    // HA types a rendered number, so this is 2, not '2'.
+    assert(String(tpl.data.result) === '2', `template rendered ${JSON.stringify(tpl.data)}`);
     return cfg.data.time_zone;
   });
 
   await check('ha-tools running lists what is executing (read-only)', async () => {
     const parsed = JSON.parse(await inContainer('ha-tools running --json'));
-    assert(parsed.success && Array.isArray(parsed.data.running), 'no running list');
-    assert(parsed.data.timezone && parsed.data.timezone !== 'UTC',
-      `timezone reported as ${parsed.data.timezone} — should be your HA timezone`);
-    for (const r of parsed.data.running) {
+    assert(parsed.success && Array.isArray(parsed.data), 'data is not a list of running items');
+    assert(parsed.timezone && parsed.timezone !== 'UTC',
+      `timezone reported as ${parsed.timezone} — should be your HA timezone`);
+    for (const r of parsed.data) {
       assert(r.entity_id && r.mode !== undefined, `incomplete row: ${JSON.stringify(r)}`);
       if (r.started) assert(/[+-]\d{2}:\d{2}$/.test(r.started), `timestamp without an offset: ${r.started}`);
     }
-    return `${parsed.data.count} running`;
+    return `${parsed.data.length} running`;
   });
 
   await check('ha-tools trace-latest on a script equals a raw trace/get', async () => {
