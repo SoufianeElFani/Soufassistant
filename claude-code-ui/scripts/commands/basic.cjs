@@ -16,7 +16,7 @@ async function allStates(ws) {
 }
 
 function notFound(entityId) {
-  return new Error(`entity not found: ${entityId} — try \`ha-ws-client states-filter "${entityId.split('.').pop()}"\``);
+  return new Error(`entity not found: ${entityId} — try \`ha-tools states-filter "${entityId.split('.').pop()}"\``);
 }
 
 const ping = {
@@ -50,6 +50,7 @@ const state = {
 
 const states = {
   name: 'states',
+  listing: true,
   usage: '[--max-items N]',
   summary: 'Count every entity and show a sample (10 by default; use states-filter to search).',
   examples: [[''], ['--max-items 25']],
@@ -69,21 +70,10 @@ const states = {
   },
 };
 
-const statesJson = {
-  name: 'states-json',
-  usage: '',
-  summary: 'Every entity state as one JSON array.',
-  examples: [[''], ['| jq \'.data | length\'']],
-  max: 0,
-  async run({ ws, out }) {
-    const all = await allStates(ws);
-    // Always the envelope: the name promises JSON.
-    console.log(JSON.stringify({ success: true, command: 'states-json', data: all, count: all.length || undefined }));
-  },
-};
-
 const statesFilter = {
   name: 'states-filter',
+  showAge: true,
+  listing: true,
   usage: '<pattern> [--show-age]',
   summary: 'Entities whose entity_id matches a pattern (`*` is a wildcard; case-insensitive, matched anywhere in the id).',
   details: 'The match is unanchored, as it always was: "sensor.*" also matches binary_sensor.x. Filter the output if that matters.',
@@ -149,6 +139,7 @@ const services = {
 
 const call = {
   name: 'call',
+  mutates: true,
   usage: '<domain> <service> [json_data]',
   summary: 'Call a service. The data is a JSON object, usually with an entity_id.',
   examples: [
@@ -208,6 +199,7 @@ const template = {
 
 const fireEvent = {
   name: 'fire-event',
+  mutates: true,
   usage: '<event_type> [json_data]',
   summary: 'Fire an event on the Home Assistant bus.',
   examples: [['custom_event \'{"key":"value"}\''], ['my_test_event']],
@@ -321,4 +313,4 @@ const compare = {
   },
 };
 
-module.exports = { commands: [ping, state, states, statesJson, statesFilter, config, services, call, template, fireEvent, deviceHealth, compare] };
+module.exports = { commands: [ping, state, states, statesFilter, config, services, call, template, fireEvent, deviceHealth, compare] };

@@ -6,7 +6,7 @@
  * build of this app wrote a `home-assistant` server under projects["/config"],
  * which then kept loading and failing long after we stopped configuring one.
  *
- * ha-mcp has since been removed entirely (ha-ws-client / ha-tools do the job),
+ * ha-mcp has since been removed entirely (ha-tools does the job),
  * so any persisted definition is stripped at startup. **Do not delete this**
  * even though we no longer configure MCP servers ourselves — the point is the
  * ones we did not configure.

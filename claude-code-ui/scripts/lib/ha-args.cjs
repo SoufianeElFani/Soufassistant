@@ -2,8 +2,8 @@
  * ha-args — argument parsing for the commands that took over from the
  * ha-ws-client binary.
  *
- * The global flags (--json, --compact, --format, --no-headers, --no-timestamps,
- * --show-age, --max-items, --from, --to, --utc) are accepted anywhere in argv,
+ * The common flags (--json, --compact, --format, --no-headers, --utc) are accepted
+ * anywhere in argv,
  * which is how ha-ws-client behaved and how callers already write them. A flag
  * a command does not declare is rejected rather than ignored: an ignored flag is
  * an agent believing it filtered when it didn't.
@@ -11,28 +11,31 @@
 
 class UsageError extends Error {}
 
+// Honoured by every command. Flags that only some commands act on (--max-items,
+// --from/--to, --show-age) are opt-in via a definition's `listing` / `range` /
+// `showAge`, so a command never accepts a flag it will quietly ignore.
 const GLOBAL_FLAGS = {
   json: 'bool',
   compact: 'bool',
   'no-headers': 'bool',
-  'no-timestamps': 'bool',
-  'show-age': 'bool',
   utc: 'bool',
-  'max-items': 'int',
   format: 'string',
   output: 'string',
-  from: 'string',
-  to: 'string',
 };
+const LISTING_FLAGS = { 'max-items': 'int' };
+const RANGE_FLAGS = { from: 'string', to: 'string' };
+const SHOW_AGE_FLAGS = { 'show-age': 'bool' };
 
 const FORMATS = new Set(['json', 'compact', 'default', 'text']);
 
 /**
  * @param argv   everything after the command name
- * @param flags  this command's own flags: { name: 'bool' | 'string' | 'int' }
+ * @param flags  this command's own flags: { name: 'bool' | 'string' | 'int' | 'number' | 'list' }
+ *               ('list' may repeat and accumulates into an array)
+ * @param extraFormats  --format values this command accepts beyond the common ones (e.g. 'tsv')
  * @returns { pos, opt, help } — opt is keyed by flag name with dashes camel-cased
  */
-function parseArgs(argv, flags = {}) {
+function parseArgs(argv, flags = {}, extraFormats = []) {
   const spec = { ...GLOBAL_FLAGS, ...flags };
   const pos = [];
   const opt = {};
@@ -61,6 +64,11 @@ function parseArgs(argv, flags = {}) {
     if (kind === 'int') {
       if (!/^\d+$/.test(raw)) throw new UsageError(`${a} needs a whole number (got "${raw}")`);
       opt[key] = Number(raw);
+    } else if (kind === 'number') {
+      if (!/^\d+(\.\d+)?$/.test(raw)) throw new UsageError(`${a} needs a number (got "${raw}")`);
+      opt[key] = Number(raw);
+    } else if (kind === 'list') {
+      (opt[key] ||= []).push(raw);
     } else {
       opt[key] = raw;
     }
@@ -68,7 +76,9 @@ function parseArgs(argv, flags = {}) {
 
   // --json / --compact win over --format/--output, as they did upstream.
   const fmt = opt.format ?? opt.output ?? 'default';
-  if (!FORMATS.has(fmt)) throw new UsageError(`invalid --format: ${fmt} (expected json, compact or default)`);
+  if (!FORMATS.has(fmt) && !extraFormats.includes(fmt)) {
+    throw new UsageError(`invalid --format: ${fmt} (expected ${['json', 'compact', 'default', ...extraFormats].join(', ')})`);
+  }
   opt.fmt = opt.json ? 'json' : opt.compact ? 'compact' : fmt === 'text' ? 'default' : fmt;
   return { pos, opt, help };
 }
@@ -84,4 +94,4 @@ function parseFlexibleDate(value) {
   return d;
 }
 
-module.exports = { parseArgs, parseFlexibleDate, UsageError, GLOBAL_FLAGS };
+module.exports = { parseArgs, parseFlexibleDate, UsageError, GLOBAL_FLAGS, LISTING_FLAGS, RANGE_FLAGS, SHOW_AGE_FLAGS };

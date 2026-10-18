@@ -18,7 +18,7 @@
  */
 const { UsageError } = require('../lib/ha-args.cjs');
 const { resolveAutomation, longDuration } = require('../lib/ha-common.cjs');
-const { toMillis } = require('../lib/ha-time.cjs');
+const { toMillis, parseDuration } = require('../lib/ha-time.cjs');
 const T = require('../lib/ha-trace.cjs');
 
 const DOMAINS = ['automation', 'script'];
@@ -40,7 +40,7 @@ async function resolveScript(ws, ref) {
     s.entity_id.toLowerCase() === `script.${needle}` ||
     String(s.attributes?.friendly_name || '').toLowerCase() === needle));
   if (!match) {
-    throw new Error(`no script matching "${ref}" — try \`ha-ws-client states-filter "script.*"\` ` +
+    throw new Error(`no script matching "${ref}" — try \`ha-tools states-filter "script.*"\` ` +
       `(matched on entity_id or friendly name)`);
   }
   const objectId = match.entity_id.slice('script.'.length);
@@ -109,7 +109,7 @@ async function resolveTraceItem(ws, ref, domainFlag) {
     } catch (scriptErr) {
       if (!/^no script matching/.test(scriptErr.message)) throw scriptErr;
       throw new Error(`no automation or script matching "${ref}" — try \`ha-tools automation list\` or ` +
-        `\`ha-ws-client states-filter "script.*"\` (matched on entity_id, internal id, or friendly name)`);
+        `\`ha-tools states-filter "script.*"\` (matched on entity_id, internal id, or friendly name)`);
     }
   }
 }
@@ -162,6 +162,8 @@ const EXAMPLES = (cmd) => [
 
 const traces = {
   name: 'traces',
+  range: true,
+  listing: true,
   usage: '[entity_id] [--domain script|automation]',
   summary: 'List stored traces, newest first: one entity\'s, or every automation\'s (or script\'s, with --domain script).',
   flags: DOMAIN_FLAG,
@@ -254,15 +256,6 @@ const traceLatest = perRun({
   },
 });
 
-const traceDebug = perRun({
-  name: 'trace-debug',
-  summary: 'Everything about a run (trace/get), for debugging; the newest run if none is given.',
-  examples: EXAMPLES('trace-debug'),
-  async run({ ws, item, runId, out }) {
-    out.data(await fetchRun(ws, item, runId), { command: 'trace-debug' });
-  },
-});
-
 const traceSummary = {
   name: 'trace-summary',
   usage: '<entity_id> [--domain script|automation]',
@@ -316,6 +309,7 @@ function describeTriggerOf(detail) {
 
 const traceVars = perRun({
   name: 'trace-vars',
+  listing: true,
   summary: 'The variables seen along a run, in the order the steps happened.',
   examples: EXAMPLES('trace-vars'),
   async run({ ws, item, runId, out }) {
@@ -346,6 +340,7 @@ function stepRow(step, detail, out) {
 
 const traceTimeline = perRun({
   name: 'trace-timeline',
+  listing: true,
   summary: 'Every step of a run in the order it happened, with where it sits in the config (parallel branch, choose option, …).',
   examples: EXAMPLES('trace-timeline'),
   async run({ ws, item, runId, out }) {
@@ -378,6 +373,7 @@ const resultBrief = (step) => {
 
 const traceActions = perRun({
   name: 'trace-actions',
+  listing: true,
   summary: 'What each action step did and returned. Includes steps nested in parallel / choose / if / repeat, and a script\'s `sequence/…` steps.',
   examples: EXAMPLES('trace-actions'),
   async run({ ws, item, runId, out }) {
@@ -570,7 +566,7 @@ const running = {
     rows.sort((a, b) => (b.running_for_s ?? -1) - (a.running_for_s ?? -1) || a.entity_id.localeCompare(b.entity_id));
 
     if (out.isJson) {
-      out.data({ timezone: clock.timeZone, count: rows.length, running: rows }, { command: 'running', count: rows.length });
+      out.data(rows, { command: 'running', count: rows.length, times: true });
       return;
     }
     if (out.showHeaders) {
@@ -777,7 +773,6 @@ const traceStuck = {
     const summary = {
       entity_id: item.entity_id,
       domain: item.domain,
-      timezone: clock.timeZone,
       mode: item.mode,
       current: item.current,
       max: item.max,
@@ -792,7 +787,7 @@ const traceStuck = {
       } : null,
     };
 
-    if (out.isJson) { out.data(summary, { command: 'trace-stuck' }); return; }
+    if (out.isJson) { out.data(summary, { command: 'trace-stuck', times: true }); return; }
 
     if (!summary.running.length) {
       console.log(`${item.entity_id} is not running` +
@@ -816,8 +811,101 @@ const traceStuck = {
   },
 };
 
+
+/* -------------------------------------------------------------- trace-watch */
+
+// trace-watch — block until the automation (or script) actually runs, then report
+// the trace.
+//
+// Verifying a changed trigger needs the trigger to genuinely fire;
+// `automation.trigger` skips triggers and conditions, so it proves nothing about
+// the thing you just edited. This polls the trace list rather than subscribing
+// to automation_triggered, because a run blocked by its conditions still writes
+// a trace — and "it fired but the condition stopped it" is usually the answer
+// you're looking for.
+const traceWatch = {
+  name: 'trace-watch',
+  usage: '<entity_id|id> [--domain script|automation] [--timeout 100s] [--interval 10s]',
+  summary: 'Block until an automation (or script) actually runs, then report the trace — including runs its conditions blocked.',
+  details: 'Exits 0 with the trace when a new run appears, 1 if the timeout passes with none (not an error in the\n' +
+    'automation: its triggers may simply not have occurred). The default is 100s, because a foreground command is cut off at about 2 minutes;\n' +
+    'for a longer wait pass --timeout and run it in the background.',
+  flags: { ...DOMAIN_FLAG, timeout: 'string', interval: 'string' },
+  flagHelp: { ...DOMAIN_HELP, '--timeout 100s': 'give up after this long (30s, 10m, 2h)', '--interval 10s': 'how often to poll' },
+  validate(parsed) {
+    validateDomain(parsed);
+    try {
+      parsed.opt.timeoutMs = parseDuration(parsed.opt.timeout ?? '100s', '--timeout');
+      parsed.opt.intervalMs = parseDuration(parsed.opt.interval ?? '10s', '--interval');
+    } catch (e) { throw new UsageError(e.message); }
+  },
+  min: 1,
+  max: 1,
+  examples: [
+    ['automation.hall_light_off', 'waits up to 100s'],
+    ['automation.hall_light_off --timeout 2h', 'run it in the background'],
+    ['script.nick_blind_creep_open --timeout 30m --json'],
+  ],
+  async run({ ws, pos, opt, out }) {
+    const found = await resolveTraceItem(ws, pos[0], opt.domain);
+    const listTraces = async () => (await ws.send({ type: 'trace/list', domain: found.domain, item_id: found.item_id })) || [];
+    const seen = new Set((await listTraces()).map((t) => t.run_id));
+    const deadline = Date.now() + opt.timeoutMs;
+
+    // stderr, so stdout carries only the result the caller is waiting for.
+    console.error(`Watching ${found.entity_id} for a new trace ` +
+      `(${seen.size} existing, polling every ${opt.interval ?? '10s'}, giving up after ${opt.timeout ?? '100s'})…`);
+
+    for (;;) {
+      const fresh = (await listTraces())
+        .filter((t) => !seen.has(t.run_id))
+        .sort((a, b) => (toMillis(a.timestamp?.start) ?? 0) - (toMillis(b.timestamp?.start) ?? 0));
+      if (fresh.length) {
+        const newest = fresh[fresh.length - 1];
+        const detail = await getRun(ws, found.domain, found.item_id, newest.run_id);
+        printWatched(found, newest, detail, out);
+        return;
+      }
+      if (Date.now() >= deadline) {
+        out.fail(undefined, {
+          command: 'trace-watch',
+          message: `No new trace for ${found.entity_id} within the timeout — it has not ` +
+            `${found.domain === 'script' ? 'run' : 'fired'}. (Its triggers may never have occurred; this is not an error.)`,
+        });
+        return;
+      }
+      await new Promise((r) => setTimeout(r, Math.min(opt.intervalMs, Math.max(0, deadline - Date.now()) + 1)));
+    }
+  },
+};
+
+function printWatched(found, trace, detail, out) {
+  const ms = toMillis(trace.timestamp?.start || detail?.timestamp?.start);
+  // script_execution is HA's own verdict on the run: "finished" means it ran to
+  // the end, "failed_conditions" means the conditions blocked it — the
+  // distinction the whole watch exists to capture.
+  const verdict = detail?.script_execution || trace.script_execution || 'unknown';
+  const summary = {
+    entity_id: found.entity_id,
+    run_id: trace.run_id,
+    time: ms === null ? null : out.stamp(ms),
+    timezone: out.clock.timeZone,
+    script_execution: verdict,
+    last_step: detail?.last_step || trace.last_step || null,
+    error: detail?.error || trace.error || null,
+    condition_blocked: verdict === 'failed_conditions',
+  };
+  if (out.isJson) { out.data({ ...summary, trace: detail }, { command: 'trace-watch', times: true }); return; }
+  console.log(`${summary.time}  ${found.entity_id}  fired`);
+  console.log(`  run_id:           ${summary.run_id}`);
+  console.log(`  script_execution: ${verdict}${verdict === 'failed_conditions' ? '  (a condition blocked it)' : ''}`);
+  if (summary.last_step) console.log(`  last_step:        ${summary.last_step}`);
+  if (summary.error) console.log(`  error:            ${summary.error}`);
+  console.log(`  full trace:       ha-tools trace-debug ${found.entity_id} ${summary.run_id}`);
+}
+
 module.exports = {
   commands: [traces, trace, traceLatest, traceSummary, traceVars, traceTimeline, traceTrigger, traceActions,
-    traceDebug, automationConfig, blueprintInputs, running, traceStuck],
+    automationConfig, blueprintInputs, running, traceStuck, traceWatch],
   resolveTraceItem, listRuns, getRun, fetchRun, validateDomain, DOMAIN_FLAG,
 };

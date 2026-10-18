@@ -7,9 +7,9 @@ A browser-based Claude Code interface running as an HA app. Provides a chat UI b
 ```
 browser  ←→  WebSocket  ←→  server/lib/  ←→  @anthropic-ai/claude-agent-sdk
                                   ↓
-                          ha-tools, also installed as ha-ws-client (this app's helpers:
-                            states, services, registries, history, automation & script
-                            traces, running work, dashboards, logs)
+                          ha-tools (this app's one CLI: states, services, registries,
+                            history, automation & script traces, running work,
+                            dashboards, logs)
                           plugins/homeassistant-config/
 ```
 
@@ -20,15 +20,15 @@ browser  ←→  WebSocket  ←→  server/lib/  ←→  @anthropic-ai/claude-ag
 - **`plugins/homeassistant-config/`** — Local plugin with SKILL.md and pre-save YAML validation hook
 - **`scripts/`** — `ha-context.sh` (writes the generated HA context to `~/.claude/ha-context.md`), `browser-capture.sh` (auth flow URL capture), and the `ha-tools` helper suite:
   - `ha-tools.sh` — dispatcher; the single entry point (see below)
-  - `ha-tools.cjs` — the native subcommands (`history`, `stats`, `timeline`, `lovelace`, `automation`, `config-check`, `reload`, `trace-watch`) and the dispatch for everything below
-  - `commands/*.cjs` — what the `ha-ws-client` binary used to do, now ours: `basic` (states, services, templates), `registry`, `ws-history`, `monitor`, and `traces` (automation **and script** traces, `running`, `trace-stuck`); see **ha-tools** below
+  - `ha-tools.cjs` — the dispatcher: one command table loaded from `commands/`, one generated `--help`
+  - `commands/*.cjs` — every command: `basic` (states, services, templates), `registry`, `history` (history / stats / timeline / logbook …), `monitor`, `automation` (automation, config-check, reload), `lovelace`, and `traces` (automation **and script** traces, `running`, `trace-stuck`, `trace-watch`); see **ha-tools** below
   - `lib/ha-ws.cjs` — shared connect/auth/request client (and subscriptions)
   - `lib/ha-args.cjs`, `lib/ha-output.cjs`, `lib/ha-command.cjs` — argument parsing, the three output shapes, and the `--help`/usage/clock wrapper every `commands/*.cjs` command gets
   - `lib/ha-trace.cjs` — pure trace helpers (config-at-path, open steps, breadcrumbs), unit-tested
   - `lib/ha-time.cjs` — one clock for all output (see "Time" below)
   - `lib/ha-rest.cjs` — the few Supervisor REST endpoints with no WebSocket equivalent
   - `lib/ha-log-scan.cjs` — pure helpers for reading the errors HA logs about itself during an operation
-  - `ha-logs.sh` — Supervisor journald log reader, reached as `ha-tools logs`
+  - `ha-logs.sh` — Supervisor journald log reader, reached as `ha-tools logs` (the one command that is not Node)
 
 ### Server layout
 
@@ -119,9 +119,9 @@ asserts the two manifests agree on anything they share.
 |---|---|
 | `test/unit/` | pure functions — transcript parsing, the clock, permission labels |
 | `test/integration/` | boots the real `server/index.js` in a child process and drives the real WebSocket protocol. The Agent SDK is replaced by a **scripted stub** via a module-resolution hook (`--import test/helpers/sdk-loader.mjs`), so production code is untouched and no 240 MB SDK is needed |
-| `test/cli/` | runs the real `ha-tools` / `ha-logs` / `ha-context` against a fake Home Assistant (WebSocket + Supervisor REST) |
+| `test/cli/` | runs the real `ha-tools` (incl. `logs`) / `ha-context` against a fake Home Assistant (WebSocket + Supervisor REST) |
 | `test/browser/` | drives the actual UI in headless Chrome, and asserts a clean console — in a no-build-step app there is nothing else to catch a typo'd identifier. `ui.test.mjs` is the main flow plus the two phone-layout suites (the app alone, and the app inside a stand-in for HA's panel page — request-interception serves that shell same-origin, and it is deliberately 100px taller than the screen, which is the geometry that broke), `modules.test.mjs` proves every module loads and runs, `interactions.test.mjs` goes deeper into the paths no wire assertion can stand in for (setting a question aside, paging a dialog, opening a folded run, find navigation, scroll anchoring) |
-| `test/parity/` | `npm run test:parity` — the old `ha-ws-client` binary (pinned by sha256) and the built-in one, run against the same fake HA inside an unprivileged user+network namespace (the old binary hard-codes `ws://supervisor`), `--json` compared command by command. Not part of `npm test`: it downloads a binary |
+| `test/parity/` | `npm run test:parity` — the old `ha-ws-client` binary this app once shipped (pinned by sha256) and the built-in one, run against the same fake HA inside an unprivileged user+network namespace (the old binary hard-codes `ws://supervisor`), `--json` compared command by command. Not part of `npm test`: it downloads a binary |
 | `test/live/` | the part only the real thing can answer: does the Supervisor token authenticate, do the tools reach a live instance, is the log endpoint still there. Read-only by default |
 
 The integration tests are **characterisation tests**: they were written against
@@ -260,15 +260,15 @@ Patterns for interacting with HA at runtime:
 
 | Tool | Use case | Auth |
 |------|----------|------|
-| **ha-ws-client** (= `ha-tools ws`) | Entity states, service calls, templates, registry search, recent history, live monitoring. Built in — it used to be a downloaded Go binary | `$SUPERVISOR_TOKEN` auto |
-| **ha-ws-client traces / trace-\* / running / trace-stuck** | Automation **and script** traces (`--domain script\|automation`, or `script.x`), what is executing right now and for how long, and which step an unfinished run is waiting on | `$SUPERVISOR_TOKEN` auto |
-| **ha-tools history** / **stats** (`ha-history`, `ha-stats`) | History / long-term statistics over a date range (`--days`, `--from`, `--to`) — wraps `history/history_during_period` + `recorder/statistics_during_period` | `$SUPERVISOR_TOKEN` auto |
-| **ha-tools timeline** (`ha-timeline`) | Several entities' state changes merged onto one clock (`--between HH:MM-HH:MM`) — the core automation-debugging move | `$SUPERVISOR_TOKEN` auto |
+| **ha-tools state / states-filter / entities / template / call …** | Entity states, registry search, Jinja templates, service calls (`call` changes HA) | `$SUPERVISOR_TOKEN` auto |
+| **ha-tools running / trace-stuck / trace-timeline / trace-summary / traces** | Automation **and script** traces (`--domain script\|automation`, or `script.x`), what is executing right now and for how long, and which step an unfinished run is waiting on. `trace` / `trace-latest` print the whole raw trace | `$SUPERVISOR_TOKEN` auto |
+| **ha-tools history** / **stats** | State history / long-term statistics over a window (a trailing hours number, `--hours`, `--days`, or `--from`/`--to`) — wraps `history/history_during_period` + `recorder/statistics_during_period` | `$SUPERVISOR_TOKEN` auto |
+| **ha-tools timeline** | Several entities' state changes merged onto one clock (`--between HH:MM-HH:MM`) — the core automation-debugging move | `$SUPERVISOR_TOKEN` auto |
 | **ha-tools automation** | `list` / `show` (config HA has loaded) / `yaml` (its block in `automations.yaml`, numbered) | `$SUPERVISOR_TOKEN` auto |
 | **ha-tools config-check** / **reload** | Validate config then reload a domain — REST-only, previously hand-rolled curl. Both read the Core log across the call to catch per-entity errors HA only logs (`--no-log-scan` opts out); `reload --expect <entity_id>` asserts the entity materialised | `$SUPERVISOR_TOKEN` auto |
-| **ha-tools trace-watch** | Block until an automation actually fires, then report the trace (incl. condition-blocked runs) | `$SUPERVISOR_TOKEN` auto |
-| **ha-tools lovelace** (`ha-lovelace`) | Lovelace dashboards (list / get / save / create / delete) over WebSocket | `$SUPERVISOR_TOKEN` auto |
-| **ha-tools logs** (`ha-logs`) | Core / host / Supervisor / per-app logs via the Supervisor journald endpoints | `$SUPERVISOR_TOKEN` auto |
+| **ha-tools trace-watch** | Block until an automation actually fires, then report the trace (incl. condition-blocked runs). Waits 100s by default | `$SUPERVISOR_TOKEN` auto |
+| **ha-tools lovelace** | Lovelace dashboards (list / get / save / create / delete) over WebSocket | `$SUPERVISOR_TOKEN` auto |
+| **ha-tools logs** | Core / host / Supervisor / per-app logs via the Supervisor journald endpoints | `$SUPERVISOR_TOKEN` auto |
 | **REST curl** | States, services (`/api/...`) | `Authorization: Bearer $SUPERVISOR_TOKEN` |
 | **Direct YAML edit** | YAML-mode dashboards & all config files in `/config` | file is on disk, no auth |
 
@@ -276,46 +276,67 @@ Patterns for interacting with HA at runtime:
 
 ### ha-tools
 
-`ha-tools` is this app's own helpers behind one entry point — `history`, `stats`,
-`lovelace`, `logs`, the trace commands, and `ws <command>` for everything
-`ha-ws-client` used to do, so `ha-tools --help` maps every HA command available
-in the container.
-
-Each subcommand is **also** installed under its own name (`ha-history`,
-`ha-stats`, `ha-lovelace`, `ha-logs`, `ha-ws-client`). Those are symlinks back to
-`scripts/ha-tools.sh`, which reads `argv[0]` to pick the subcommand — one
-implementation, two spellings, so they can't drift apart. Usage text echoes
-whichever name was used (via `$HA_TOOLS_CMD`). Keeping the individual names
-matters because they're what the SKILL.md and generated context teach, and
-they're the names already in users' habits.
+`ha-tools` is this app's one CLI — a single name, on purpose. The consumer is an
+agent: two spellings of a tool are a choice it has to make for no benefit, and every
+alias is another line in the context it carries. (The third-party `ha-ws-client`
+binary and the `ha-history` / `ha-stats` / `ha-timeline` / `ha-lovelace` / `ha-logs`
+shortcuts were removed outright, along with the duplicate commands `trace-debug`,
+`history-full`, `states-json` and `watch` — a clean break, no compatibility shims.)
+`ha-tools --help` maps every HA command available in the container. `ha-tools.sh`
+execs Node for everything except `logs`, which is a bash script.
 
 The WebSocket subcommands share `scripts/lib/ha-ws.cjs`, which owns the connect →
 `auth_required` → `auth_ok` handshake and turns each command into a promise keyed
-on the message id. Add a new WebSocket helper by adding a function to
-`ha-tools.cjs` — or, for a command with positional arguments and the shared flags,
-a definition in `commands/*.cjs` (see below) — not another top-level script.
+on the message id. Add a new helper by adding a definition to `commands/*.cjs`
+(see below) — not a function in `ha-tools.cjs`, and not another top-level script.
 
-#### The ha-ws-client commands (`commands/*.cjs`)
+#### One tool, one contract (`commands/*.cjs`)
 
-Each is a plain definition — `{ name, usage, summary, flags, min, examples, run }` —
-and `lib/ha-command.cjs` supplies argument parsing, `--help` (stdout, exit 0, with
-examples), usage errors (stderr, exit 2), the HA-timezone clock and the output
-shapes. So every command behaves alike and a new one is mostly its `run()`.
+`ha-tools.cjs` is only a dispatcher: it loads every module in `commands/` into one
+table and generates `--help` from it. Each command is a plain definition —
+`{ name, usage, summary, flags, min, examples, run }` — and `lib/ha-command.cjs`
+supplies argument parsing, `--help` (stdout, exit 0, with examples), usage errors
+(stderr, exit 2), the HA-timezone clock and the output shapes. A new command is its
+definition and its `run()`; `ha-tools.sh` has no command list to forget. Definition
+options beyond the above: `formats: ['tsv']` (extra `--format` values), `ws: false`
+(REST-only commands — `config-check` and `reload` — must not need a WebSocket to
+work), `validate(parsed)`, `mutates: true` (marks the command `[changes HA]` in the
+help — an agent under a permission mode should be able to tell a read from a write),
+and `listing` / `range` / `showAge`, which opt in to `--max-items`, `--from`/`--to` and
+`--show-age`.
 
-- **Global flags work in any position**, including before the command
-  (`ha-ws-client --json state x`): `--json`, `--compact`, `--format`,
-  `--no-headers`, `--no-timestamps`, `--show-age`, `--max-items`, `--from`, `--to`,
-  plus `--utc`. A flag the command doesn't declare is rejected, not ignored.
-- **`--json` is the envelope the Go tool printed**, on one line:
-  `{"success":true,"command":…,"data":…,"count":…}`. Anything parsing it keeps working.
-  Where the Go tool re-serialised HA's data through a struct (dropping most fields), `data`
-  is HA's raw value — a superset.
-- **Three names collide with native commands** — `history`, `stats`, `timeline`.
-  Native `ha-tools history` takes a date range; `ha-ws-client history` takes "last N
-  hours". In `ws` mode they map onto `ws-history`/`ws-stats`/`ws-timeline`, so neither
-  meaning changed.
-- **`ha-ws-client update` no longer exists** (it self-updated a binary); it says so and exits 2.
+- **Shared flags work in any position**, including before the command
+  (`ha-tools --json state x`): `--json`, `--compact`, `--format`, `--no-headers`,
+  `--utc`. **A command accepts a flag only if it acts on it**: `--max-items`,
+  `--from`/`--to` and `--show-age` are opt-in per command, and an undeclared flag is a
+  usage error — an ignored flag is an agent believing it filtered when it didn't.
+  (`--no-timestamps` was accepted by everything and honoured by nothing; it is gone.)
+  `--compact` is lossless: a list is one line per item, a document is its complete JSON
+  on one line — never a prefix of it.
+- **`--json` is one envelope everywhere**, on one line:
+  `{"success":…,"command":…,"data":…,"count"?:…,"timezone"?:…}`. A list command's
+  `data` is the array and `count` its length; `timezone` is present whenever the
+  command formatted times, so the zone travels with them. **`success` always agrees
+  with the exit code**: a failure prints `{"success":false,"command":…,"error":…}`
+  (an invalid `config-check` or a `reload --expect` that missed keeps its `data`
+  too), on top of the stderr message and the non-zero exit. The default output of a
+  *document* command (`lovelace get`, `automation show`, `config-check`, `reload`,
+  `state`, the traces) is the bare pretty JSON, so `lovelace get x > f` followed by
+  `lovelace save f` round-trips — and `save` accepts a `--json` envelope too.
+- **Windows are spelled one way across `history`, `stats`, `timeline`, `logbook`,
+  `attrs`:** a trailing hours number (`history x 6`), `--hours N`, `--days N` (may be
+  a fraction), or `--from`/`--to`. Two of the first three is a usage error, not a
+  quiet pick. With no `--to` no `end_time` is sent: HA reads that as "up to now".
+  (They used to mean two different things — a date range under `ha-tools`, "last N hours"
+  under `ha-ws-client` — which is why they were merged.)
+- **Where the Go tool re-serialised HA's data through a struct** (dropping most
+  fields), `data` is HA's raw value — a superset, which `npm run test:parity` checks.
 - **`fire-event` is new** — SKILL.md documented it but the Go tool never had it.
+- **`ha-history` / `ha-stats` used to print HA's raw object by default**; now `--json` is
+  the envelope (the raw points are its `data`) and the default is text.
+- **`trace-watch` waits 100s by default**, not 15 minutes: a foreground command is cut off at
+  about two minutes, so a longer default meant the agent never saw a result. For a longer wait
+  it passes `--timeout` and runs the command in the background.
 
 #### Traces, scripts and running work (`commands/traces.cjs`)
 
@@ -393,8 +414,8 @@ v1.8.1, downloaded per-arch in the Dockerfile) and was deliberately left alone w
 was good enough. **It was absorbed on 2026-10-18**: it hard-coded the `automation` trace
 domain, reported the *oldest* run as the latest, panicked now and then ("concurrent write
 to websocket connection" in `stats-multi`), and could not be extended without owning Go
-and cross-compilation. The name stays as an alias of `ha-tools` so every documented
-spelling keeps working; `scripts/commands/NOTICE` carries its MIT licence.
+and cross-compilation. Its name is not kept as an alias (one name for the agent);
+`scripts/commands/NOTICE` carries its MIT licence.
 **`npm run test:parity` is the regression net**: it runs the pinned old binary and the
 built-in implementation against the same fake Home Assistant and compares their `--json`
 for every command, with each *intended* difference written down in the test (anything
@@ -420,7 +441,7 @@ Logs now come from the Supervisor's journald endpoints, which need `hassio_api`
 `?lines=N`, `?boot=N`, `?verbose`, `?follow`, return **plain text**, not JSON,
 and **colour it with ANSI escapes** — strip with `sed 's/\x1b\[[0-9;]*m//g'` or
 the codes land in whatever you generate. `scripts/ha-logs.sh` (exposed as
-`ha-logs`) wraps all of this; `section_recent_errors()` in `ha-context.sh` uses
+`ha-tools logs`) wraps all of this; `section_recent_errors()` in `ha-context.sh` uses
 `core/logs` for the startup context.
 
 **Validate on the HTTP status, never on the body.** This endpoint's removal went
@@ -432,7 +453,7 @@ timestamp-first; an app's log is raw container stdout with no guaranteed shape.
 
 ### Diagnostics
 
-`GET /diag` runs a read-only auth/connectivity probe from inside the container: reports `$SUPERVISOR_TOKEN` presence, then exercises ha-ws-client, REST, and ha-lovelace with the live token. Use it to confirm what authenticates without theorising.
+`GET /diag` runs a read-only auth/connectivity probe from inside the container: reports `$SUPERVISOR_TOKEN` presence, then exercises `ha-tools`, REST, and `ha-tools lovelace` with the live token. Use it to confirm what authenticates without theorising.
 
 All diagnostic routes are **only registered when the `debug` app option is `true`** (default `false`); otherwise they're absent and requests fall through to the SPA. Enable via the app **Configuration** tab, or the Supervisor API (`POST /addons/local_claude-code-ui/options` with the full options object incl. `"debug": true`, then restart). The Supervisor token is available as `$SUPERVISOR_TOKEN` inside the SSH & Web Terminal app.
 
@@ -466,7 +487,7 @@ The live suite reads the token from `HA_API_TOKEN` or `HOME_ASSISTANT_TOKEN_NICK
 `prsecret Home-assistant-token-nick -- npm run test:live`.
 
 Endpoints:
-- `GET /diag` — env + auth probes (ha-ws-client, REST, ha-lovelace) and the persisted-MCP extract from `~/.claude.json`.
+- `GET /diag` — env + auth probes (`ha-tools`, REST, `ha-tools lovelace`) and the persisted-MCP extract from `~/.claude.json`.
 - `GET /diag/config` — dumps the Claude config files the SDK may load settings/MCP from.
 - `GET /diag/query?q=...` — runs a **real headless agent query** with tools auto-approved and returns the streamed events (init `mcp_servers`/`tools`, every `tool_use`/`tool_result`, text, result). This is the fastest way to emulate a user prompt and see which tools load and what errors come back.
 - `GET /diag/conv` — inspect the persisted conversation (transcript length, resume id, file status). `?clear=1` clears it.
@@ -480,7 +501,7 @@ curl -H "Authorization: Bearer $HA_TOKEN" \
   "http://$IP:7681/diag/query?q=Tell%20me%20the%20car%20battery%20state" | jq '.events'
 ```
 
-**ha-mcp has been removed entirely** — it was unreliable (broken WebSocket auth; mis-reports dashboards; the SDK doesn't invoke `canUseTool` for MCP tools so they bypass prompts). Use ha-ws-client + ha-history/ha-stats + ha-lovelace + direct YAML edits, which run as Bash/Edit calls and honour the permission mode. The `enable_ha_mcp` / `ha_token` app options are gone.
+**ha-mcp has been removed entirely** — it was unreliable (broken WebSocket auth; mis-reports dashboards; the SDK doesn't invoke `canUseTool` for MCP tools so they bypass prompts). Use `ha-tools` + direct YAML edits, which run as Bash/Edit calls and honour the permission mode. The `enable_ha_mcp` / `ha_token` app options are gone.
 
 **Important — persisted MCP state:** the Claude CLI persists MCP servers into `~/.claude.json` (`projects["/config"].mcpServers`), and the SDK auto-loads them on every run. An early MCP-enabled build wrote a `home-assistant` server there, which kept loading and causing "Invalid authentication token" errors long after we stopped configuring it. `sanitizeMcpState()` in `server/index.js` strips persisted `mcpServers` (global + per-project) at startup so the app never loads a stale MCP server. **Do not remove it** even though we no longer configure any MCP servers ourselves.
 
@@ -681,7 +702,7 @@ Reported symptom: a response stops coming, then resumes minutes later (not a tru
 |------|---------|
 | `config.yaml` | App manifest, options schema |
 | `build.yaml` | Docker build args (base image) |
-| `Dockerfile` | Image build: Node, Agent SDK binary, the `ha-tools` symlinks (ha-ws-client, ha-lovelace, ha-history, …), plugin |
+| `Dockerfile` | Image build: Node, Agent SDK binary, the one `ha-tools` symlink, plugin |
 | `run.sh` | Entrypoint: env init, packages, HA context, start server |
 | `server/index.js` | Composition root — wires `server/lib/` and listens |
 | `server/lib/` | The server proper, one module per concern (see **Server layout**) |

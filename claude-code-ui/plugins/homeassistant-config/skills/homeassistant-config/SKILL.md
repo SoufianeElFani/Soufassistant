@@ -343,34 +343,28 @@ actions:
 
 ## Live HA Access Tools
 
-**IMPORTANT — tool selection rules:**
-- Use **ha-ws-client** for entity states, service calls, template rendering, registry search, and recent history.
-- Use **ha-ws-client traces / trace-latest / trace-timeline …** for what an **automation or a script** actually did on a run, **`ha-ws-client running`** for what is executing right now and for how long, and **`ha-ws-client trace-stuck <entity>`** for which step an unfinished run is waiting on. All of them take `--domain script|automation`, or just a qualified id (`script.x`, `automation.x`).
-- Use **ha-history** / **ha-stats** when you need history or long-term statistics over a specific date range (`--days N`, `--from`, `--to`).
-- Use **ha-timeline** when the question involves **more than one entity** — "what happened, in what order?". Do not fetch each entity separately and merge by hand.
-- Use **ha-tools automation show** to see the config HA currently has loaded, and **ha-tools automation yaml** to see that automation's block in `automations.yaml` with line numbers.
-- After editing YAML: **`ha-tools config-check`** (exits non-zero if invalid), then **`ha-tools reload`**. Never hand-roll a `curl` for either. Both read the Core log across the operation, so they catch the per-entity errors HA only *logs* — a bad option in a `template:` entry means the entity is silently dropped while the config as a whole still "loads". When you have just written a specific entity, prove it: **`ha-tools reload template --expect cover.nick_blind`**.
-- Use **ha-tools trace-watch** to verify a trigger you changed actually fires. `automation.trigger` skips triggers and conditions, so it proves nothing about the thing you edited.
-- Use **ha-lovelace** for dashboard config (list / get / save). Lovelace lives only on the WebSocket API — the REST endpoints `/api/lovelace/config` and `/api/lovelace/dashboards` return **404** and must not be used.
-- For **YAML-mode dashboards**, edit the dashboard `.yaml` files directly in `/config`.
+**One tool: `ha-tools`.** Every command takes `--help` (usage and examples), and
+`ha-tools --help` lists them all — the quickest way to check what you have. Flags work in
+any position, and `--json` always prints one line, `{"success":…,"command":…,"data":…}`,
+where `success` agrees with the exit code. Commands that **change** Home Assistant (`call`,
+`fire-event`, `reload`, `lovelace save|create|delete`) are marked `[changes HA]` in the help.
+
+**IMPORTANT — which command for what:**
+- **What is it now?** `ha-tools state`, `states-filter "light.*"`, `entities <pattern>`, `template '{{ … }}'`.
+- **What happened, and in what order?** `ha-tools timeline <entity> <entity> …` when the question involves **more than one entity** — do not fetch each entity separately and merge by hand. For one entity, `ha-tools history <entity> [hours]`; for long-term statistics, `ha-tools stats`. The window is a trailing hours number, `--hours N`, `--days N` or `--from`/`--to`.
+- **Why did an automation or a script do that?** Start small: `ha-tools running` (what is executing now, for how long), `trace-stuck <entity>` (which step an unfinished run waits on), `trace-timeline <entity>` (every step of the newest run, in order), `trace-summary <entity>`. Only reach for `trace` / `trace-latest` — the whole raw trace, which can be very large — when those are not enough. All take `--domain script|automation`, or a qualified id (`script.x`, `automation.x`).
+- **Editing an automation:** `ha-tools automation show` for the config HA has loaded, `automation yaml` for its block in `automations.yaml` with line numbers. Then **`ha-tools config-check`** (exits non-zero if invalid) and **`ha-tools reload`**. Never hand-roll a `curl` for either. Both read the Core log across the operation, so they catch the per-entity errors HA only *logs* — a bad option in a `template:` entry means the entity is silently dropped while the config as a whole still "loads". When you have just written a specific entity, prove it: **`ha-tools reload template --expect cover.nick_blind`**.
+- **Did my new trigger fire?** `ha-tools trace-watch <entity>` (waits up to 100s; for longer pass `--timeout` and run it in the background). `automation.trigger` skips triggers and conditions, so it proves nothing about the thing you edited.
+- **Dashboards:** `ha-tools lovelace` (list / get / save). Lovelace lives only on the WebSocket API — the REST endpoints `/api/lovelace/config` and `/api/lovelace/dashboards` return **404** and must not be used. For **YAML-mode dashboards**, edit the dashboard `.yaml` files directly in `/config`.
+- **Logs:** `ha-tools logs` (see below).
 - Never ask the user for a long-lived access token — `$SUPERVISOR_TOKEN` is available automatically and is sufficient for everything above.
-
-All tools authenticate automatically using `$SUPERVISOR_TOKEN` — no additional setup required.
-
-`ha-history`, `ha-stats`, `ha-timeline`, `ha-lovelace` and `ha-logs` are also
-subcommands of a single **`ha-tools`** command (`ha-tools history …`,
-`ha-tools logs …`, and `ha-tools ws …` for ha-ws-client, which is built into this
-app — `ha-ws-client` and `ha-tools ws` are the same command). Both spellings are the
-same command — use whichever reads better. **`ha-tools --help`** lists every HA
-command available in this container, which is the quickest way to check what you
-have.
 
 **Times.** Every ha-tools command prints times in Home Assistant's own timezone
 with an explicit offset (`2026-08-12 23:27:42+01:00`). The container clock is
 UTC, so do not assume a bare timestamp from anywhere else is local. Pass `--utc`
 if you want UTC. Note that other sources still differ: `last_triggered` in raw
-state attributes is UTC ISO, `ha-history --format json` keeps HA's raw epoch
-floats, and templates using `now()` return local — convert via a ha-tools command
+state attributes is UTC ISO, `ha-tools history --json` keeps HA's raw epoch
+floats inside `data`, and templates using `now()` return local — convert via a ha-tools command
 rather than doing the arithmetic yourself.
 
 ### ⚠️ Never edit `.storage` or the database directly
@@ -379,130 +373,130 @@ rather than doing the arithmetic yourself.
 recorder database (`home-assistant_v2.db`).** These hold HA's internal state:
 they only load on a full restart (not a reload), bypass HA's validation, and are
 trivially corrupted (a piped write that mixes log text into the JSON breaks
-them). Prefer service calls, `ha-ws-client`, and YAML edits, which apply via a
+them). Prefer service calls, `ha-tools`, and YAML edits, which apply via a
 reload:
 
 - Set a helper value with its **service**, not a `.storage` edit:
-  - `ha-ws-client call input_number set_value '{"entity_id":"input_number.x","value":42}'`
-  - `ha-ws-client call input_text set_value '{"entity_id":"input_text.note","value":"hi"}'`
+  - `ha-tools call input_number set_value '{"entity_id":"input_number.x","value":42}'`
+  - `ha-tools call input_text set_value '{"entity_id":"input_text.note","value":"hi"}'`
 - **Template sensors are read-only and reset to `unknown` on reload** — they
   recompute from other entities, so a "seed then revert" never persists. For a
   user-set persistent value, use an `input_number` / `input_text` helper instead.
 
-### Editing dashboards (ha-lovelace)
+### Editing dashboards (ha-tools lovelace)
 
 ```bash
 # List storage-mode dashboards (empty result → default dashboard is YAML-mode or auto-generated)
-ha-lovelace list
+ha-tools lovelace list
 
 # Get a dashboard config (omit url_path for the default dashboard)
-ha-lovelace get
-ha-lovelace get my-dashboard
+ha-tools lovelace get
+ha-tools lovelace get my-dashboard
 
 # Save a config from a JSON file or stdin (full config object: {"views":[...]})
-ha-lovelace save /tmp/dash.json
-ha-lovelace save /tmp/dash.json my-dashboard
-echo '{"views":[{"title":"Home","cards":[]}]}' | ha-lovelace save -
+ha-tools lovelace save /tmp/dash.json
+ha-tools lovelace save /tmp/dash.json my-dashboard
+echo '{"views":[{"title":"Home","cards":[]}]}' | ha-tools lovelace save -
 
 # Create a NEW storage-mode dashboard (url_path must contain a hyphen), then save its views
-ha-lovelace create my-room "My Room"                       # options: --icon mdi:sofa --no-sidebar --admin
-ha-lovelace save /tmp/dash.json my-room                    # new dashboards start empty
+ha-tools lovelace create my-room "My Room"                       # options: --icon mdi:sofa --no-sidebar --admin
+ha-tools lovelace save /tmp/dash.json my-room                    # new dashboards start empty
 
 # Delete a storage-mode dashboard (resolved by url_path)
-ha-lovelace delete my-room
+ha-tools lovelace delete my-room
 ```
 
-Workflow for an edit: `ha-lovelace get [url_path] > /tmp/dash.json`, modify the JSON, then `ha-lovelace save /tmp/dash.json [url_path]`.
+Workflow for an edit: `ha-tools lovelace get [url_path] > /tmp/dash.json`, modify the JSON, then `ha-tools lovelace save /tmp/dash.json [url_path]`.
 
-Workflow for a new dashboard: `ha-lovelace create <url-path> "<Title>"`, then `ha-lovelace save <file> <url-path>` to populate its views. The url_path becomes the URL (`/<url-path>`) and must contain a hyphen.
+Workflow for a new dashboard: `ha-tools lovelace create <url-path> "<Title>"`, then `ha-tools lovelace save <file> <url-path>` to populate its views. The url_path becomes the URL (`/<url-path>`) and must contain a hyphen.
 
 **Mode matters:**
-- **Storage mode** → use `ha-lovelace get`/`save` as above.
+- **Storage mode** → use `ha-tools lovelace get`/`save` as above.
 - **YAML mode** → `save` will fail; instead edit the YAML file referenced by `lovelace:` in `/config/configuration.yaml` (commonly `/config/ui-lovelace.yaml` or files under `/config/dashboards/`). The user then reloads dashboard resources or restarts HA.
 
-### ha-ws-client (WebSocket — preferred for live data)
+### ha-tools (WebSocket — preferred for live data)
 
 ```bash
 # Test connection
-ha-ws-client ping
+ha-tools ping
 
 # Get a single entity state (--json for machine-readable output)
-ha-ws-client state sensor.temperature --json
-ha-ws-client state light.living_room
+ha-tools state sensor.temperature --json
+ha-tools state light.living_room
 
 # Get all states, optionally filtered by pattern
-ha-ws-client states-filter "sensor.*" --json
-ha-ws-client states-filter "light.*"
+ha-tools states-filter "sensor.*" --json
+ha-tools states-filter "light.*"
 
 # Call a service
-ha-ws-client call light turn_on '{"entity_id": "light.living_room", "brightness_pct": 80}'
-ha-ws-client call climate set_temperature '{"entity_id": "climate.thermostat", "temperature": 21}'
-ha-ws-client call input_boolean turn_on '{"entity_id": "input_boolean.guest_mode"}'
-ha-ws-client call input_number set_value '{"entity_id": "input_number.target", "value": 42}'
-ha-ws-client call input_text set_value '{"entity_id": "input_text.note", "value": "hello"}'
+ha-tools call light turn_on '{"entity_id": "light.living_room", "brightness_pct": 80}'
+ha-tools call climate set_temperature '{"entity_id": "climate.thermostat", "temperature": 21}'
+ha-tools call input_boolean turn_on '{"entity_id": "input_boolean.guest_mode"}'
+ha-tools call input_number set_value '{"entity_id": "input_number.target", "value": 42}'
+ha-tools call input_text set_value '{"entity_id": "input_text.note", "value": "hello"}'
 
 # Render a Jinja2 template
-ha-ws-client template '{{ states("sensor.temperature") | float | round(1) }}'
-ha-ws-client template '{{ state_attr("climate.thermostat", "current_temperature") }}'
+ha-tools template '{{ states("sensor.temperature") | float | round(1) }}'
+ha-tools template '{{ state_attr("climate.thermostat", "current_temperature") }}'
 
 # History / past data (use these — do NOT build REST history URLs with `date`,
 # BusyBox `date` on this Alpine image has no -d/-v flags and will fail)
-ha-ws-client history sensor.temperature       # recent fixed-window state history
-ha-ws-client stats sensor.temperature         # recent fixed-window statistics
-ha-ws-client logbook                           # recent logbook entries (or: logbook light.hall 6)
+ha-tools history sensor.temperature       # last 24 hours of state changes
+ha-tools history sensor.temperature 6     # last 6 hours
+ha-tools logbook                           # recent logbook entries (or: logbook light.hall 6)
 # An empty result means the entity simply has no recorded changes in the window.
 
-# For a specific DATE RANGE, use these helpers (they compute the range in Node):
-ha-history sensor.temperature --days 7                       # last 7 days
-ha-history sensor.temperature --from 2026-06-01 --to 2026-06-08 --full
-ha-stats sensor.energy_cost --days 14                        # last 14 days, hourly
-ha-stats sensor.energy_cost --from 2026-06-01 --period day   # daily buckets
-#   ha-history flags: --days N | --from <ISO|YYYY-MM-DD> | --to <ISO> | --full
-#   ha-stats   flags: --days N | --from | --to | --period 5minute|hour|day|week|month
-#   both also take: --format json|tsv (tsv is flat rows in local time) | --utc
+# history, stats and timeline take the same window however you spell it: a trailing hours number, --hours N, --days N
+# (may be a fraction), or --from/--to. Two of the first three is an error.
+ha-tools history sensor.temperature --days 7                       # last 7 days
+ha-tools history sensor.temperature --from 2026-06-01 --to 2026-06-08 --full
+ha-tools stats sensor.energy_cost --days 14                        # last 14 days, hourly
+ha-tools stats sensor.energy_cost --from 2026-06-01 --period day   # daily buckets
+#   history flags: --hours N | --days N | --from <ISO|YYYY-MM-DD> | --to <ISO> | --full
+#   stats   flags: the same window flags | --period 5minute|hour|day|week|month
+#   both also take: --format tsv (flat rows in local time) | --json | --utc
 
 # SEVERAL entities on one clock — the main tool for "what happened, in order?".
-# Prefer this over calling ha-history per entity and merging by hand.
-ha-timeline light.hall binary_sensor.stairs --days 3
-ha-timeline light.hall binary_sensor.stairs --days 3 --between 22:00-07:00
-ha-timeline light.hall --days 1 --format tsv                 # or --format json
+# Prefer this over calling ha-tools history per entity and merging by hand.
+ha-tools timeline light.hall binary_sensor.stairs --days 3
+ha-tools timeline light.hall binary_sensor.stairs --days 3 --between 22:00-07:00
+ha-tools timeline light.hall --days 1 --format tsv                 # or --json
 # Output is one row per event, already merged and sorted, in HA's timezone:
 #   08-12 23:27:42  light.hall            on
 #   08-12 23:30:17  binary_sensor.stairs  off
 
 # Search entity/device/area registry
-ha-ws-client entities humidity --json
-ha-ws-client devices "phone" --json
-ha-ws-client areas --json
+ha-tools entities humidity --json
+ha-tools devices "phone" --json
+ha-tools areas --json
 
 # Fire an event
-ha-ws-client fire-event custom_event '{"key": "value"}'
+ha-tools fire-event custom_event '{"key": "value"}'
 
 # Get HA config / list services
-ha-ws-client config --json
-ha-ws-client services --json
+ha-tools config --json
+ha-tools services --json
 
 # Diagnostics
-ha-ws-client compare sensor.temp_bedroom sensor.temp_living_room
+ha-tools compare sensor.temp_bedroom sensor.temp_living_room
 ```
 
-Every `ha-ws-client` command takes `--help` (usage and examples) and the same flags,
-in any position: `--json` (one line, `{"success":true,"command":…,"data":…}`),
-`--compact`, `--no-headers`, `--max-items N`, `--utc`. Times print in Home Assistant's
-timezone with an explicit offset.
+Times print in Home Assistant's timezone with an explicit offset; `--utc` opts out.
+`--max-items`, `--from`/`--to` and `--show-age` exist only on the commands that act on them —
+any other command refuses them rather than ignoring them.
 
 ### Traces, scripts and "what is running right now"
 
 ```bash
 # What is executing right now? Automations AND scripts, longest-running first.
-ha-ws-client running
+ha-tools running
 #   ENTITY                        MODE    RUNS  RUNNING FOR  STARTED   LAST TRIGGERED  EFFECT            LAST STEP
 #   script.nick_blind_creep_open  single  1/1   0:42:13      …+01:00   …+01:00         new runs dropped  sequence[1] › parallel branch 1 › sequence[0]
 # A `mode: single` script that is still running silently drops every new trigger — that
 # is what EFFECT says. RUNNING FOR is "?" when HA stores no running trace for it.
 
 # Which branch is hung, and what is it waiting on?
-ha-ws-client trace-stuck script.nick_blind_creep_open
+ha-tools trace-stuck script.nick_blind_creep_open
 #   waiting at: sequence[1] › parallel branch 1 › sequence[0]
 #     wait_template "{{ is_state('binary_sensor.stairs', 'off') }}" (timeout 00:30:00)
 #     here for 0:42:00 — timeout 00:30:00 — template currently renders: false
@@ -511,12 +505,12 @@ ha-ws-client trace-stuck script.nick_blind_creep_open
 # A script that calls another script is followed into the child's run.
 
 # The traces themselves — automations and scripts alike
-ha-ws-client traces script.nick_blind_creep_open          # stored runs, newest first
-ha-ws-client traces --domain script --max-items 10        # every script's recent runs
-ha-ws-client trace-latest script.nick_blind_creep_open    # the newest run, in full (JSON)
-ha-ws-client trace-timeline script.nick_blind_creep_open  # every step in order, with its place in the config
-ha-ws-client trace-actions script.nick_blind_creep_open <run_id>
-ha-ws-client trace-summary automation.hall_light_off      # counts + latest run + what started it
+ha-tools traces script.nick_blind_creep_open          # stored runs, newest first
+ha-tools traces --domain script --max-items 10        # every script's recent runs
+ha-tools trace-latest script.nick_blind_creep_open    # the newest run, in full (JSON)
+ha-tools trace-timeline script.nick_blind_creep_open  # every step in order, with its place in the config
+ha-tools trace-actions script.nick_blind_creep_open <run_id>
+ha-tools trace-summary automation.hall_light_off      # counts + latest run + what started it
 ```
 
 `[run_id]` is optional on every per-run command — the newest run is used. Step paths
@@ -563,25 +557,25 @@ runs blocked by their conditions too (`script_execution: failed_conditions`),
 which is usually the answer you want. Always give it a `--timeout` you're willing
 to wait for, and tell the user you're waiting.
 
-### Logs (ha-logs) — for "why did X fail?"
+### Logs (ha-tools logs) — for "why did X fail?"
 
 **There is no `/config/home-assistant.log`.** HA 2025.11 removed it on HAOS and
 Supervised installs and moved Core logging to the systemd journal. The Core REST
 endpoint `/api/error_log` was deleted at the same time and now returns **404** —
 it is still listed in the HA developer docs, so it looks available and is not.
-**Do not try to read either.** Use `ha-logs`:
+**Do not try to read either.** Use `ha-tools logs`:
 
 ```bash
-ha-logs                             # last 100 lines of the Core log
-ha-logs --errors                    # only ERROR/WARNING/CRITICAL/Traceback lines
-ha-logs --errors -n 1000            # widen the window before filtering
-ha-logs self -n 200                 # THIS app's own log (the Claude Code UI server)
-ha-logs supervisor --errors         # Supervisor
-ha-logs host -n 50                  # host / systemd
-ha-logs app_core_mosquitto -n 50    # another app's log, by journal identifier
-ha-logs --units                     # list every identifier you can read
-ha-logs core --boot 0 --errors      # only since the current boot (--boots lists ids)
-ha-logs --follow                    # stream live (needs a timeout — it never ends)
+ha-tools logs                             # last 100 lines of the Core log
+ha-tools logs --errors                    # only ERROR/WARNING/CRITICAL/Traceback lines
+ha-tools logs --errors -n 1000            # widen the window before filtering
+ha-tools logs self -n 200                 # THIS app's own log (the Claude Code UI server)
+ha-tools logs supervisor --errors         # Supervisor
+ha-tools logs host -n 50                  # host / systemd
+ha-tools logs app_core_mosquitto -n 50    # another app's log, by journal identifier
+ha-tools logs --units                     # list every identifier you can read
+ha-tools logs core --boot 0 --errors      # only since the current boot (--boots lists ids)
+ha-tools logs --follow                    # stream live (needs a timeout — it never ends)
 ```
 
 Notes that matter when reading the output:
@@ -595,9 +589,9 @@ Notes that matter when reading the output:
   `[<ISO8601>] INFO …`. Don't assume a layout when grepping.
 - Multi-line tracebacks arrive as separate lines; `--errors` matches the
   `Traceback` line, so widen with `-n` and read the surrounding context.
-- `--follow` streams forever — always wrap it: `timeout 30 ha-logs --follow`.
+- `--follow` streams forever — always wrap it: `timeout 30 ha-tools logs --follow`.
 
-For an automation or script that misbehaved, prefer the **trace** (`ha-ws-client
+For an automation or script that misbehaved, prefer the **trace** (`ha-tools
 trace-timeline <entity>`) over the log — it shows the actual step-by-step evaluation. Use logs for integration
 errors, startup failures, and anything that never reached a trace.
 
@@ -618,4 +612,4 @@ curl -s -X POST \
   http://supervisor/core/api/services/light/turn_on
 ```
 
-> Dashboards are **not** available over REST (those endpoints 404). Use `ha-lovelace` (see above) or edit YAML files directly.
+> Dashboards are **not** available over REST (those endpoints 404). Use `ha-tools lovelace` (see above) or edit YAML files directly.

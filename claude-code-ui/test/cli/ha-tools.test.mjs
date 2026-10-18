@@ -26,7 +26,7 @@ describe('the dispatcher', () => {
     const r = await runTool('ha-tools', ['--help']);
     assert.equal(r.code, 0);
     for (const sub of ['timeline', 'history', 'stats', 'logs', 'automation', 'trace-watch',
-      'config-check', 'reload', 'lovelace', 'ws', 'running', 'trace-stuck', 'trace-latest', 'traces']) {
+      'config-check', 'reload', 'lovelace', 'running', 'trace-stuck', 'trace-latest', 'traces']) {
       assert.match(r.stdout, new RegExp(`\\b${sub}\\b`), `--help does not mention ${sub}`);
     }
   });
@@ -37,10 +37,13 @@ describe('the dispatcher', () => {
     assert.match(r.stderr, /unknown command 'bogus'/);
   });
 
-  test('answers as the name it was invoked by', async () => {
-    const asAlias = await runTool('ha-history', ['--help']);
-    assert.match(asAlias.stderr + asAlias.stdout, /ha-history/);
-    assert.doesNotMatch(asAlias.stderr + asAlias.stdout, /ha-tools history </);
+  test('there is one name: usage speaks of ha-tools, and the old shortcuts are gone', async () => {
+    const r = await runTool('ha-tools', ['history', '--help']);
+    assert.match(r.stdout, /^Usage: ha-tools history </m);
+    assert.doesNotMatch(r.stdout, /ha-history|ha-ws-client/);
+    const { toolsBin } = await import('../helpers/fake-ha.mjs');
+    const { readdirSync } = await import('node:fs');
+    assert.deepEqual(readdirSync(toolsBin()), ['ha-tools'], 'the Dockerfile installs one name, so the tests do too');
   });
 });
 
@@ -65,7 +68,7 @@ describe('history', () => {
   after(async () => { await ha.close(); });
 
   test('prints Home Assistant time with an explicit offset, never an epoch', async () => {
-    const r = await runTool('ha-history', ['sensor.temperature', '--format', 'tsv'], { ha });
+    const r = await runTool('ha-tools', ['history', 'sensor.temperature', '--format', 'tsv'], { ha });
     assert.equal(r.code, 0);
     assert.equal(r.lines[0], 'timestamp\tentity_id\tstate');
     assert.match(r.lines[1], /^2026-07-15 10:30:00\+01:00\tsensor\.temperature\t19\.5$/);
@@ -73,18 +76,21 @@ describe('history', () => {
   });
 
   test('--utc opts out of the local clock', async () => {
-    const r = await runTool('ha-history', ['sensor.temperature', '--format', 'tsv', '--utc'], { ha });
+    const r = await runTool('ha-tools', ['history', 'sensor.temperature', '--format', 'tsv', '--utc'], { ha });
     assert.match(r.lines[1], /^2026-07-15 09:30:00\+00:00\t/);
   });
 
   test('a silent entity is an empty result, not a failure', async () => {
-    const r = await runTool('ha-history', ['sensor.missing', '--format', 'json'], { ha });
+    // Changed by the merge into one JSON contract: --json is the {success,data} envelope,
+    // and the empty case is still an empty list with exit 0 (it used to be `{}`).
+    const r = await runTool('ha-tools', ['history', 'sensor.missing', '--json'], { ha });
     assert.equal(r.code, 0);
-    assert.deepEqual(r.json, {});
+    assert.equal(r.json.success, true);
+    assert.deepEqual(r.json.data, []);
   });
 
   test('asks HA for the range it was given', async () => {
-    await runTool('ha-history', ['sensor.temperature', '--days', '3'], { ha });
+    await runTool('ha-tools', ['history', 'sensor.temperature', '--days', '3'], { ha });
     const sent = ha.requests.filter((q) => q.ws === 'history/history_during_period').at(-1).message;
     const spanDays = (Date.now() - Date.parse(sent.start_time)) / 86400000;
     assert.ok(spanDays > 2.9 && spanDays < 3.1, `asked for ${spanDays} days`);
@@ -92,7 +98,7 @@ describe('history', () => {
   });
 
   test('a bad --format is a usage error, exit 2', async () => {
-    const r = await runTool('ha-history', ['sensor.temperature', '--format', 'yaml'], { ha });
+    const r = await runTool('ha-tools', ['history', 'sensor.temperature', '--format', 'yaml'], { ha });
     assert.equal(r.code, 2);
     assert.match(r.stderr, /invalid --format/i);
   });
@@ -113,14 +119,14 @@ describe('stats', () => {
   after(async () => { await ha.close(); });
 
   test('prints a header and one row per bucket', async () => {
-    const r = await runTool('ha-stats', ['sensor.energy', '--format', 'tsv'], { ha });
+    const r = await runTool('ha-tools', ['stats', 'sensor.energy', '--format', 'tsv'], { ha });
     assert.equal(r.code, 0);
     assert.equal(r.lines[0], 'start\tstatistic_id\tmean\tmin\tmax\tsum\tstate\tchange');
     assert.match(r.lines[1], /^2026-01-15 09:30:00\+00:00\tsensor\.energy\t1\.5\t/);
   });
 
   test('rejects an invalid --period rather than asking HA for nonsense', async () => {
-    const r = await runTool('ha-stats', ['sensor.energy', '--period', 'fortnight'], { ha });
+    const r = await runTool('ha-tools', ['stats', 'sensor.energy', '--period', 'fortnight'], { ha });
     assert.equal(r.code, 2);
     assert.match(r.stderr, /invalid --period/);
   });
@@ -151,7 +157,7 @@ describe('timeline', () => {
   after(async () => { await ha.close(); });
 
   test('merges several entities onto one clock, in order', async () => {
-    const r = await runTool('ha-timeline', ['light.hall', 'binary_sensor.stairs'], { ha });
+    const r = await runTool('ha-tools', ['timeline', 'light.hall', 'binary_sensor.stairs'], { ha });
     assert.equal(r.code, 0);
     assert.match(r.lines[0], /^# times are Europe\/London \(UTC\+01:00\); 3 events$/);
     const order = r.lines.slice(1).map((l) => l.split(/\s+/)[2]);
@@ -159,28 +165,30 @@ describe('timeline', () => {
   });
 
   test('names entities that returned nothing, so a typo is not read as silence', async () => {
-    const r = await runTool('ha-timeline', ['light.hall', 'light.nonexistent'], { ha });
+    const r = await runTool('ha-tools', ['timeline', 'light.hall', 'light.nonexistent'], { ha });
     assert.equal(r.code, 0);
     assert.match(r.stderr, /no events in this window for light\.nonexistent/);
   });
 
   test('--between filters on the wall clock the rows are printed in', async () => {
-    const inside = await runTool('ha-timeline', ['light.hall', '--between', '10:00-11:00', '--format', 'json'], { ha });
-    assert.equal(inside.json.event_count, 2, 'both hall events are 10:30 London time');
-    const outside = await runTool('ha-timeline', ['light.hall', '--between', '02:00-03:00', '--format', 'json'], { ha });
-    assert.equal(outside.json.event_count, 0);
+    // (Changed by the merge: the envelope's `count`/`data` replace `event_count`/`events`.)
+    const inside = await runTool('ha-tools', ['timeline', 'light.hall', '--between', '10:00-11:00', '--json'], { ha });
+    assert.equal(inside.json.data.length, 2, 'both hall events are 10:30 London time');
+    const outside = await runTool('ha-tools', ['timeline', 'light.hall', '--between', '02:00-03:00', '--json'], { ha });
+    assert.deepEqual(outside.json.data, []);
   });
 
   test('a window that wraps midnight includes both sides of it', async () => {
-    const r = await runTool('ha-timeline', ['light.hall', '--between', '22:00-11:00', '--format', 'json'], { ha });
-    assert.equal(r.json.event_count, 2);
+    const r = await runTool('ha-tools', ['timeline', 'light.hall', '--between', '22:00-11:00', '--json'], { ha });
+    assert.equal(r.json.data.length, 2);
   });
 
   test('json output states its timezone and carries both a stamp and an epoch', async () => {
-    const r = await runTool('ha-timeline', ['light.hall', '--format', 'json'], { ha });
+    // Changed by the merge: the zone is in the envelope, the rows are `data`.
+    const r = await runTool('ha-tools', ['timeline', 'light.hall', '--json'], { ha });
     assert.equal(r.json.timezone, 'Europe/London');
-    assert.match(r.json.events[0].time, /\+01:00$/);
-    assert.equal(typeof r.json.events[0].epoch_ms, 'number');
+    assert.match(r.json.data[0].time, /\+01:00$/);
+    assert.equal(typeof r.json.data[0].epoch_ms, 'number');
   });
 });
 
@@ -205,9 +213,14 @@ describe('automation', () => {
   test('list reports only automations, with their editor id', async () => {
     const r = await runTool('ha-tools', ['automation', 'list'], { ha });
     assert.equal(r.code, 0);
-    assert.equal(r.json.count, 1);
-    assert.equal(r.json.automations[0].id, '1699');
-    assert.match(r.json.automations[0].last_triggered, /\+01:00$/);
+    // Changed by the merge: the default output is the bare list (it was {timezone,count,automations});
+    // each last_triggered carries its offset, and `--json` adds the zone to the envelope.
+    assert.equal(r.json.length, 1);
+    assert.equal(r.json[0].id, '1699');
+    assert.match(r.json[0].last_triggered, /\+01:00$/);
+    const j = await runTool('ha-tools', ['automation', 'list', '--json'], { ha });
+    assert.equal(j.json.count, 1);
+    assert.equal(j.json.timezone, 'Europe/London');
   });
 
   test('show says which key spelling HA actually returned', async () => {
@@ -446,13 +459,13 @@ describe('lovelace', () => {
   after(async () => { await ha.close(); });
 
   test('lists dashboards over the WebSocket API (REST 404s on modern HA)', async () => {
-    const r = await runTool('ha-lovelace', ['list'], { ha });
+    const r = await runTool('ha-tools', ['lovelace', 'list'], { ha });
     assert.equal(r.code, 0);
     assert.equal(r.json[0].url_path, 'energy');
   });
 
   test('get asks for the live config, not a cached one', async () => {
-    const r = await runTool('ha-lovelace', ['get', 'energy'], { ha });
+    const r = await runTool('ha-tools', ['lovelace', 'get', 'energy'], { ha });
     assert.equal(r.code, 0);
     const sent = ha.requests.filter((q) => q.ws === 'lovelace/config').at(-1).message;
     assert.equal(sent.force, true);
@@ -464,7 +477,7 @@ describe('a Home Assistant that will not authenticate', () => {
   test('is reported as an auth failure, not as empty data', async () => {
     const ha = await startFakeHa({ authFails: true });
     try {
-      const r = await runTool('ha-history', ['sensor.x'], { ha });
+      const r = await runTool('ha-tools', ['history', 'sensor.x'], { ha });
       assert.equal(r.code, 1);
       assert.match(r.stderr, /authentication failed/i);
     } finally {
@@ -473,7 +486,7 @@ describe('a Home Assistant that will not authenticate', () => {
   });
 
   test('and no token at all is refused before any connection is attempted', async () => {
-    const r = await runTool('ha-history', ['sensor.x'], { env: { HA_TOKEN: '', SUPERVISOR_TOKEN: '' } });
+    const r = await runTool('ha-tools', ['history', 'sensor.x'], { env: { HA_TOKEN: '', SUPERVISOR_TOKEN: '' } });
     assert.equal(r.code, 1);
     assert.match(r.stderr, /no SUPERVISOR_TOKEN or HA_TOKEN/);
   });

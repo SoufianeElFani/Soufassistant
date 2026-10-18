@@ -133,7 +133,7 @@ export function toolsBin() {
   if (binDir) return binDir;
   binDir = mkdtempSync(path.join(tmpdir(), 'ha-tools-bin-'));
   const dispatcher = path.join(SCRIPTS, 'ha-tools.sh');
-  for (const name of ['ha-tools', 'ha-history', 'ha-stats', 'ha-timeline', 'ha-lovelace', 'ha-logs', 'ha-ws-client']) {
+  for (const name of ['ha-tools']) {
     symlinkSync(dispatcher, path.join(binDir, name));
   }
   return binDir;

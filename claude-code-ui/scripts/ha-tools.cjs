@@ -1,851 +1,120 @@
 #!/usr/bin/env node
 /*
- * ha-tools (Node half) — the Home Assistant subcommands.
+ * ha-tools (Node half) — the dispatcher.
  *
- * Not run directly: `ha-tools.sh` dispatches here (and to `ha-logs.sh` for
- * `logs`), so each of these is reachable as either `ha-tools <cmd> …` or its own
- * name (`ha-history`, `ha-stats`, `ha-lovelace`, `ha-timeline`). Connection and
- * auth live in lib/ha-ws.cjs; time formatting in lib/ha-time.cjs; the handful of
- * REST-only endpoints in lib/ha-rest.cjs.
+ * Not run directly: `ha-tools.sh` execs this for every command except `logs`. It is
+ * a table lookup and nothing else; the commands are definitions in commands/*.cjs,
+ * and lib/ha-command.cjs gives each of them the same argument parsing, --help
+ * (stdout, exit 0, with examples), usage errors (stderr, exit 2), HA-timezone clock
+ * and output shapes. So there is one way to run a command, one help screen (below,
+ * generated from the table), and one JSON contract:
  *
- *   history      <entity_id> [--days N] [--from] [--to] [--full] [--format]
- *   stats        <entity_id> [--days N] [--from] [--to] [--period] [--format]
- *   timeline     <entity_id…> [--days N] [--from] [--to] [--between HH:MM-HH:MM]
- *   lovelace     <list | get | save | create | delete> …
- *   automation   <list | show | yaml> …
- *   config-check [--no-log-scan]
- *   reload       [domain] [--expect entity_id] [--no-log-scan]
- *   trace-watch  <automation|script> [--timeout 15m] [--interval 10s] [--domain]
+ *   --json   one line: {"success":true|false,"command":…,"data":…,"count"?:…,"timezone"?:…}
+ *            `success` always agrees with the exit code
  *
- * Everything ha-ws-client (the third-party Go binary this used to wrap) did now
- * lives in commands/*.cjs: states and services (basic), registries (registry),
- * fixed-window history (ws-history), live subscriptions (monitor), and the
- * automation/script trace suite plus `running` and `trace-stuck` (traces).
- * `ha-ws-client` is kept as another name for ha-tools, which sends it here with
- * `ws` as the first argument — see "ws mode" below.
- *
- * Two conventions hold across all of them, because the consumer is an agent
- * reading stdout rather than a human squinting at it:
- *   - Times print in Home Assistant's own timezone with an explicit offset
- *     (the container clock is UTC and is NOT what the user means by "local").
- *     `--utc` opts out. Epoch floats never reach the output.
- *   - An empty result is an empty list, never null, and a real failure is a
- *     non-zero exit with a message — the two must never look alike.
- *
- * $HA_TOOLS_CMD is how the user spelled the command; it's echoed back in usage
- * messages so `ha-history --help` doesn't answer as `ha-tools history`.
+ * There is one name, `ha-tools`. (The third-party `ha-ws-client` binary this app
+ * once downloaded, and the `ha-history` / `ha-stats` / … shortcuts, are gone: more
+ * than one name for a tool is a choice an agent has to make for no benefit.)
  */
-const fs = require('fs');
-const path = require('path');
-const { run, die, usage, printJSON, timeRange } = require('./lib/ha-ws.cjs');
-const { core, coreLogTail } = require('./lib/ha-rest.cjs');
-const { newLines, parseConfigErrors } = require('./lib/ha-log-scan.cjs');
-const { parseDuration, parseWindow, clock, inWindow, toMillis } = require('./lib/ha-time.cjs');
-const { haClock, resolveAutomation } = require('./lib/ha-common.cjs');
 const { execute } = require('./lib/ha-command.cjs');
-const { resolveTraceItem, validateDomain } = require('./commands/traces.cjs');
-const { UsageError } = require('./lib/ha-args.cjs');
 
-/*
- * ws mode. `ha-ws-client <command>` (and `ha-tools ws <command>`) arrive here as
- * `ws <command> …`. Three of its commands share a name with a native ha-tools
- * command that takes a date range instead of "the last N hours", so in ws mode
- * they map onto the ws-* definitions. Global flags may come before the command
- * (`ha-ws-client --json state x`), as they always could.
- */
-const WS_RENAMES = { history: 'ws-history', stats: 'ws-stats', timeline: 'ws-timeline' };
-const WS_VALUE_FLAGS = new Set(['--format', '--output', '--max-items', '--from', '--to']);
-
-let [sub, ...args] = process.argv.slice(2);
-let wsMode = false;
-let userSub = sub;
-if (sub === 'ws') {
-  wsMode = true;
-  const lead = [];
-  let rest = args;
-  while (rest.length && rest[0].startsWith('-') && !['-h', '--help', '--version'].includes(rest[0])) {
-    const n = WS_VALUE_FLAGS.has(rest[0]) && !rest[0].includes('=') ? 2 : 1;
-    lead.push(...rest.slice(0, n));
-    rest = rest.slice(n);
-  }
-  [sub, ...args] = rest;
-  args = lead.concat(args);
-  userSub = sub;
-  if (WS_RENAMES[sub]) sub = WS_RENAMES[sub];
-}
-const BASE_CMD = process.env.HA_TOOLS_CMD || 'ha-tools';
-const CMD = wsMode ? `${BASE_CMD} ${userSub || ''}`.trim() : (process.env.HA_TOOLS_CMD || `ha-tools ${sub || ''}`.trim());
-const CONFIG_DIR = process.env.HA_CONFIG_DIR || '/config';
-
-const VALID_PERIODS = new Set(['5minute', 'hour', 'day', 'week', 'month']);
-const VALID_FORMATS = new Set(['json', 'tsv', 'text']);
-
-const USAGE = {
-  history: `${CMD} <entity_id> [--days N] [--from <ISO|YYYY-MM-DD>] [--to <ISO>] [--full] ` +
-    `[--format json|tsv] [--utc]`,
-  stats: `${CMD} <entity_id> [--days N] [--from <ISO|YYYY-MM-DD>] [--to <ISO>] ` +
-    `[--period 5minute|hour|day|week|month] [--format json|tsv] [--utc]`,
-  timeline: `${CMD} <entity_id> [entity_id…] [--days N] [--from <ISO|YYYY-MM-DD>] [--to <ISO>] ` +
-    `[--between HH:MM-HH:MM] [--format text|tsv|json] [--utc]`,
-  lovelace: `${CMD} <list | get [url_path] | save <file|-> [url_path] | ` +
-    `create <url_path> <title> [--icon mdi:x] [--no-sidebar] [--admin] | delete <url_path>>`,
-  automation: `${CMD} <list | show <entity_id|id> | yaml <entity_id|id>> [--utc]`,
-  'config-check': `${CMD} [--no-log-scan]`,
-  reload: `${CMD} [domain] [--expect <entity_id>]… [--expect-timeout 8s] [--no-log-scan]\n` +
-    `                (default domain: automation; 'all' reloads everything reloadable)`,
-  'trace-watch': `${CMD} <entity_id|id> [--domain script|automation] [--timeout 15m] [--interval 10s] ` +
-    `[--format text|json] [--utc]`,
-};
-
-/* ---------------------------------------------------------------- arguments */
-
-/**
- * Shared parser for the date-range commands. `accepts` names the extra flags a
- * command takes, so `--period` on history is rejected rather than silently
- * ignored — an ignored flag is an agent believing it filtered when it didn't.
- */
-function parseRangeArgs(name, accepts = {}) {
-  const entities = [];
-  const opts = { full: false, period: 'hour', format: accepts.defaultFormat || 'json', utc: false };
-
-  for (let i = 0; i < args.length; i++) {
-    const a = args[i];
-    if (a === '--from') opts.from = args[++i];
-    else if (a === '--to') opts.to = args[++i];
-    else if (a === '--days') opts.days = parseFloat(args[++i]);
-    else if (a === '--utc') opts.utc = true;
-    else if (a === '--format') opts.format = args[++i];
-    else if (a === '--full' && accepts.full) opts.full = true;
-    else if (a === '--period' && accepts.period) opts.period = args[++i];
-    else if (a === '--between' && accepts.between) opts.between = args[++i];
-    else if (a === '-h' || a === '--help') usage(USAGE[name]);
-    else if (a.startsWith('-')) {
-      console.error(`Unknown argument: ${a}`);
-      usage(USAGE[name]);
-    } else entities.push(a);
-  }
-
-  if (entities.length === 0) usage(USAGE[name]);
-  if (!accepts.multi && entities.length > 1) {
-    console.error(`Error: ${name} takes one entity_id (got ${entities.length}) — ` +
-      `use \`ha-tools timeline\` to correlate several entities`);
-    usage(USAGE[name]);
-  }
-  if (!VALID_FORMATS.has(opts.format)) {
-    console.error(`Error: invalid --format: ${opts.format}`);
-    usage(USAGE[name]);
-  }
-  opts.entities = entities;
-  opts.entity = entities[0];
-  if (opts.between) {
-    try {
-      opts.window = parseWindow(opts.between);
-    } catch (e) {
-      console.error(`Error: ${e.message}`);
-      usage(USAGE[name]);
-    }
-  }
-  return opts;
-}
-
-/* ------------------------------------------------------------------- shared */
-
-/**
- * Flatten a `history/history_during_period` response into plain rows.
- *
- * HA's shape is awkward: an object keyed by entity_id whose first element is a
- * full state object and whose later elements are compact ({s, lu}) — so anything
- * consuming it directly has to know both spellings. Everything downstream of
- * here works with {entity_id, ms, state} instead.
- */
-function flattenHistory(result) {
-  const rows = [];
-  for (const [entityId, points] of Object.entries(result || {})) {
-    for (const p of points || []) {
-      const ms = toMillis(p.lu ?? p.last_updated ?? p.lc ?? p.last_changed);
-      if (ms === null) continue;
-      rows.push({ entity_id: p.entity_id || entityId, ms, state: p.s ?? p.state });
-    }
-  }
-  return rows.sort((a, b) => a.ms - b.ms);
-}
-
-/* ----------------------------------------------------------------- commands */
-
-// history — state changes over a date range (history/history_during_period).
-// The ha-ws-client binary's `history` covers only a fixed recent window.
-function history() {
-  const opts = parseRangeArgs('history', { full: true });
-  const { startISO, endISO } = timeRange(opts);
-
-  return run(async (ws) => {
-    const message = {
-      type: 'history/history_during_period',
-      start_time: startISO,
-      entity_ids: [opts.entity],
-      // Attributes dominate the output and are rarely the question; --full
-      // puts them back.
-      minimal_response: !opts.full,
-      no_attributes: !opts.full,
-      significant_changes_only: false,
-    };
-    if (endISO) message.end_time = endISO;
-    const result = await ws.send(message);
-
-    if (opts.format === 'json') {
-      // Raw HA shape, unchanged — documented in SKILL.md and depended on.
-      printJSON(result);
-      return;
-    }
-    const c = await haClock(ws, opts.utc);
-    printRows(flattenHistory(result), c, opts.format);
-  });
-}
-
-// stats — long-term statistics over a date range
-// (recorder/statistics_during_period).
-function stats() {
-  const opts = parseRangeArgs('stats', { period: true });
-  if (!VALID_PERIODS.has(opts.period)) {
-    console.error(`Error: invalid --period: ${opts.period}`);
-    usage(USAGE.stats);
-  }
-  const { startISO, endISO } = timeRange(opts);
-
-  return run(async (ws) => {
-    const message = {
-      type: 'recorder/statistics_during_period',
-      start_time: startISO,
-      statistic_ids: [opts.entity],
-      period: opts.period,
-    };
-    if (endISO) message.end_time = endISO;
-    const result = await ws.send(message);
-
-    if (opts.format === 'json') {
-      printJSON(result);
-      return;
-    }
-    const c = await haClock(ws, opts.utc);
-    console.log(['start', 'statistic_id', 'mean', 'min', 'max', 'sum', 'state', 'change'].join('\t'));
-    for (const [statId, buckets] of Object.entries(result || {})) {
-      for (const b of buckets || []) {
-        const ms = toMillis(b.start);
-        console.log([
-          ms === null ? '' : c.stamp(ms), statId,
-          b.mean ?? '', b.min ?? '', b.max ?? '', b.sum ?? '', b.state ?? '', b.change ?? '',
-        ].join('\t'));
-      }
-    }
-  });
-}
-
-/** Shared row printer for timeline/history flat output. */
-function printRows(rows, c, format) {
-  if (format === 'tsv') {
-    console.log(['timestamp', 'entity_id', 'state'].join('\t'));
-    for (const r of rows) console.log([c.stamp(r.ms), r.entity_id, r.state].join('\t'));
-    return;
-  }
-  // Text: one row per event, column-aligned, with the zone stated once up top
-  // so a reader never has to guess which clock these are on.
-  const width = rows.reduce((w, r) => Math.max(w, r.entity_id.length), 0);
-  const offset = rows.length ? c.offset(rows[0].ms) : '';
-  console.log(`# times are ${c.timeZone}${offset ? ` (UTC${offset})` : ''}; ${rows.length} events`);
-  for (const r of rows) {
-    console.log(`${c.shortStamp(r.ms)}  ${r.entity_id.padEnd(width)}  ${r.state}`);
-  }
-}
-
-// timeline — several entities' state changes merged onto one clock.
-//
-// Correlating entities against each other is the core automation-debugging
-// move, and doing it by hand means fetching each entity separately, converting
-// epoch floats, merging and sorting. That's plumbing, so it lives here.
-function timeline() {
-  const opts = parseRangeArgs('timeline', { between: true, multi: true, defaultFormat: 'text' });
-  const { startISO, endISO } = timeRange(opts);
-
-  return run(async (ws) => {
-    const message = {
-      type: 'history/history_during_period',
-      start_time: startISO,
-      entity_ids: opts.entities,
-      minimal_response: true,
-      no_attributes: true,
-      significant_changes_only: false,
-    };
-    if (endISO) message.end_time = endISO;
-
-    const result = await ws.send(message);
-    const c = await haClock(ws, opts.utc);
-    const rows = flattenHistory(result).filter((r) => inWindow(c, r.ms, opts.window));
-
-    if (opts.format === 'json') {
-      printJSON({
-        timezone: c.timeZone,
-        entity_ids: opts.entities,
-        start: startISO,
-        end: endISO,
-        between: opts.between || null,
-        event_count: rows.length,
-        events: rows.map((r) => ({
-          time: c.stamp(r.ms),
-          epoch_ms: r.ms,
-          entity_id: r.entity_id,
-          state: r.state,
-        })),
-      });
-      return;
-    }
-    printRows(rows, c, opts.format);
-
-    // Entities with no rows at all are worth calling out: "no events" and "you
-    // typo'd the entity_id" look identical in a merged timeline otherwise.
-    const seen = new Set(rows.map((r) => r.entity_id));
-    const silent = opts.entities.filter((e) => !seen.has(e));
-    if (silent.length) {
-      console.error(`Note: no events in this window for ${silent.join(', ')} ` +
-        `(entity may not exist, or may not have changed state)`);
-    }
-  });
-}
-
-// lovelace — dashboards. Storage-mode dashboard config is WebSocket-only; the
-// REST /api/lovelace/* endpoints return 404 on modern HA.
-function lovelace() {
-  const [action, ...rest] = args;
-  if (!action) usage(USAGE.lovelace);
-
-  return run(async (ws) => {
-    switch (action) {
-      case 'list':
-        printJSON(await ws.send({ type: 'lovelace/dashboards/list' }));
-        return;
-
-      case 'get': {
-        const message = { type: 'lovelace/config', force: true };
-        if (rest[0]) message.url_path = rest[0];
-        printJSON(await ws.send(message));
-        return;
-      }
-
-      case 'save': {
-        const [file, urlPath] = rest;
-        if (!file) usage(USAGE.lovelace);
-        let raw;
-        try {
-          raw = fs.readFileSync(file === '-' ? 0 : file, 'utf8');
-        } catch (e) {
-          die(`Error reading config: ${e.message}`);
-        }
-        let config;
-        try {
-          config = JSON.parse(raw);
-        } catch (e) {
-          die(`Error: config must be valid JSON — ${e.message}`);
-        }
-        const message = { type: 'lovelace/config/save', config };
-        if (urlPath) message.url_path = urlPath;
-        printJSON(await ws.send(message));
-        return;
-      }
-
-      case 'create': {
-        const [urlPath, title] = rest;
-        if (!urlPath || !title) usage(USAGE.lovelace);
-        if (!urlPath.includes('-')) {
-          die('Error: url_path must contain a hyphen (e.g. "my-room")');
-        }
-        const message = {
-          type: 'lovelace/dashboards/create',
-          url_path: urlPath,
-          title,
-          mode: 'storage',
-          show_in_sidebar: !rest.includes('--no-sidebar'),
-          require_admin: rest.includes('--admin'),
-        };
-        const iconIdx = rest.indexOf('--icon');
-        if (iconIdx !== -1 && rest[iconIdx + 1]) message.icon = rest[iconIdx + 1];
-        printJSON(await ws.send(message));
-        return;
-      }
-
-      case 'delete': {
-        // Delete takes a dashboard_id, but url_path is what humans and agents
-        // know — list first and resolve it.
-        const urlPath = rest[0];
-        if (!urlPath) usage(USAGE.lovelace);
-        const dashboards = await ws.send({ type: 'lovelace/dashboards/list' });
-        const match = (dashboards || []).find((d) => d.url_path === urlPath);
-        if (!match) die(`Error: no storage-mode dashboard with url_path "${urlPath}"`);
-        await ws.send({ type: 'lovelace/dashboards/delete', dashboard_id: match.id });
-        printJSON({ deleted: urlPath, dashboard_id: match.id });
-        return;
-      }
-
-      default:
-        usage(USAGE.lovelace);
-    }
-  });
-}
-
-// automation — what HA actually has loaded, and what's on disk.
-//
-// After editing automations.yaml and reloading, the obvious check is "show me
-// what HA now holds". `show` is that call. It reports which key spelling the
-// config came back with, because HA moved from `trigger:`/`action:` to the
-// plural `triggers:`/`actions:` and tools that only read one spelling report a
-// perfectly healthy automation as empty.
-function automation() {
-  const [action, ...rest] = args;
-  const utc = rest.includes('--utc');
-  if (!action) usage(USAGE.automation);
-
-  return run(async (ws) => {
-    if (action === 'list') {
-      const states = await ws.send({ type: 'get_states' });
-      const c = await haClock(ws, utc);
-      const rows = (states || [])
-        .filter((s) => s.entity_id.startsWith('automation.'))
-        .map((s) => ({
-          entity_id: s.entity_id,
-          id: s.attributes?.id ? String(s.attributes.id) : null,
-          alias: s.attributes?.friendly_name || null,
-          state: s.state,
-          last_triggered: s.attributes?.last_triggered
-            ? c.stamp(toMillis(s.attributes.last_triggered))
-            : null,
-        }))
-        .sort((a, b) => a.entity_id.localeCompare(b.entity_id));
-      printJSON({ timezone: c.timeZone, count: rows.length, automations: rows });
-      return;
-    }
-
-    const ref = rest.find((a) => !a.startsWith('-'));
-    if (!ref) usage(USAGE.automation);
-    const found = await resolveAutomation(ws, ref);
-
-    if (action === 'show') {
-      let config = null;
-      let source = null;
-      try {
-        const result = await ws.send({ type: 'automation/config', entity_id: found.entity_id });
-        config = result?.config ?? result ?? null;
-        source = 'websocket automation/config';
-      } catch (e) {
-        // Fall through to REST rather than reporting a guess at the cause.
-        source = `websocket automation/config failed (${e.message})`;
-      }
-
-      const empty = (cfg) => !cfg || (!cfg.trigger && !cfg.triggers && !cfg.action && !cfg.actions);
-      if (empty(config) && found.id) {
-        try {
-          config = await core(`config/automation/config/${found.id}`);
-          source = 'rest config/automation/config (stored)';
-        } catch (e) {
-          die(`Error: could not read config for ${found.entity_id} — ${e.message}`);
-        }
-      }
-
-      const count = (singular, plural) => {
-        const value = config?.[plural] ?? config?.[singular];
-        if (value === undefined || value === null) return 0;
-        return Array.isArray(value) ? value.length : 1;
-      };
-      printJSON({
-        entity_id: found.entity_id,
-        id: found.id,
-        alias: found.alias || config?.alias || null,
-        state: found.state,
-        source,
-        // Which spelling HA used — the thing that silently breaks parsers.
-        schema: config?.triggers || config?.actions ? 'plural' : 'singular',
-        uses_blueprint: Boolean(config?.use_blueprint),
-        summary: {
-          triggers: count('trigger', 'triggers'),
-          conditions: count('condition', 'conditions'),
-          actions: count('action', 'actions'),
-        },
-        config,
-      });
-      return;
-    }
-
-    if (action === 'yaml') {
-      if (!found.id) die(`Error: ${found.entity_id} has no id attribute — it isn't in automations.yaml`);
-      const file = path.join(CONFIG_DIR, 'automations.yaml');
-      let lines;
-      try {
-        lines = fs.readFileSync(file, 'utf8').split('\n');
-      } catch (e) {
-        die(`Error reading ${file}: ${e.message}`);
-      }
-
-      // automations.yaml is a top-level list, so a block runs from its "- " line
-      // to the line before the next one. Line-scanning beats a YAML parse here:
-      // it preserves formatting and comments exactly as written on disk.
-      const starts = [];
-      lines.forEach((line, i) => {
-        if (/^-\s/.test(line) || /^-$/.test(line.trimEnd())) starts.push(i);
-      });
-      const idPattern = new RegExp(`^\\s*(-\\s+)?id:\\s*['"]?${found.id}['"]?\\s*$`);
-      const blockIdx = starts.findIndex((start, n) => {
-        const end = starts[n + 1] ?? lines.length;
-        return lines.slice(start, end).some((l) => idPattern.test(l));
-      });
-      if (blockIdx === -1) {
-        die(`Error: no automation with id ${found.id} in ${file} ` +
-          `(it may be defined in a package or a !include'd file)`);
-      }
-      const start = starts[blockIdx];
-      let end = starts[blockIdx + 1] ?? lines.length;
-      // The blank line separating two entries belongs to neither of them.
-      while (end > start + 1 && lines[end - 1].trim() === '') end--;
-      const width = String(end).length;
-      console.log(`# ${file}, lines ${start + 1}-${end} — ${found.entity_id}`);
-      for (let i = start; i < end; i++) {
-        console.log(`${String(i + 1).padStart(width)}  ${lines[i]}`);
-      }
-      return;
-    }
-
-    usage(USAGE.automation);
-  });
-}
-
-/*
- * Watch the Core log across an operation and report the per-entity config errors
- * Home Assistant writes while it runs.
- *
- * Both config-check and reload need this for the same reason: what they call
- * reports whether the *call* worked, not whether your config is sound. HA logs
- * "Invalid config for '<domain>' at <file>, line N: …", drops the entity, and
- * carries on — so an entity can vanish while both commands report success.
- *
- * Best effort, and it says when it was: if the log cannot be read, the caller
- * keeps the endpoint's own verdict and prints why the scan didn't happen. A
- * check that couldn't look must never imply that it looked and found nothing.
- */
-async function scanningLog(enabled, operation) {
-  if (!enabled) return { result: await operation(), errors: [], scanned: false };
-
-  let before = null;
-  let unavailable = null;
-  try {
-    before = await coreLogTail();
-  } catch (e) {
-    unavailable = e.message;
-  }
-
-  const result = await operation();
-
-  if (unavailable) return { result, errors: [], scanned: false, unavailable };
-  let after;
-  try {
-    after = await coreLogTail();
-  } catch (e) {
-    return { result, errors: [], scanned: false, unavailable: e.message };
-  }
-
-  const { lines, overlapped } = newLines(before, after);
-  return { result, errors: parseConfigErrors(lines), scanned: true, overlapped };
-}
-
-/** How a scan that could not run is reported, so it is never mistaken for "clean". */
-function logScanNote(scan) {
-  if (scan.unavailable) return `unavailable — could not read the Core log: ${scan.unavailable}`;
-  if (scan.overlapped === false) {
-    return 'partial — the Core log moved on by more than the window read, so errors may be missing';
-  }
-  return null;
-}
-
-// config-check — validate the config HA would load. The safety step when
-// hand-editing YAML, and REST-only (there is no WebSocket equivalent), which is
-// why it used to mean hand-rolling a curl. Exits non-zero when invalid so a
-// caller can branch on it without parsing.
-//
-// The endpoint alone is not enough: it fails only on a config HA cannot load at
-// all, and answers "valid" for one it will load *without* the entity you just
-// wrote. So the Core log is read across the check and the errors it emits are
-// folded into the verdict. --no-log-scan restores the endpoint-only behaviour.
-async function configCheck() {
-  if (args.some((a) => a === '-h' || a === '--help')) usage(USAGE['config-check']);
-  const withScan = !args.includes('--no-log-scan');
-
-  let scan;
-  try {
-    scan = await scanningLog(withScan, () => core('config/core/check_config', { method: 'POST', timeoutMs: 120000 }));
-  } catch (e) {
-    die(`Error: ${e.message}`);
-  }
-
-  const out = { ...(scan.result || {}) };
-  if (scan.errors.length) {
-    out.result = 'invalid';           // the endpoint said valid; the log says otherwise
-    out.platform_errors = scan.errors;
-  }
-  const note = logScanNote(scan);
-  if (note) out.log_scan = note;
-
-  printJSON(out);
-  if (out.result !== 'valid' || scan.errors.length) process.exit(1);
-}
-
-// reload — pick up edited YAML without restarting HA.
-//
-// Reload is where a bad per-entity config actually bites, and reporting
-// `{"reloaded":"template"}` unconditionally says only that the service call went
-// through — which reads as the reload having worked. Same log scan as
-// config-check, plus --expect to assert the entity you just wrote exists
-// afterwards, which is the failure this whole thing is about.
-const RELOAD_ALL = 'all';
-async function reload() {
-  if (args.some((a) => a === '-h' || a === '--help')) usage(USAGE.reload);
-  const withScan = !args.includes('--no-log-scan');
-
-  const expect = [];
-  const positional = [];
-  let expectTimeout = 8000;
-  for (let i = 0; i < args.length; i++) {
-    if (args[i] === '--expect') {
-      if (!args[i + 1]) die('Error: --expect needs an entity_id');
-      expect.push(args[++i]);
-    } else if (args[i] === '--expect-timeout') {
-      if (!args[i + 1]) die('Error: --expect-timeout needs a duration');
-      try { expectTimeout = parseDuration(args[++i], '--expect-timeout'); }
-      catch (e) { die(`Error: ${e.message}`); }
-    } else if (!args[i].startsWith('-')) {
-      positional.push(args[i]);
-    }
-  }
-  const domain = positional[0] || 'automation';
-  const [callDomain, service] = domain === RELOAD_ALL
-    ? ['homeassistant', 'reload_all']
-    : [domain, 'reload'];
-
-  let scan;
-  try {
-    scan = await scanningLog(withScan, () => core(
-      `services/${callDomain}/${service}`, { method: 'POST', body: {}, timeoutMs: 120000 }));
-  } catch (e) {
-    die(`Error: reloading ${domain} failed — ${e.message}`);
-  }
-
-  const out = { reloaded: domain, service: `${callDomain}.${service}` };
-  if (scan.errors.length) out.platform_errors = scan.errors;
-  const note = logScanNote(scan);
-  if (note) out.log_scan = note;
-
-  let missing = [];
-  if (expect.length) {
-    missing = await missingEntities(expect, { timeoutMs: expectTimeout });
-    out.expected = Object.fromEntries(
-      expect.map((id) => [id, missing.includes(id) ? 'missing' : 'present']));
-  }
-
-  printJSON(out);
-  if (scan.errors.length || missing.length) process.exit(1);
-}
-
-/**
- * Which of these entity_ids the state machine does not have. Polled rather than
- * read once: a reload is not instantaneous, and "not there yet" and "dropped
- * because its config was rejected" look identical for the first second or two.
- */
-async function missingEntities(ids, { timeoutMs = 8000, intervalMs = 500 } = {}) {
-  let outstanding = [...ids];
-  const deadline = Date.now() + timeoutMs;
-  await run(async (ws) => {
-    for (;;) {
-      const states = await ws.send({ type: 'get_states' });
-      const have = new Set((states || []).map((s) => s.entity_id));
-      outstanding = outstanding.filter((id) => !have.has(id));
-      if (!outstanding.length || Date.now() >= deadline) return;
-      await new Promise((r) => setTimeout(r, intervalMs));
-    }
-  });
-  return outstanding;
-}
-
-// trace-watch — block until the automation actually fires, then report the
-// trace.
-//
-// Verifying a changed trigger needs the trigger to genuinely fire;
-// `automation.trigger` skips triggers and conditions, so it proves nothing about
-// the thing you just edited. This polls the trace list rather than subscribing
-// to automation_triggered, because a run blocked by its conditions still writes
-// a trace — and "it fired but the condition stopped it" is usually the answer
-// you're looking for.
-function traceWatch() {
-  const VALUE_FLAGS = new Set(['--timeout', '--interval', '--format', '--domain']);
-  const positional = [];
-  for (let i = 0; i < args.length; i++) {
-    if (VALUE_FLAGS.has(args[i])) i++;
-    else if (!args[i].startsWith('-')) positional.push(args[i]);
-  }
-  const ref = positional[0];
-  if (!ref || args.includes('-h') || args.includes('--help')) usage(USAGE['trace-watch']);
-
-  const flag = (name, fallback) => {
-    const i = args.indexOf(name);
-    return i === -1 ? fallback : args[i + 1];
-  };
-  const timeoutRaw = flag('--timeout', '15m');
-  const intervalRaw = flag('--interval', '10s');
-  let timeoutMs;
-  let intervalMs;
-  try {
-    timeoutMs = parseDuration(timeoutRaw, '--timeout');
-    intervalMs = parseDuration(intervalRaw, '--interval');
-    validateDomain({ opt: { domain: flag('--domain', undefined) } });
-  } catch (e) {
-    console.error(`Error: ${e.message}`);
-    usage(USAGE['trace-watch']);
-  }
-  const format = flag('--format', 'text');
-  const utc = args.includes('--utc');
-
-  return run(async (ws) => {
-    let found;
-    try {
-      found = await resolveTraceItem(ws, ref, flag('--domain', undefined));
-    } catch (e) {
-      if (e instanceof UsageError) { console.error(`Error: ${e.message}`); usage(USAGE['trace-watch']); }
-      throw e;
-    }
-    const c = await haClock(ws, utc);
-
-    const listTraces = async () =>
-      (await ws.send({ type: 'trace/list', domain: found.domain, item_id: found.item_id })) || [];
-    const seen = new Set((await listTraces()).map((t) => t.run_id));
-    const deadline = Date.now() + timeoutMs;
-
-    // stderr, so stdout carries only the result the caller is waiting for.
-    console.error(`Watching ${found.entity_id} for a new trace ` +
-      `(${seen.size} existing, polling every ${intervalRaw}, giving up after ${timeoutRaw})…`);
-
-    for (;;) {
-      const traces = await listTraces();
-      const fresh = traces
-        .filter((t) => !seen.has(t.run_id))
-        .sort((a, b) => (toMillis(a.timestamp?.start) ?? 0) - (toMillis(b.timestamp?.start) ?? 0));
-      if (fresh.length) {
-        const newest = fresh[fresh.length - 1];
-        const detail = await ws.send({
-          type: 'trace/get',
-          domain: found.domain,
-          item_id: found.item_id,
-          run_id: newest.run_id,
-        });
-        printTrace(found, newest, detail, c, format);
-        return;
-      }
-      if (Date.now() >= deadline) {
-        console.error(`No new trace for ${found.entity_id} within the timeout — ` +
-          `it has not ${found.domain === 'script' ? 'run' : 'fired'}. (Its triggers may never have occurred; this is not an error.)`);
-        process.exit(1);
-      }
-      await new Promise((r) => setTimeout(r, Math.min(intervalMs, Math.max(0, deadline - Date.now()) + 1)));
-    }
-  });
-}
-
-function printTrace(found, trace, detail, c, format) {
-  const ms = toMillis(trace.timestamp?.start || detail?.timestamp?.start);
-  // script_execution is HA's own verdict on the run: "finished" means it ran to
-  // the end, "failed_conditions" means the conditions blocked it — the
-  // distinction the whole watch exists to capture.
-  const verdict = detail?.script_execution || trace.script_execution || 'unknown';
-  const summary = {
-    entity_id: found.entity_id,
-    run_id: trace.run_id,
-    time: ms === null ? null : c.stamp(ms),
-    timezone: c.timeZone,
-    script_execution: verdict,
-    last_step: detail?.last_step || trace.last_step || null,
-    error: detail?.error || trace.error || null,
-    condition_blocked: verdict === 'failed_conditions',
-  };
-  if (format === 'json') {
-    printJSON({ ...summary, trace: detail });
-    return;
-  }
-  console.log(`${summary.time}  ${found.entity_id}  fired`);
-  console.log(`  run_id:           ${summary.run_id}`);
-  console.log(`  script_execution: ${verdict}${verdict === 'failed_conditions' ? '  (a condition blocked it)' : ''}`);
-  if (summary.last_step) console.log(`  last_step:        ${summary.last_step}`);
-  if (summary.error) console.log(`  error:            ${summary.error}`);
-  console.log(`  full trace:       ha-tools trace-debug ${found.entity_id} ${summary.run_id}`);
-}
-
-/* --------------------------------------------------------------- dispatch */
-
-const NATIVE = {
-  history,
-  stats,
-  timeline,
-  lovelace,
-  automation,
-  'config-check': configCheck,
-  reload,
-  'trace-watch': traceWatch,
-};
-
-// Everything commands/*.cjs defines, behind the same lookup.
+const MODULES = ['basic', 'registry', 'history', 'monitor', 'automation', 'lovelace', 'traces'];
 const DEFS = {};
-for (const mod of ['basic', 'registry', 'ws-history', 'monitor', 'traces']) {
+for (const mod of MODULES) {
   for (const def of require(`./commands/${mod}.cjs`).commands) DEFS[def.name] = def;
 }
-const COMMANDS = { ...NATIVE };
-for (const name of Object.keys(DEFS)) COMMANDS[name] = () => execute(DEFS[name], args, CMD);
 
+// `logs` is a bash script (it speaks to the Supervisor's journald endpoints), so it
+// has no definition here; it is listed so the one help screen covers everything.
+const LOGS = { summary: 'Core / host / Supervisor / app logs, from the journal (`ha-tools logs --help`).' };
+
+// The order is the order of usefulness when something is wrong, not alphabetical.
 const CATEGORIES = [
-  ['Entities & services', ['ping', 'state', 'states', 'states-json', 'states-filter', 'config', 'services', 'call', 'template', 'fire-event', 'device-health', 'compare']],
+  ['Automations & scripts', ['running', 'trace-stuck', 'trace-timeline', 'trace-summary', 'traces', 'trace-latest', 'trace',
+    'trace-vars', 'trace-actions', 'trace-trigger', 'trace-watch', 'automation-config', 'blueprint-inputs', 'automation']],
+  ['Change and verify', ['config-check', 'reload', 'lovelace']],
+  ['History', ['history', 'stats', 'stats-multi', 'timeline', 'logbook', 'attrs', 'syslog', 'context']],
+  ['Entities and services', ['state', 'states', 'states-filter', 'config', 'services', 'call', 'template', 'fire-event',
+    'device-health', 'compare', 'ping']],
   ['Registries', ['entities', 'devices', 'areas']],
-  ['History (last N hours)', ['logbook', 'history', 'history-full', 'attrs', 'timeline', 'syslog', 'stats', 'stats-multi', 'context']],
-  ['Live', ['watch', 'monitor', 'monitor-multi', 'analyze']],
-  ['Automations & scripts', ['running', 'traces', 'trace', 'trace-latest', 'trace-summary', 'trace-vars', 'trace-timeline',
-    'trace-trigger', 'trace-actions', 'trace-debug', 'trace-stuck', 'trace-watch', 'automation-config', 'blueprint-inputs']],
+  ['Live', ['monitor', 'monitor-multi', 'analyze']],
+  ['Logs', ['logs']],
 ];
 
-function wsHelp() {
-  const lines = [`Usage: ${BASE_CMD} [global options] <command> [args]`, '',
-    'Home Assistant over the WebSocket API. Built into this app (it used to be a separate binary).', ''];
-  for (const [title, names] of CATEGORIES) {
+const HELP_WORDS = new Set(['-h', '--help', 'help']);
+const VALUE_FLAGS = new Set(['--format', '--output']);
+
+// One line per command: the first sentence, cut at a dash clause if it is still long.
+const firstSentence = (text) => {
+  const sentence = text.split(/(?<=\.)\s/)[0];
+  return sentence.length > 100 ? sentence.split(/ — /)[0].replace(/[.:]$/, '') + '.' : sentence;
+};
+
+function help() {
+  const listed = new Set(CATEGORIES.flatMap(([, names]) => names));
+  const categories = [...CATEGORIES];
+  const stray = Object.keys(DEFS).filter((n) => !listed.has(n));
+  if (stray.length) categories.push(['Other', stray]);    // a new command is never hidden
+
+  const lines = [
+    'Usage: ha-tools <command> [args]',
+    '',
+    'Home Assistant from the command line: entities and services, history, automation and',
+    'script traces, dashboards, logs. Every command takes --help (usage and examples).',
+    'Shared flags, in any position: --json  --compact  --format json|compact|default  --no-headers  --utc',
+    '(a command only accepts --max-items, --from/--to or --show-age if it acts on them).',
+    '',
+  ];
+  for (const [title, names] of categories) {
     lines.push(`${title}:`);
-    for (const n of names) {
-      const def = DEFS[WS_RENAMES[n] || n];
-      const text = def ? def.summary.split(/(?<=\.)\s/)[0] : n === 'trace-watch' ? 'Block until an automation or script runs, then report its trace' : '';
-      lines.push(`  ${n.padEnd(18)}${text}`);
+    for (const name of names) {
+      const def = name === 'logs' ? LOGS : DEFS[name];
+      if (!def) continue;
+      lines.push(`  ${name.padEnd(18)}${firstSentence(def.summary)}${def.mutates ? '  [changes HA]' : ''}`);
     }
     lines.push('');
   }
-  lines.push('Global options (any position): --json  --compact  --format json|compact|default  --no-headers',
-    '  --no-timestamps  --show-age  --max-items N  --from DATE  --to DATE  --utc',
+  lines.push(
+    'Times print in Home Assistant\'s timezone with an explicit offset (the container clock is UTC);',
+    'pass --utc for UTC. --json is one line, {"success":…,"command":…,"data":…}, and `success`',
+    'always agrees with the exit code. Traces take --domain script|automation, or a qualified id',
+    '(script.foo / automation.foo). Start a trace investigation with trace-summary, trace-timeline',
+    'or trace-stuck; trace and trace-latest print the whole raw trace, which can be very large.',
     '',
-    `Run \`${BASE_CMD} <command> --help\` for a command's options and examples.`,
-    'Traces take --domain script|automation, or a qualified id: script.foo / automation.foo.');
+    'Examples:',
+    '  ha-tools running                                   # what is executing now, and for how long',
+    '  ha-tools trace-stuck script.nick_blind_creep_open  # which branch is waiting, and on what',
+    '  ha-tools timeline light.hall binary_sensor.stairs --days 3 --between 22:00-07:00',
+    '  ha-tools history sensor.temperature 6              # last 6 hours (or --days 7, --from 2026-06-01)',
+    '  ha-tools config-check && ha-tools reload template --expect cover.nick_blind',
+    '  ha-tools logs --errors -n 500',
+  );
   return lines.join('\n');
 }
 
-if (wsMode) {
-  if (!sub || ['-h', '--help', 'help'].includes(sub)) { console.log(wsHelp()); process.exit(0); }
-  if (sub === '--version' || sub === '-v') { console.log('built into the Claude Code UI app (formerly the ha-ws-client binary)'); process.exit(0); }
-  if (sub === 'update') {
-    console.error('ha-ws-client is built into this app; update the app instead.');
+async function main() {
+  let args = process.argv.slice(2);
+
+  // Shared flags may come before the command (`ha-tools --json state x`).
+  const lead = [];
+  while (args.length && args[0].startsWith('-') && !HELP_WORDS.has(args[0])) {
+    const n = VALUE_FLAGS.has(args[0]) && !args[0].includes('=') ? 2 : 1;
+    lead.push(...args.slice(0, n));
+    args = args.slice(n);
+  }
+  const [sub, ...rest] = args;
+
+  if (!sub || HELP_WORDS.has(sub)) { console.log(help()); return; }
+  const def = DEFS[sub];
+  if (!def) {
+    console.error(`ha-tools: unknown command '${sub}'`);
+    console.error("Run 'ha-tools --help' for the list.");
     process.exit(2);
   }
+  await execute(def, lead.concat(rest), `ha-tools ${sub}`);
 }
 
-if (!COMMANDS[sub]) {
-  console.error(`ha-tools: unknown subcommand '${wsMode ? userSub || '' : sub || ''}' — expected one of: ` +
-    `${Object.keys(COMMANDS).join(', ')}`);
-  process.exit(2);
-}
-
-Promise.resolve(COMMANDS[sub]()).catch((e) => {
+main().catch((e) => {
   console.error(`Error: ${e.message}`);
   process.exit(1);
 });

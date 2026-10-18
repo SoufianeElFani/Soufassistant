@@ -45,15 +45,15 @@ export function registerDiagRoutes(app) {
       tests: {},
     };
     const auth = `-H "Authorization: Bearer $SUPERVISOR_TOKEN"`;
-    out.tests.ws_ping = await runCmd('ha-ws-client ping 2>&1 | head -c 400');
-    out.tests.ws_config = await runCmd('ha-ws-client config 2>&1 | head -c 400');
-    out.tests.ws_template = await runCmd(`ha-ws-client template '{{ now() }}' 2>&1 | head -c 400`);
+    out.tests.ws_ping = await runCmd('ha-tools ping 2>&1 | head -c 400');
+    out.tests.ws_config = await runCmd('ha-tools config 2>&1 | head -c 400');
+    out.tests.ws_template = await runCmd(`ha-tools template '{{ now() }}' 2>&1 | head -c 400`);
     out.tests.rest_api_root = await runCmd(`curl -s -m 10 -o /dev/null -w "%{http_code}" ${auth} ${SUPERVISOR_URL}/core/api/`);
     out.tests.rest_states = await runCmd(`curl -s -m 10 ${auth} ${SUPERVISOR_URL}/core/api/states | head -c 60`);
     out.tests.rest_lovelace = await runCmd(`curl -s -m 10 -o /dev/null -w "%{http_code}" ${auth} ${SUPERVISOR_URL}/core/api/lovelace/config`);
     out.tests.rest_dashboards = await runCmd(`curl -s -m 10 ${auth} ${SUPERVISOR_URL}/core/api/lovelace/dashboards | head -c 200`);
-    out.tests.lovelace_list = await runCmd('ha-lovelace list 2>&1 | head -c 500');
-    out.tests.lovelace_get = await runCmd('ha-lovelace get 2>&1 | head -c 300');
+    out.tests.lovelace_list = await runCmd('ha-tools lovelace list 2>&1 | head -c 500');
+    out.tests.lovelace_get = await runCmd('ha-tools lovelace get 2>&1 | head -c 300');
     // Any mcpServers still persisted in ~/.claude.json (global + per-project).
     out.tests.claude_json_mcp = await runCmd(
       `python3 -c "import json; d=json.load(open('${HOME_DIR}/.claude.json')); ` +

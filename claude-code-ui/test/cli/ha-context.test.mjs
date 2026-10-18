@@ -93,7 +93,7 @@ describe('a healthy Home Assistant', () => {
 
   test('teaches the ha-tools commands Claude is expected to use', () => {
     const md = readFileSync(file, 'utf8');
-    for (const tool of ['ha-timeline', 'ha-history', 'ha-logs', 'ha-tools config-check']) {
+    for (const tool of ['ha-tools timeline', 'ha-tools history', 'ha-tools logs', 'ha-tools config-check']) {
       assert.match(md, new RegExp(tool.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')), `context never mentions ${tool}`);
     }
   });
@@ -112,7 +112,7 @@ describe('a log endpoint that has gone away', () => {
     const md = readFileSync(file, 'utf8');
     assert.doesNotMatch(md, /404: Not Found/, 'this is exactly how the removal of /api/error_log went unnoticed');
     assert.match(md, /Unable to retrieve the Home Assistant log/);
-    assert.match(md, /ha-logs/);
+    assert.match(md, /ha-tools logs/);
   });
 
   test('and the rest of the context is still generated', () => {

@@ -80,6 +80,8 @@ const sortBy = (arr, key) => [...arr].sort((a, b) => String(a[key]).localeCompar
  *   envelopeOnly  compare success/command only (message text differs on purpose)
  *   error       both must fail
  */
+// Not in the corpus on purpose: states-json, history-full and trace-debug were deleted as duplicates
+// (states-filter '*', `history --full` and `trace` do the same), and watch folded into monitor.
 const CORPUS = [
   ['ping', ['ping'], { envelopeOnly: true }],
   ['state', ['state', 'sensor.temperature']],
@@ -87,7 +89,6 @@ const CORPUS = [
   ['state (missing argument)', ['state'], { error: true }],
   ['states', ['states']],
   ['states --max-items', ['states', '--max-items', '2']],
-  ['states-json', ['states-json']],
   ['states-filter', ['states-filter', 'sensor.*']],
   ['config', ['config'], { equal: true }],
   ['services', ['services'], {
@@ -107,15 +108,14 @@ const CORPUS = [
   ['areas', ['areas']],
   ['logbook', ['logbook', 'light.hall', '6']],
   ['history', ['history', 'sensor.temperature', '6']],
-  ['history-full', ['history-full', 'sensor.temperature', '6']],
   ['attrs', ['attrs', 'sensor.temperature', '6'], {
     // Intended: Go field names (Time/State/Attrs) replaced by snake_case keys.
     normalize: (o, n) => [o.map((e) => ({ ms: Date.parse(e.Time), state: e.State })), n.map((e) => ({ ms: Date.parse(e.time), state: e.state }))],
     approxMs: true,
   }],
   ['timeline', ['timeline', '6', 'sensor.temperature', 'light.hall'], {
-    // Intended: Go field names (Time/EntityID/State) replaced by snake_case keys.
-    normalize: (o, n) => [o.map((e) => ({ ms: Date.parse(e.Time), entity_id: e.EntityID, state: e.State })), n.map((e) => ({ ms: Date.parse(e.time), entity_id: e.entity_id, state: e.state }))],
+    // Intended: Go field names (Time/EntityID/State) replaced by snake_case keys (and an epoch_ms).
+    normalize: (o, n) => [o.map((e) => ({ ms: Date.parse(e.Time), entity_id: e.EntityID, state: e.State })), n.map((e) => ({ ms: e.epoch_ms, entity_id: e.entity_id, state: e.state }))],
     approxMs: true,
   }],
   ['syslog', ['syslog']],
@@ -133,7 +133,6 @@ const CORPUS = [
   ['trace-latest', ['trace-latest', 'automation.hall_light_off']],
   ['trace-summary', ['trace-summary', 'automation.hall_light_off']],
   ['trace <run>', ['trace', 'automation.hall_light_off', 'a2']],
-  ['trace-debug <run>', ['trace-debug', 'automation.hall_light_off', 'a2']],
   ['trace-vars <run>', ['trace-vars', 'automation.hall_light_off', 'a1']],
   ['trace-trigger <run>', ['trace-trigger', 'automation.hall_light_off', 'a1']],
   ['trace-timeline <run>', ['trace-timeline', 'automation.hall_light_off', 'a1'], {
@@ -166,7 +165,7 @@ describe('ha-ws-client parity (old binary v1.8.1 vs the built-in implementation)
   for (const [name, args, opts = {}] of CORPUS) {
     test(name, async () => {
       const argv = [...args, '--json'];
-      const [oldRun, newRun] = [await runOld(argv), await runTool('ha-ws-client', argv)];
+      const [oldRun, newRun] = [await runOld(argv), await runTool('ha-tools', argv)];
 
       if (opts.error) {
         assert.notEqual(oldRun.code, 0, 'the old tool was expected to fail here (corpus is wrong)');
@@ -201,7 +200,7 @@ describe('ha-ws-client parity (old binary v1.8.1 vs the built-in implementation)
   // must not differ is that the commands still work and say something.
   for (const args of [['state', 'sensor.temperature'], ['states-filter', 'light.*'], ['config'], ['areas'], ['traces', 'automation.hall_light_off'], ['trace-latest', 'automation.hall_light_off']]) {
     test(`default output still works: ${args.join(' ')}`, async () => {
-      const [oldRun, newRun] = [await runOld(args), await runTool('ha-ws-client', args)];
+      const [oldRun, newRun] = [await runOld(args), await runTool('ha-tools', args)];
       assert.equal(oldRun.code, 0);
       assert.equal(newRun.code, 0, newRun.stderr);
       assert.ok(newRun.stdout.trim().length > 0, 'empty output');

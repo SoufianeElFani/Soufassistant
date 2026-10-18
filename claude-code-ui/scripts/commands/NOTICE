@@ -1,6 +1,6 @@
 NOTICE — ha-ws-client
 
-The command behaviour in basic.cjs, registry.cjs, ws-history.cjs, monitor.cjs and
+The command behaviour in basic.cjs, registry.cjs, history.cjs, monitor.cjs and
 the automation-trace parts of traces.cjs is a port of ha-ws-client, the Go
 command-line client in schoolboyqueue/home-assistant-blueprints
 (https://github.com/schoolboyqueue/home-assistant-blueprints,

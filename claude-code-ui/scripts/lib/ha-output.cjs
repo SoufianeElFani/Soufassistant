@@ -18,6 +18,9 @@ function create(opt, clk) {
   const maxItems = opt.maxItems || 0;
 
   const envelope = (fields) => console.log(JSON.stringify({ success: true, ...fields }));
+  // `times: true` marks a result that carries formatted times, so the zone they are in
+  // travels with it — in the envelope, where it can't be mistaken for part of the data.
+  const zone = (o) => (o && o.times ? clk.timeZone : undefined);
 
   function compactLine(item) {
     if (item === null || typeof item !== 'object') return String(item);
@@ -44,28 +47,44 @@ function create(opt, clk) {
       return clk.stamp(ms);
     },
 
+    /**
+     * A result that is also a failure (an invalid config, a missing entity after a
+     * reload): the same data as a success would print, but `success:false` and a
+     * non-zero exit — so the envelope never contradicts the exit code.
+     */
+    fail(data, { command, message } = {}) {
+      process.exitCode = 1;
+      if (isJson) console.log(JSON.stringify({ success: false, command, error: message, data }));
+      else {
+        if (data !== undefined) console.log(pretty(data));
+        if (message) console.error(message);
+      }
+    },
+
     message(text) {
       if (isJson) envelope({ message: text });
       else console.log(text);
     },
 
-    data(data, { command, count, summary } = {}) {
+    data(data, { command, count, summary, times } = {}) {
       if (isJson) {
-        envelope({ command, data, count: count > 0 ? count : undefined, summary });
+        envelope({ command, data, count: count > 0 ? count : undefined, summary, timezone: zone({ times }) });
       } else if (isCompact) {
         if (summary) console.log(summary);
         if (Array.isArray(data)) data.forEach((d) => console.log(compactLine(d)));
-        else console.log(compactLine(data));
+        else if (data !== null && typeof data === 'object' && !(typeof data.entity_id === 'string' && typeof data.state === 'string')) {
+          console.log(JSON.stringify(data));     // a document: complete, on one line — never a prefix of it
+        } else console.log(compactLine(data));
       } else {
         if (summary && showHeaders) console.log(summary);
         console.log(pretty(data));
       }
     },
 
-    list(items, { title, command, formatter } = {}) {
+    list(items, { title, command, formatter, times } = {}) {
       const count = items.length;
       if (isJson) {
-        envelope({ command, data: items, count: count > 0 ? count : undefined });
+        envelope({ command, data: items, count: count > 0 ? count : undefined, timezone: zone({ times }) });
         return;
       }
       const shown = maxItems > 0 && count > maxItems ? items.slice(0, maxItems) : items;
@@ -77,10 +96,10 @@ function create(opt, clk) {
       if (shown.length < count) console.log(isCompact ? `+${count - shown.length} more` : `\n... and ${count - shown.length} more`);
     },
 
-    timeline(entries, { title, command, formatter } = {}) {
+    timeline(entries, { title, command, formatter, times } = {}) {
       const count = entries.length;
       if (isJson) {
-        envelope({ command, data: entries, count: count > 0 ? count : undefined });
+        envelope({ command, data: entries, count: count > 0 ? count : undefined, timezone: zone({ times }) });
         return;
       }
       const shown = maxItems > 0 && count > maxItems ? entries.slice(0, maxItems) : entries;

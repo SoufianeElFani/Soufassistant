@@ -13,6 +13,11 @@ const require = createRequire(import.meta.url);
 const { parseArgs, parseFlexibleDate, UsageError } = require(path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'scripts', 'lib', 'ha-args.cjs'));
 
 describe('parseArgs', () => {
+  test('flags only some commands honour are rejected elsewhere, never silently ignored', () => {
+    for (const flag of ['--max-items', '--from', '--to', '--show-age', '--no-timestamps']) {
+      assert.throws(() => parseArgs([flag, '1']), /unknown option/, flag);
+    }
+  });
   test('global flags work before, between and after positionals', () => {
     for (const argv of [['--json', 'a', 'b'], ['a', '--json', 'b'], ['a', 'b', '--json']]) {
       const r = parseArgs(argv);
@@ -27,9 +32,10 @@ describe('parseArgs', () => {
     assert.equal(parseArgs([]).opt.fmt, 'default');
   });
   test('value flags take the next argument or =value', () => {
-    assert.equal(parseArgs(['--max-items', '5']).opt.maxItems, 5);
-    assert.equal(parseArgs(['--max-items=5']).opt.maxItems, 5);
-    assert.equal(parseArgs(['--from', '2026-10-17']).opt.from, '2026-10-17');
+    const f = { 'max-items': 'int', from: 'string' };
+    assert.equal(parseArgs(['--max-items', '5'], f).opt.maxItems, 5);
+    assert.equal(parseArgs(['--max-items=5'], f).opt.maxItems, 5);
+    assert.equal(parseArgs(['--from', '2026-10-17'], f).opt.from, '2026-10-17');
   });
   test('a command\'s own flags are accepted; undeclared ones are rejected', () => {
     assert.equal(parseArgs(['--domain', 'script'], { domain: 'string' }).opt.domain, 'script');
@@ -38,8 +44,8 @@ describe('parseArgs', () => {
     assert.throws(() => parseArgs(['--bogus']), /unknown option: --bogus/);
   });
   test('bad values are usage errors, not NaN', () => {
-    assert.throws(() => parseArgs(['--max-items', 'lots']), /whole number/);
-    assert.throws(() => parseArgs(['--max-items']), /needs a value/);
+    assert.throws(() => parseArgs(['--max-items', 'lots'], { 'max-items': 'int' }), /whole number/);
+    assert.throws(() => parseArgs(['--max-items'], { 'max-items': 'int' }), /needs a value/);
     assert.throws(() => parseArgs(['--format', 'yaml']), /invalid --format/);
   });
   test('-h and --help are reported, not treated as positionals', () => {

@@ -1,11 +1,12 @@
 /*
- * ha-ws-client, now built in. These are the behaviours that replaced the Go
- * binary — states, services, registries, history, live monitoring — and the
- * ones that did not exist before: script traces, `running`, `trace-stuck`.
+ * The command set of ha-tools — one tool, one name. Covers the commands that
+ * replaced the old ha-tools binary (states, services, registries, history, live
+ * monitoring), the ones that did not exist before (script traces, `running`,
+ * `trace-stuck`), and the contract they all share.
  *
- * Output shape is an API here, same as for ha-tools: the JSON envelope, the
- * HA-timezone clock, "empty is [], broken is non-zero". The comparison against
- * the old binary lives in test/parity (npm run test:parity).
+ * Output shape is an API here: the JSON envelope, the HA-timezone clock, "empty
+ * is [], broken is non-zero", `success` agreeing with the exit code. The comparison
+ * against the old binary lives in test/parity (npm run test:parity).
  */
 import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
@@ -13,7 +14,7 @@ import { startFakeHa, runTool } from '../helpers/fake-ha.mjs';
 import { buildWorld, AUTO_ID } from '../helpers/ha-world.mjs';
 
 const MIN = 60_000;
-const wsc = (args, opts) => runTool('ha-ws-client', args, opts);
+const wsc = (args, opts) => runTool('ha-tools', args, opts);
 const reqs = (ha, type) => ha.requests.filter((r) => r.ws === type).map((r) => r.message);
 
 /** A fake HA from the shared world, with some commands replaced. */
@@ -24,30 +25,24 @@ async function world(override = (w) => ({})) {
 }
 
 const ALL_COMMANDS = [
-  'ping', 'state', 'states', 'states-json', 'states-filter', 'config', 'services', 'call', 'template', 'fire-event',
-  'device-health', 'compare', 'entities', 'devices', 'areas', 'logbook', 'history', 'history-full', 'attrs', 'timeline',
-  'syslog', 'stats', 'stats-multi', 'context', 'watch', 'monitor', 'monitor-multi', 'analyze', 'running', 'traces', 'trace',
-  'trace-latest', 'trace-summary', 'trace-vars', 'trace-timeline', 'trace-trigger', 'trace-actions', 'trace-debug',
+  'ping', 'state', 'states', 'states-filter', 'config', 'services', 'call', 'template', 'fire-event',
+  'device-health', 'compare', 'entities', 'devices', 'areas', 'logbook', 'history', 'attrs', 'timeline',
+  'syslog', 'stats', 'stats-multi', 'context', 'monitor', 'monitor-multi', 'analyze', 'running', 'traces', 'trace',
+  'trace-latest', 'trace-summary', 'trace-vars', 'trace-timeline', 'trace-trigger', 'trace-actions',
   'trace-stuck', 'automation-config', 'blueprint-inputs',
+  'automation', 'config-check', 'reload', 'lovelace', 'trace-watch',
 ];
+// Deleted as duplicates, not hidden: states-json (states-filter '*'), history-full (history --full),
+// trace-debug (trace), watch (monitor). There is no old spelling to keep working.
+const DELETED = ['states-json', 'history-full', 'trace-debug', 'watch', 'ha-history', 'update'];
 
-describe('the name and the dispatcher', () => {
-  test('ha-ws-client and `ha-tools ws` are the same command', async () => {
-    const { ha } = await world();
-    try {
-      const a = await wsc(['state', 'sensor.temperature', '--json'], { ha });
-      const b = await runTool('ha-tools', ['ws', 'state', 'sensor.temperature', '--json'], { ha });
-      assert.equal(a.code, 0);
-      assert.equal(a.stdout, b.stdout);
-      assert.equal(a.json.command, 'state');
-    } finally { await ha.close(); }
-  });
-
-  test('--help lists every command, so an agent can check rather than guess', async () => {
+describe('the dispatcher', () => {
+  test('--help lists every command exactly once, so an agent can check rather than guess', async () => {
     const r = await wsc(['--help']);
     assert.equal(r.code, 0);
-    for (const name of [...ALL_COMMANDS, 'trace-watch']) {
-      assert.match(r.stdout, new RegExp(`^  ${name}\\s`, 'm'), `--help does not list ${name}`);
+    for (const name of [...ALL_COMMANDS, 'logs']) {
+      const hits = r.stdout.split('\n').filter((l) => new RegExp(`^  ${name}\\s`).test(l));
+      assert.equal(hits.length, 1, `${name} should be listed once, found ${hits.length}`);
     }
   });
 
@@ -57,44 +52,106 @@ describe('the name and the dispatcher', () => {
     assert.match(r.stdout, /Automations & scripts/);
   });
 
-  test('--version says it is built in; `update` says so and exits 2', async () => {
-    const v = await wsc(['--version']);
-    assert.equal(v.code, 0);
-    assert.match(v.stdout, /built into/);
-    const u = await wsc(['update']);
-    assert.equal(u.code, 2);
-    assert.match(u.stderr, /built into this app/);
+  test('the commands that change Home Assistant say so, and the read-only ones do not', async () => {
+    const r = await wsc(['--help']);
+    for (const name of ['call', 'fire-event', 'reload', 'lovelace']) {
+      assert.match(r.stdout, new RegExp(`^  ${name}\\s.*\\[changes HA\\]$`, 'm'), `${name} should be marked`);
+    }
+    for (const name of ['state', 'config-check', 'history', 'running', 'trace-stuck']) {
+      assert.doesNotMatch(r.stdout, new RegExp(`^  ${name}\\s.*\\[changes HA\\]`, 'm'), `${name} is read-only`);
+    }
+    assert.match((await wsc(['call', '--help'])).stdout, /This changes Home Assistant\./);
+    assert.match((await wsc(['lovelace', '--help'])).stdout, /save, create and delete change Home Assistant; list and get only read\./);
+    assert.doesNotMatch((await wsc(['state', '--help'])).stdout, /changes Home Assistant/);
+  });
+
+  test('a clean break: the duplicate and compatibility commands are gone, not hidden', async () => {
+    for (const name of DELETED) {
+      const r = await wsc([name]);
+      assert.equal(r.code, 2, name);
+      assert.match(r.stderr, new RegExp(`unknown command '${name}'`));
+    }
+    const ws = await wsc(['ws', 'state', 'x.y']);
+    assert.equal(ws.code, 2, 'the `ws` prefix of the old binary is gone too');
+    assert.doesNotMatch((await wsc(['--help'])).stdout, /ha-ws-client|ha-history|states-json|trace-debug/);
   });
 
   test('an unknown command is exit 2 and names itself in the message', async () => {
     const r = await wsc(['bogus']);
     assert.equal(r.code, 2);
-    assert.match(r.stderr, /unknown subcommand 'bogus'/);
+    assert.match(r.stderr, /unknown command 'bogus'/);
   });
 
-  test('global flags may come before the command, as they always could', async () => {
+  test('shared flags may come before the command; a command\'s own flags go after it', async () => {
     const { ha } = await world();
     try {
-      const r = await wsc(['--json', '--max-items', '2', 'states'], { ha });
+      const r = await wsc(['--json', '--utc', 'states', '--max-items', '2'], { ha });
       assert.equal(r.code, 0, r.stderr);
       assert.equal(r.json.command, 'states');
       assert.equal(r.json.data.sample.length, 2);
     } finally { await ha.close(); }
   });
 
-  test('`history` here is the last-N-hours form; ha-history stays the date-range tool', async () => {
+  test('one `history` takes every way of saying how far back: hours, --hours, --days, --from', async () => {
     const { ha } = await world();
     try {
-      const a = await wsc(['history', 'sensor.temperature', '6', '--json'], { ha });
-      assert.equal(a.code, 0, a.stderr);
-      assert.equal(a.json.command, 'history');
-      const span = (Date.parse(reqs(ha, 'history/history_during_period').at(-1).end_time) - Date.parse(reqs(ha, 'history/history_during_period').at(-1).start_time)) / 3600000;
-      assert.ok(Math.abs(span - 6) < 0.01, `asked for ${span} hours`);
-      const b = await runTool('ha-history', ['sensor.temperature', '--format', 'json'], { ha });
-      assert.equal(b.code, 0);
-      assert.ok(!('success' in b.json), 'ha-history still prints HA\'s raw shape, not the envelope');
+      const hoursBack = () => {
+        const sent = reqs(ha, 'history/history_during_period').at(-1);
+        assert.equal(sent.end_time, undefined, 'no --to means "up to now": no end_time is sent');
+        return (Date.now() - Date.parse(sent.start_time)) / 3600000;
+      };
+      for (const [args, expected] of [
+        [['history', 'sensor.temperature', '6'], 6],
+        [['history', 'sensor.temperature', '--hours', '6'], 6],
+        [['history', 'sensor.temperature', '--days', '0.25'], 6],
+      ]) {
+        const r = await wsc(args, { ha });
+        assert.equal(r.code, 0, r.stderr);
+        assert.ok(Math.abs(hoursBack() - expected) < 0.05, `${args.join(' ')}: asked for ${hoursBack()}h`);
+      }
+      await wsc(['history', 'sensor.temperature', '--from', '2026-10-17', '--to', '2026-10-17 12:00'], { ha });
+      const sent = reqs(ha, 'history/history_during_period').at(-1);
+      assert.equal(sent.start_time, '2026-10-17T00:00:00.000Z');
+      assert.equal(sent.end_time, '2026-10-17T12:00:00.000Z');
     } finally { await ha.close(); }
   });
+
+  test('two ways of saying how far back is a usage error that names both, not a quiet pick', async () => {
+    const { ha } = await world();
+    try {
+      for (const args of [['history', 'sensor.temperature', '6', '--days', '1'], ['stats', 'sensor.temperature', '--hours', '2', '--days', '1']]) {
+        const r = await wsc(args, { ha });
+        assert.equal(r.code, 2, args.join(' '));
+        assert.match(r.stderr, /give one of .* — not both/);
+      }
+    } finally { await ha.close(); }
+  });
+
+  test('every command, native or ported, is the same tool: the same names, flags anywhere, one envelope', async () => {
+    const { ha } = await world();
+    try {
+      const a = await wsc(['--json', 'history', 'sensor.temperature', '6'], { ha });
+      const b = await wsc(['history', 'sensor.temperature', '6', '--json'], { ha });
+      assert.equal(a.code, 0, a.stderr);
+      assert.equal(a.json.command, 'history');
+      assert.deepEqual(a.json.data.map((p) => p.s ?? p.state), ['19.0', '19.5']);
+      assert.deepEqual(a.json, b.json, 'a shared flag means the same before or after the command');
+    } finally { await ha.close(); }
+  });
+
+  test('--json always agrees with the exit code: a failure is success:false and non-zero', async () => {
+    const { ha } = await world();
+    try {
+      const missing = await wsc(['state', 'sensor.nope', '--json'], { ha });
+      assert.equal(missing.code, 1);
+      assert.equal(missing.json.success, false);
+      assert.match(missing.json.error, /entity not found/);
+      const usage = await wsc(['state', '--json'], { ha });
+      assert.equal(usage.code, 2);
+      assert.equal(usage.json.success, false);
+    } finally { await ha.close(); }
+  });
+
 });
 
 describe('every command documents itself', () => {
@@ -102,9 +159,9 @@ describe('every command documents itself', () => {
     test(`${name} --help: usage on stdout, exit 0, at least two examples`, async () => {
       const r = await wsc([name, '--help']);
       assert.equal(r.code, 0, r.stderr);
-      assert.match(r.stdout, new RegExp(`^Usage: ha-ws-client ${name}`, 'm'));
+      assert.match(r.stdout, new RegExp(`^Usage: ha-tools ${name}`, 'm'));
       const examples = r.stdout.split('Examples:')[1] || '';
-      const lines = examples.split('\n').filter((l) => l.trim().startsWith(`ha-ws-client ${name}`));
+      const lines = examples.split('\n').filter((l) => l.trim().startsWith(`ha-tools ${name}`));
       assert.ok(lines.length >= 2, `only ${lines.length} example(s) for ${name}`);
     });
   }
@@ -113,7 +170,7 @@ describe('every command documents itself', () => {
     const r = await wsc(['trace-latest']);
     assert.equal(r.code, 2);
     assert.match(r.stderr, /missing argument/);
-    assert.match(r.stderr, /Usage: ha-ws-client trace-latest <entity_id>/);
+    assert.match(r.stderr, /Usage: ha-tools trace-latest <entity_id>/);
   });
 
   test('an option the command does not have is rejected, not ignored', async () => {
@@ -216,10 +273,14 @@ describe('history shows Home Assistant time', () => {
   after(async () => { await ha.close(); });
 
   test('times carry the HA offset, and --utc opts out', async () => {
+    // Text is the aligned form history always had: the zone said once up top.
     const r = await wsc(['history', 'sensor.temperature', '6'], { ha });
-    assert.match(r.stdout, /^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d\+0[01]:00: 19\.0$/m);
+    assert.match(r.stdout, /^# times are Europe\/London \(UTC\+0[01]:00\); 2 events$/m);
+    assert.match(r.stdout, /^\d\d-\d\d \d\d:\d\d:\d\d  sensor\.temperature  19\.0$/m);
     const utc = await wsc(['history', 'sensor.temperature', '6', '--utc'], { ha });
-    assert.match(utc.stdout, /\+00:00: 19\.0$/m);
+    assert.match(utc.stdout, /^# times are UTC \(UTC\+00:00\)/m);
+    const tsv = await wsc(['history', 'sensor.temperature', '6', '--format', 'tsv'], { ha });
+    assert.match(tsv.stdout, /\+0[01]:00\tsensor\.temperature\t19\.0$/m);
   });
 
   test('--from / --to replace [hours]', async () => {
@@ -238,7 +299,7 @@ describe('history shows Home Assistant time', () => {
     await wsc(['logbook', '6'], { ha });
     const sent = reqs(ha, 'logbook/get_events').at(-1);
     assert.equal(sent.entity_ids, undefined, '"6" is hours, not an entity');
-    assert.ok(Math.abs((Date.parse(sent.end_time) - Date.parse(sent.start_time)) / 3600000 - 6) < 0.01);
+    assert.ok(Math.abs((Date.now() - Date.parse(sent.start_time)) / 3600000 - 6) < 0.05);
     await wsc(['logbook', 'light.hall', '6'], { ha });
     assert.deepEqual(reqs(ha, 'logbook/get_events').at(-1).entity_ids, ['light.hall']);
   });
@@ -266,24 +327,6 @@ describe('history shows Home Assistant time', () => {
 });
 
 describe('live subscriptions', () => {
-  test('watch prints state changes as they are pushed, then stops', async () => {
-    const { ha } = await world((w) => ({
-      subscribe_trigger: (msg, { push }) => {
-        setTimeout(() => push({ variables: { trigger: { from_state: { state: 'off' }, to_state: { state: 'on' } } } }), 100);
-        return null;
-      },
-    }));
-    try {
-      const r = await wsc(['watch', 'light.hall', '1'], { ha });
-      assert.equal(r.code, 0, r.stderr);
-      assert.match(r.stdout, /Watching light\.hall for 1 seconds/);
-      assert.match(r.stdout, /\d\d:\d\d:\d\d\+0[01]:00: light\.hall -> on/);
-      assert.match(r.stdout, /Watch complete/);
-      assert.deepEqual(reqs(ha, 'subscribe_trigger')[0].trigger, { platform: 'state', entity_id: 'light.hall' });
-      assert.equal(reqs(ha, 'unsubscribe_events').length, 1, 'the subscription is released');
-    } finally { await ha.close(); }
-  });
-
   test('monitor counts changes and shows from -> to', async () => {
     const { ha } = await world(() => ({
       subscribe_trigger: (msg, { push }) => {
@@ -297,6 +340,8 @@ describe('live subscriptions', () => {
       assert.match(r.stdout, /\[1\] .*: off -> on/);
       assert.match(r.stdout, /\[2\] .*: on -> off/);
       assert.match(r.stdout, /Monitoring complete\. 2 state changes observed\./);
+      assert.deepEqual(reqs(ha, 'subscribe_trigger')[0].trigger, { platform: 'state', entity_id: 'light.hall' });
+      assert.ok(reqs(ha, 'unsubscribe_events').length >= 1, 'the subscription is released');
       const j = await wsc(['monitor', 'light.hall', '1', '--json'], { ha });
       const changes = j.lines.map((l) => JSON.parse(l)).filter((e) => e.data?.change_num);
       assert.deepEqual(changes.map((c) => c.data.to_state), ['on', 'off']);
@@ -321,7 +366,7 @@ describe('live subscriptions', () => {
       const { spawn } = await import('node:child_process');
       const { toolsBin, TOKEN, APP_ROOT } = await import('../helpers/fake-ha.mjs');
       const path = await import('node:path');
-      const proc = spawn('bash', [path.join(toolsBin(), 'ha-ws-client'), 'monitor', 'light.hall', '30'], {
+      const proc = spawn('bash', [path.join(toolsBin(), 'ha-tools'), 'monitor', 'light.hall', '30'], {
         env: { PATH: process.env.PATH, HOME: process.env.HOME, HA_TOKEN: TOKEN, HA_TOOLS_NODE_PATH: path.join(APP_ROOT, 'node_modules'), HA_WS_URL: ha.wsUrl }, stdio: ['ignore', 'pipe', 'pipe'],
       });
       let out = '';
@@ -508,11 +553,10 @@ describe('traces: the trace commands on a script', () => {
     assert.equal(a.json.data.last_run.state, 'finished');
   });
 
-  test('trace and trace-debug return the raw run for a given run_id', async () => {
+  test('trace returns the raw run for a given run_id', async () => {
     const r = await wsc(['trace', SCRIPT, 'r-done', '--json'], { ha });
     assert.equal(r.json.data.run_id, 'r-done');
     assert.ok(r.json.data.config.sequence, 'raw config, not a re-serialised subset');
-    assert.equal((await wsc(['trace-debug', SCRIPT, 'r-done', '--json'], { ha })).json.data.run_id, 'r-done');
   });
 
   test('a run id HA does not have is a failure with HA\'s own message', async () => {
@@ -546,9 +590,10 @@ describe('running', () => {
 
   test('JSON has the facts as fields', async () => {
     const r = await wsc(['running', '--json'], { ha });
-    const { running, timezone, count } = r.json.data;
-    assert.equal(timezone, 'Europe/London');
-    assert.equal(count, 3);
+    // data is the list of runs; the zone their times are in rides in the envelope.
+    const running = r.json.data;
+    assert.equal(r.json.timezone, 'Europe/London');
+    assert.equal(r.json.count, 3);
     const blind = running[0];
     assert.equal(blind.entity_id, 'script.nick_blind_creep_open');
     assert.equal(blind.mode, 'single');
@@ -565,8 +610,8 @@ describe('running', () => {
 
   test('--utc prints UTC', async () => {
     const r = await wsc(['running', '--utc', '--json'], { ha });
-    assert.equal(r.json.data.timezone, 'UTC');
-    assert.match(r.json.data.running[0].started, /\+00:00$/);
+    assert.equal(r.json.timezone, 'UTC');
+    assert.match(r.json.data[0].started, /\+00:00$/);
   });
 
   test('--compact is one line per run; --no-headers drops the header', async () => {
@@ -578,8 +623,8 @@ describe('running', () => {
   test('--domain narrows it, and nothing running is an empty list with exit 0', async () => {
     const a = await wsc(['running', '--domain', 'automation', '--json'], { ha });
     assert.equal(a.code, 0);
-    assert.deepEqual(a.json.data.running, []);
-    assert.equal(a.json.data.count, 0);
+    assert.deepEqual(a.json.data, []);
+    assert.equal(a.json.count, undefined, 'an empty list carries no count');
     const t = await wsc(['running', '--domain', 'automation'], { ha });
     assert.match(t.stdout, /; 0 running$/m);
   });
@@ -591,12 +636,12 @@ describe('running', () => {
       'trace/list': (m) => (m.domain === 'automation' ? w.commands['trace/list'](m).map((t, i) => (i === 0 ? { ...t, state: 'running', timestamp: { start: t.timestamp.start } } : t)) : w.commands['trace/list'](m)) } });
     try {
       const r = await wsc(['running', '--domain', 'automation', '--json'], { ha: h });
-      const [row] = r.json.data.running;
+      const [row] = r.json.data;
       assert.equal(row.entity_id, 'automation.hall_light_off');
       assert.equal(row.effect, 'new runs dropped (queue full)');
       assert.equal(row.current, 2);
       const idle = await wsc(['running', '--domain', 'automation', '--json'], { ha });
-      assert.deepEqual(idle.json.data.running, [], 'enabled-but-idle automations are not running');
+      assert.deepEqual(idle.json.data, [], 'enabled-but-idle automations are not running');
     } finally { await h.close(); }
   });
 
@@ -605,7 +650,7 @@ describe('running', () => {
     const h = await startFakeHa({ commands: { ...w.commands, 'trace/list': (m) => w.commands['trace/list'](m).filter((t) => t.state !== 'running') } });
     try {
       const j = await wsc(['running', '--domain', 'script', '--json'], { ha: h });
-      const row = j.json.data.running.find((x) => x.entity_id === 'script.nick_blind_creep_open');
+      const row = j.json.data.find((x) => x.entity_id === 'script.nick_blind_creep_open');
       assert.equal(row.started, null);
       assert.equal(row.running_for_s, null);
       assert.match(row.note, /no running trace stored/);
@@ -657,7 +702,7 @@ describe('trace-stuck', () => {
     assert.equal(other.waiting_on.configured_s, 300);
     assert.ok(other.waiting_on.remaining_s < 0);
     assert.match(other.waiting_on.remaining, /^overdue by/);
-    assert.equal(d.timezone, 'Europe/London');
+    assert.equal(r.json.timezone, 'Europe/London');
     assert.match(run.started, /[+-]\d\d:\d\d$/);
   });
 
@@ -738,8 +783,8 @@ describe('trace-watch works for scripts', () => {
     try {
       const r = await runTool('ha-tools', ['trace-watch', 'script.nick_blind_creep_open', '--timeout', '5s', '--interval', '1s', '--format', 'json'], { ha: h });
       assert.equal(r.code, 0, r.stderr);
-      assert.equal(r.json.entity_id, 'script.nick_blind_creep_open');
-      assert.equal(r.json.run_id, 'r-new');
+      assert.equal(r.json.data.entity_id, 'script.nick_blind_creep_open');
+      assert.equal(r.json.data.run_id, 'r-new');
     } finally { await h.close(); }
   });
 
@@ -752,3 +797,130 @@ describe('trace-watch works for scripts', () => {
     } finally { await ha.close(); }
   });
 });
+
+describe('the native commands honour the same contract', () => {
+  test('config-check: --json success mirrors the verdict, and an invalid config still exits 1', async () => {
+    const QUIET = '2026-08-25 01:10:00.000 INFO (MainThread) [homeassistant.core] Bus:Handling <Event x>';
+    const good = await startFakeHa({ rest: { 'core/api/config/core/check_config': { result: 'valid', errors: null } }, logs: { 'core/logs': QUIET } });
+    const bad = await startFakeHa({ rest: { 'core/api/config/core/check_config': { result: 'invalid', errors: 'bad indentation' } }, logs: { 'core/logs': QUIET } });
+    try {
+      const ok = await runTool('ha-tools', ['config-check', '--json'], { ha: good });
+      assert.equal(ok.code, 0);
+      assert.equal(ok.json.success, true);
+      assert.equal(ok.json.data.result, 'valid');
+      const nope = await runTool('ha-tools', ['config-check', '--json'], { ha: bad });
+      assert.equal(nope.code, 1);
+      assert.equal(nope.json.success, false, 'the envelope must not say success while the exit code says failure');
+      assert.equal(nope.json.data.result, 'invalid');
+      assert.match(nope.json.error, /not valid/);
+    } finally { await good.close(); await bad.close(); }
+  });
+
+  test('config-check and reload need no WebSocket: they are REST-only', async () => {
+    const ha = await startFakeHa({ authFails: true, rest: { 'core/api/config/core/check_config': { result: 'valid', errors: null } }, logs: { 'core/logs': 'x' } });
+    try {
+      const r = await runTool('ha-tools', ['config-check'], { ha });
+      assert.equal(r.code, 0, r.stderr);
+    } finally { await ha.close(); }
+  });
+
+  test('reload --expect is repeatable and a missing entity fails the envelope as well as the exit code', async () => {
+    const ha = await startFakeHa({
+      commands: { get_states: [{ entity_id: 'cover.a', state: 'open' }] },
+      rest: { 'core/api/services/template/reload': [] },
+      logs: { 'core/logs': 'x' },
+    });
+    try {
+      const r = await runTool('ha-tools', ['reload', 'template', '--expect', 'cover.a', '--expect', 'cover.b', '--expect-timeout', '1s', '--json'], { ha });
+      assert.equal(r.code, 1);
+      assert.equal(r.json.success, false);
+      assert.deepEqual(r.json.data.expected, { 'cover.a': 'present', 'cover.b': 'missing' });
+    } finally { await ha.close(); }
+  });
+
+  test('lovelace: a config saved from `get --json` (the envelope) can be saved straight back', async () => {
+    const { mkdtempSync, writeFileSync } = await import('node:fs');
+    const { tmpdir } = await import('node:os');
+    const path = await import('node:path');
+    const ha = await startFakeHa({ commands: { 'lovelace/config': { views: [{ title: 'Home' }] }, 'lovelace/config/save': null } });
+    try {
+      const got = await runTool('ha-tools', ['lovelace', 'get', 'energy', '--json'], { ha });
+      assert.equal(got.json.data.views[0].title, 'Home');
+      const file = path.join(mkdtempSync(path.join(tmpdir(), 'll-')), 'energy.json');
+      writeFileSync(file, got.stdout);
+      const saved = await runTool('ha-tools', ['lovelace', 'save', file, 'energy'], { ha });
+      assert.equal(saved.code, 0, saved.stderr);
+      assert.deepEqual(reqs(ha, 'lovelace/config/save').at(-1).config, { views: [{ title: 'Home' }] }, 'the config inside the envelope is what is saved');
+    } finally { await ha.close(); }
+  });
+
+  test('global flags work before a native command too, and --utc reaches it', async () => {
+    const { ha } = await world();
+    try {
+      const r = await wsc(['--utc', 'timeline', 'light.hall', '--json'], { ha });
+      assert.equal(r.code, 0, r.stderr);
+      assert.equal(r.json.timezone, 'UTC');
+    } finally { await ha.close(); }
+  });
+
+  test('a REST-only command with a bad option is a usage error, not a connection attempt', async () => {
+    const r = await runTool('ha-tools', ['reload', '--expect-timeout', 'soon'], { env: { HA_TOKEN: '', SUPERVISOR_TOKEN: '' } });
+    assert.equal(r.code, 2);
+    assert.match(r.stderr, /invalid --expect-timeout/);
+  });
+});
+
+describe('no command accepts a flag it would ignore', () => {
+  test('a listing flag on a command with no list is a usage error, not a quiet no-op', async () => {
+    const { ha } = await world();
+    try {
+      for (const args of [['state', 'sensor.temperature', '--max-items', '1'], ['config', '--from', '2026-10-17'], ['ping', '--show-age'], ['running', '--max-items', '1']]) {
+        const r = await wsc(args, { ha });
+        assert.equal(r.code, 2, args.join(' '));
+        assert.match(r.stderr, /unknown option/);
+      }
+      assert.equal((await wsc(['states-filter', '*', '--max-items', '2', '--show-age'], { ha })).code, 0);
+      assert.equal((await wsc(['traces', '--domain', 'script', '--max-items', '2', '--from', '2026-01-01'], { ha })).code, 0);
+    } finally { await ha.close(); }
+  });
+
+  test('every command that declares --max-items or --from says so in its --help', async () => {
+    const hist = await wsc(['timeline', '--help']);
+    assert.match(hist.stdout, /--from \/ --to/);
+    const states = await wsc(['states-filter', '--help']);
+    assert.match(states.stdout, /--max-items N/);
+    assert.match(states.stdout, /--show-age/);
+  });
+});
+
+describe('what an agent relies on staying true', () => {
+  test('--compact never drops fields: a document prints complete, on one line', async () => {
+    const good = await startFakeHa({
+      rest: { 'core/api/config/core/check_config': { result: 'valid', errors: null, warnings: null, extra: 'kept', more: 1, evenmore: 2, again: 3 } },
+      logs: { 'core/logs': 'x' },
+    });
+    try {
+      const r = await wsc(['config-check', '--compact'], { ha: good });
+      assert.equal(r.code, 0, r.stderr);
+      assert.equal(r.lines.length, 1);
+      const parsed = JSON.parse(r.lines[0]);
+      assert.deepEqual(Object.keys(parsed).sort(), ['again', 'errors', 'evenmore', 'extra', 'more', 'result', 'warnings']);
+    } finally { await good.close(); }
+  });
+
+  test('trace-watch waits 100s by default — a foreground command is cut off at about two minutes', async () => {
+    const r = await wsc(['trace-watch', '--help']);
+    assert.match(r.stdout, /--timeout 100s/);
+    assert.match(r.stdout, /default is 100s/);
+    assert.doesNotMatch(r.stdout, /15m/);
+  });
+
+  test('--max-items says it is for text output: --json is never truncated', async () => {
+    const { ha } = await world();
+    try {
+      const r = await wsc(['states-filter', '*', '--max-items', '2', '--json'], { ha });
+      assert.ok(r.json.data.length > 2);
+    } finally { await ha.close(); }
+  });
+});
+

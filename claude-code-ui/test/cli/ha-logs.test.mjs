@@ -38,27 +38,27 @@ describe('reading a log', () => {
       ['core', 'core/logs'], ['host', 'host/logs'],
       ['supervisor', 'supervisor/logs'], ['self', 'addons/self/logs'],
     ]) {
-      const r = await runTool('ha-logs', [source], { ha });
+      const r = await runTool('ha-tools', ['logs', source], { ha });
       assert.equal(r.code, 0, `${source} failed: ${r.stderr}`);
       assert.ok(ha.requests.some((q) => q.route === route), `${source} did not hit ${route}`);
     }
   });
 
   test('treats an unrecognised name as a journal identifier, so any app just works', async () => {
-    const r = await runTool('ha-logs', ['app_core_mosquitto'], { ha });
+    const r = await runTool('ha-tools', ['logs', 'app_core_mosquitto'], { ha });
     assert.equal(r.code, 0);
     assert.match(r.stdout, /mosquitto/);
   });
 
   test('strips the ANSI colour Supervisor sends, unless --raw asks for it', async () => {
-    const clean = await runTool('ha-logs', ['app_core_mosquitto'], { ha });
+    const clean = await runTool('ha-tools', ['logs', 'app_core_mosquitto'], { ha });
     assert.doesNotMatch(clean.stdout, /\[/, 'escape codes would land in whatever Claude generates');
-    const raw = await runTool('ha-logs', ['app_core_mosquitto', '--raw'], { ha });
+    const raw = await runTool('ha-tools', ['logs', 'app_core_mosquitto', '--raw'], { ha });
     assert.match(raw.stdout, /\[/);
   });
 
   test('--errors keeps warnings, errors and tracebacks and drops the rest', async () => {
-    const r = await runTool('ha-logs', ['core', '--errors'], { ha });
+    const r = await runTool('ha-tools', ['logs', 'core', '--errors'], { ha });
     assert.equal(r.code, 0);
     assert.equal(r.lines.length, 3);
     assert.doesNotMatch(r.stdout, /Setting up sensor/);
@@ -66,16 +66,16 @@ describe('reading a log', () => {
   });
 
   test('passes the line count and boot through to Supervisor', async () => {
-    await runTool('ha-logs', ['core', '-n', '500', '--boot', '0'], { ha });
+    await runTool('ha-tools', ['logs', 'core', '-n', '500', '--boot', '0'], { ha });
     const q = ha.requests.filter((x) => x.route === 'core/logs').at(-1).query;
     assert.equal(q.lines, '500');
     assert.equal(q.boot, '0');
   });
 
   test('--units and --boots list what is available', async () => {
-    const units = await runTool('ha-logs', ['--units'], { ha });
+    const units = await runTool('ha-tools', ['logs', '--units'], { ha });
     assert.deepEqual(units.lines, ['app_core_mosquitto', 'hassio_supervisor']);
-    const boots = await runTool('ha-logs', ['--boots'], { ha });
+    const boots = await runTool('ha-tools', ['logs', '--boots'], { ha });
     assert.match(boots.stdout, /^0\t2026-08-12T18:00:00Z$/m);
   });
 });
@@ -91,7 +91,7 @@ describe('a Supervisor endpoint that has gone away', () => {
   after(async () => { await ha.close(); });
 
   test('is an error on stderr with a non-zero exit, never printed as log content', async () => {
-    const r = await runTool('ha-logs', ['core'], { ha });
+    const r = await runTool('ha-tools', ['logs', 'core'], { ha });
     assert.equal(r.code, 1, 'this is the whole point of the file');
     assert.equal(r.stdout, '', 'the error body must not reach stdout, where it reads as a log');
     assert.match(r.stderr, /returned HTTP 404/);
@@ -113,11 +113,11 @@ describe('an identifier that logged nothing', () => {
   after(async () => { await ha.close(); });
 
   test('is told apart from an identifier that does not exist', async () => {
-    const quiet = await runTool('ha-logs', ['quiet_app'], { ha });
+    const quiet = await runTool('ha-tools', ['logs', 'quiet_app'], { ha });
     assert.equal(quiet.code, 0, 'a real unit with nothing to say is not a failure');
     assert.match(quiet.stderr, /No log entries for 'quiet_app'/);
 
-    const typo = await runTool('ha-logs', ['typo_app'], { ha });
+    const typo = await runTool('ha-tools', ['logs', 'typo_app'], { ha });
     assert.equal(typo.code, 1, 'a name that does not exist is');
     assert.match(typo.stderr, /no journal identifier 'typo_app'/);
   });
@@ -125,7 +125,7 @@ describe('an identifier that logged nothing', () => {
 
 describe('ha-logs without a token', () => {
   test('says so rather than making an unauthenticated request', async () => {
-    const r = await runTool('ha-logs', ['core'], { env: { SUPERVISOR_TOKEN: '' } });
+    const r = await runTool('ha-tools', ['logs', 'core'], { env: { SUPERVISOR_TOKEN: '' } });
     assert.equal(r.code, 1);
     assert.match(r.stderr, /SUPERVISOR_TOKEN not set/);
   });
@@ -133,7 +133,7 @@ describe('ha-logs without a token', () => {
 
 describe('an unknown flag', () => {
   test('is rejected instead of being read as a log source', async () => {
-    const r = await runTool('ha-logs', ['--tail'], {});
+    const r = await runTool('ha-tools', ['logs', '--tail'], {});
     assert.equal(r.code, 1);
     assert.match(r.stderr, /Unknown option: --tail/);
   });

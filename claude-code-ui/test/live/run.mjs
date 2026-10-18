@@ -231,27 +231,27 @@ async function main() {
 
   await check('ha-tools lists every subcommand', async () => {
     const out = await inContainer('ha-tools --help');
-    for (const sub of ['timeline', 'history', 'stats', 'logs', 'automation', 'config-check', 'reload', 'lovelace', 'ws']) {
+    for (const sub of ['timeline', 'history', 'stats', 'logs', 'automation', 'config-check', 'reload', 'lovelace', 'running', 'trace-stuck']) {
       assert(new RegExp(`\\b${sub}\\b`).test(out), `--help never mentions ${sub}`);
     }
   });
 
   await check('ha-tools ws reaches the live instance', async () => {
-    const out = await inContainer('ha-ws-client config 2>&1 | head -c 400');
+    const out = await inContainer('ha-tools config 2>&1 | head -c 400');
     assert(!/error|unauthor/i.test(out), out.trim());
   });
 
-  await check('ha-ws-client (built in) answers ping, config and a template', async () => {
-    assert(/^Pong!/m.test(await inContainer('ha-ws-client ping')), 'no pong');
-    const cfg = JSON.parse(await inContainer('ha-ws-client config --json'));
+  await check('ha-tools answers ping, config and a template', async () => {
+    assert(/^Pong!/m.test(await inContainer('ha-tools ping')), 'no pong');
+    const cfg = JSON.parse(await inContainer('ha-tools config --json'));
     assert(cfg.success && cfg.data.time_zone, 'config has no time_zone');
-    const tpl = JSON.parse(await inContainer(`ha-ws-client template '{{ 1 + 1 }}' --json`));
+    const tpl = JSON.parse(await inContainer(`ha-tools template '{{ 1 + 1 }}' --json`));
     assert(tpl.data.result === '2', `template rendered ${JSON.stringify(tpl.data)}`);
     return cfg.data.time_zone;
   });
 
-  await check('ha-ws-client running lists what is executing (read-only)', async () => {
-    const parsed = JSON.parse(await inContainer('ha-ws-client running --json'));
+  await check('ha-tools running lists what is executing (read-only)', async () => {
+    const parsed = JSON.parse(await inContainer('ha-tools running --json'));
     assert(parsed.success && Array.isArray(parsed.data.running), 'no running list');
     assert(parsed.data.timezone && parsed.data.timezone !== 'UTC',
       `timezone reported as ${parsed.data.timezone} — should be your HA timezone`);
@@ -262,13 +262,13 @@ async function main() {
     return `${parsed.data.count} running`;
   });
 
-  await check('ha-ws-client trace-latest on a script equals a raw trace/get', async () => {
+  await check('ha-tools trace-latest on a script equals a raw trace/get', async () => {
     // Pick any script that has a stored trace; nothing is started.
-    const list = JSON.parse(await inContainer('ha-ws-client traces --domain script --json'));
+    const list = JSON.parse(await inContainer('ha-tools traces --domain script --json'));
     const sample = (list.data || [])[0];
     if (!sample) return 'no stored script traces to compare';
     const entity = `script.${sample.item_id}`;
-    const ours = JSON.parse(await inContainer(`ha-ws-client trace-latest ${entity} --json`));
+    const ours = JSON.parse(await inContainer(`ha-tools trace-latest ${entity} --json`));
     // The raw side talks to HA directly through the same client library, with no
     // resolver, newest-first sort or formatting of ours in between.
     const raw = JSON.parse(await inContainer(
@@ -281,8 +281,8 @@ async function main() {
     return `${entity} run ${raw.run_id}`;
   });
 
-  await check('ha-logs reads the real Core log', async () => {
-    const out = await inContainer('ha-logs core -n 20 2>&1 | head -c 2000');
+  await check('ha-tools logs reads the real Core log', async () => {
+    const out = await inContainer('ha-tools logs core -n 20 2>&1 | head -c 2000');
     assert(!/returned HTTP/.test(out), out.trim().split('\n')[0]);
     assert(!/^404: Not Found/m.test(out), 'the endpoint moved and the body is being printed as log content');
     assert(out.trim().length > 0, 'the Core log came back empty');
@@ -302,32 +302,33 @@ async function main() {
   });
 
   await check('ha-tools automation list returns real automations', async () => {
-    const parsed = JSON.parse(await inContainer('ha-tools automation list'));
-    assert(typeof parsed.count === 'number', 'no count in the response');
+    const parsed = JSON.parse(await inContainer('ha-tools automation list --json'));
+    assert(Array.isArray(parsed.data), 'data is not a list of automations');
     assert(parsed.timezone && parsed.timezone !== 'UTC',
       `timezone reported as ${parsed.timezone} — the container clock is UTC, so this should be your HA timezone`);
-    return `${parsed.count} automations, ${parsed.timezone}`;
+    return `${parsed.data.length} automations, ${parsed.timezone}`;
   });
 
-  await check('ha-timeline reports times in the Home Assistant timezone', async () => {
-    // ha-ws-client's `states` prints a human summary, so ask Core directly for a
-    // sample entity — this check is about ha-timeline's clock, not about states.
+  await check('ha-tools timeline reports times in the Home Assistant timezone', async () => {
+    // `states` prints a human summary, so ask Core directly for a sample entity —
+    // this check is about timeline's clock, not about states.
     const entity = (await inContainer(
       'curl -s -H "Authorization: Bearer $SUPERVISOR_TOKEN" http://supervisor/core/api/states ' +
       "| jq -r '[.[].entity_id | select(startswith(\"light.\") or startswith(\"binary_sensor.\"))][0] // empty'"
     )).trim();
     if (!entity) return 'no light/binary_sensor to sample';
-    const out = await inContainer(`ha-timeline ${entity} --days 7 --format json`);
+    const out = await inContainer(`ha-tools timeline ${entity} --days 7 --json`);
     const parsed = JSON.parse(out);
+    assert(parsed.success === true, 'the envelope does not say success');
     assert(parsed.timezone, 'no timezone in the output');
-    for (const ev of parsed.events.slice(0, 5)) {
+    for (const ev of parsed.data.slice(0, 5)) {
       assert(/[+-]\d{2}:\d{2}$/.test(ev.time), `timestamp without an explicit offset: ${ev.time}`);
     }
-    return `${entity}: ${parsed.event_count} events`;
+    return `${entity}: ${parsed.data.length} events`;
   });
 
-  await check('ha-lovelace lists dashboards over the WebSocket API', async () => {
-    const out = await inContainer('ha-lovelace list');
+  await check('ha-tools lovelace lists dashboards over the WebSocket API', async () => {
+    const out = await inContainer('ha-tools lovelace list');
     const parsed = JSON.parse(out);
     assert(Array.isArray(parsed), 'expected an array of dashboards');
     return `${parsed.length} dashboards`;

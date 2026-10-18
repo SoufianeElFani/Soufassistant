@@ -12,6 +12,7 @@ function filtered(items, pattern, fields) {
 
 const entities = {
   name: 'entities',
+  listing: true,
   usage: '[pattern]',
   summary: 'Search the entity registry by entity_id or name (`*` is a wildcard).',
   examples: [['humidity'], ['"light.*" --compact', 'one line each']],
@@ -34,6 +35,7 @@ const entities = {
 
 const devices = {
   name: 'devices',
+  listing: true,
   usage: '[pattern]',
   summary: 'Search the device registry by id, name, manufacturer or model.',
   examples: [['phone'], ['ikea --compact']],
@@ -54,6 +56,7 @@ const devices = {
 
 const areas = {
   name: 'areas',
+  listing: true,
   usage: '',
   summary: 'Every area, with its aliases.',
   examples: [[''], ['--json']],

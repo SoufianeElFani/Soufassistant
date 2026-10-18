@@ -27,7 +27,7 @@ dashboard — it can read your config and entity states, and supports auto or ma
 - 🔐 **Permission modes** — Ask / Plan / Auto (model classifier) / Accept edits / Bypass, switchable mid-response. On a prompt, **Always** stops it asking again for that kind of call
 - 🧠 **HA-aware context** — auto-loads your HA version, entities, apps, and recent errors into Claude's context each session
 - 🔌 **ESPHome support** *(optional)* — turn on `enable_esphome` and Claude can validate, compile, OTA-flash, and stream logs for your ESPHome devices. It uses **its own bundled ESPHome toolchain** (installed inside this app), not the ESPHome app's, while working on the same device configs in `/config/esphome`
-- 🔧 **Live HA tools** — `ha-ws-client` (states, service calls, templates, registry), `ha-history` / `ha-stats` (date-range history & statistics), and `ha-lovelace` (create / list / get / save / delete dashboards), all authenticated automatically with `$SUPERVISOR_TOKEN` — **no token setup required**
+- 🔧 **Live HA tools** — one command, `ha-tools`: states, service calls, templates and registries; history and statistics; automation **and script** traces (what is running right now, which step a run is waiting on); dashboards; logs — all authenticated automatically with `$SUPERVISOR_TOKEN`, **no token setup required**
 - 🤖 **Model & effort** — switch between Fable / Opus / Sonnet / Haiku and trade speed for depth (Low → Max). The list comes from Claude Code itself, so it shows the models your account can actually run
 - ⏳ **Live feedback** — a working indicator with elapsed seconds, a stop button, message timestamps, and a real context-usage meter showing progress toward auto-compaction
 - ♻️ **Auto-continue on usage limit** *(optional)* — if a subscription 5-hour limit interrupts a response, resume automatically when it resets. Survives an app/HA restart
@@ -69,15 +69,16 @@ install **Claude Code UI** from the App store — or do it manually:
 Claude uses pre-installed CLI tools (via Bash) plus the Supervisor REST API, all
 authenticated automatically with `$SUPERVISOR_TOKEN`:
 
-- **`ha-ws-client`** — entity states, service calls, Jinja templates, registry search and live monitoring over the HA WebSocket API, plus **automation and script traces**: `ha-ws-client running` shows what is executing right now and for how long, and `ha-ws-client trace-stuck script.x` shows which step an unfinished run is waiting on. (Built in — it is the same command as `ha-tools ws`.)
-- **`ha-tools`** — this app's own helpers, under one command (each is also available under its own name):
-  - `ha-tools timeline` (`ha-timeline`) — several entities' state changes merged onto one clock (`--between 22:00-07:00`), which is how most automation timing bugs get found.
-  - `ha-tools history` / `ha-tools stats` (`ha-history`, `ha-stats`) — history and long-term statistics over a date range (`--days`, `--from`, `--to`).
+- **`ha-tools`** — this app's one command-line tool; `ha-tools --help` lists everything and each command has its own `--help` with examples:
+  - `ha-tools state` / `states-filter` / `entities` / `template` / `call` — entity states, registry search, Jinja templates and service calls over the HA WebSocket API.
+  - `ha-tools running` shows what is executing right now and for how long, `ha-tools trace-stuck script.x` shows which step an unfinished run is waiting on, and `traces` / `trace-timeline` / `trace-summary` read the traces of **automations and scripts** alike.
+  - `ha-tools timeline` — several entities' state changes merged onto one clock (`--between 22:00-07:00`), which is how most automation timing bugs get found.
+  - `ha-tools history` / `ha-tools stats` — history and long-term statistics over any window (`history x 6`, `--days`, `--from`, `--to`).
   - `ha-tools automation` — what HA currently has loaded, and the matching block in `automations.yaml` with line numbers.
   - `ha-tools config-check` / `ha-tools reload` — validate config before reloading, then reload without restarting HA.
   - `ha-tools trace-watch` — wait for an automation to actually fire and report what happened, including runs its conditions blocked.
-  - `ha-tools lovelace` (`ha-lovelace`) — Lovelace dashboards: `create`, `list`, `get`, `save`, `delete` over the WebSocket API (the REST `/api/lovelace/*` endpoints don't exist on modern HA).
-  - `ha-tools logs` (`ha-logs`) — the Core, Supervisor, host, or any app's log, straight from the journal.
+  - `ha-tools lovelace` — Lovelace dashboards: `create`, `list`, `get`, `save`, `delete` over the WebSocket API (the REST `/api/lovelace/*` endpoints don't exist on modern HA).
+  - `ha-tools logs` — the Core, Supervisor, host, or any app's log, straight from the journal.
 - **YAML editing** — Claude can read and edit your `/config` files directly.
 
 These run as ordinary Bash calls, so they authenticate cleanly **and** respect
@@ -93,7 +94,7 @@ easily.
 
 ```
 browser  ⇄  WebSocket  ⇄  server/index.js  (Node + @anthropic-ai/claude-agent-sdk)
-                                 ├── ha-ws-client                  (states, services, traces, running work)
+                                 ├── ha-tools                      (states, services, traces, running work)
                                  ├── ha-tools timeline             (multi-entity event timeline)
                                  ├── ha-tools history / stats      (date-range history & stats)
                                  ├── ha-tools automation           (loaded config, YAML, traces)
@@ -108,7 +109,7 @@ HA Supervisor → Ingress proxy → port 7681 → chat UI
 ## Credits
 
 - [heytcass/home-assistant-addons](https://github.com/heytcass/home-assistant-addons) — the original Claude Terminal app and HA integration patterns the context generation is adapted from (MIT)
-- [schoolboyqueue](https://github.com/schoolboyqueue/home-assistant-blueprints) — the `ha-ws-client` Go binary this app used to download; its commands were ported into the built-in `ha-tools` (MIT, see `claude-code-ui/scripts/commands/NOTICE`)
+- [schoolboyqueue](https://github.com/schoolboyqueue/home-assistant-blueprints) — the `ha-ws-client` Go binary this app used to download; its commands were ported into `ha-tools` (MIT, see `claude-code-ui/scripts/commands/NOTICE`)
 - [Anthropic](https://www.anthropic.com) — Claude and the Claude Agent SDK
 
 ## License

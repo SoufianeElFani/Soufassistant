@@ -7,7 +7,7 @@
  */
 const { UsageError } = require('../lib/ha-args.cjs');
 const { toMillis } = require('../lib/ha-time.cjs');
-const { timeRange } = require('./ws-history.cjs');
+const { timeRange, windowOf } = require('./history.cjs');
 
 /** Resolves true when the time is up, false if interrupted first. */
 function sleepOrInterrupt(ms) {
@@ -34,33 +34,10 @@ function change(event) {
   return { from: trig.from_state ? String(trig.from_state.state) : '', to: to.state };
 }
 
-const watch = {
-  name: 'watch',
-  usage: '<entity_id> [seconds]',
-  summary: 'Print an entity\'s state changes live for N seconds (default 60).',
-  examples: [['light.hall'], ['binary_sensor.stairs 300 --json', 'one JSON line per change']],
-  min: 1,
-  max: 2,
-  async run({ ws, pos, out }) {
-    const entityId = pos[0];
-    const secs = seconds(pos[1], 60);
-    out.message(`Watching ${entityId} for ${secs} seconds...`);
-    const sub = await ws.subscribe({ type: 'subscribe_trigger', trigger: { platform: 'state', entity_id: entityId } }, (event) => {
-      const c = change(event);
-      if (!c) return;
-      if (out.isJson) out.data({ timestamp: new Date().toISOString(), entity_id: entityId, state: c.to });
-      else console.log(`${out.stamp(Date.now())}: ${entityId} -> ${c.to}`);
-    });
-    await sleepOrInterrupt(secs * 1000);
-    await sub.unsubscribe();
-    out.message('Watch complete');
-  },
-};
-
 const monitor = {
   name: 'monitor',
   usage: '<entity_id> [seconds]',
-  summary: 'Like watch, but shows from → to and counts the changes (default 60 seconds; Ctrl+C reports what was seen).',
+  summary: 'Print an entity\'s state changes live for N seconds, from → to, and count them (default 60 seconds; Ctrl+C reports what was seen).',
   examples: [['sensor.power 120'], ['cover.blind --json']],
   min: 1,
   max: 2,
@@ -134,7 +111,7 @@ const analyze = {
     const r = timeRange(opt, undefined);
     const result = await ws.send({
       type: 'history/history_during_period', entity_ids: [entityId],
-      start_time: r.startISO, end_time: r.endISO, minimal_response: true, no_attributes: true,
+      ...windowOf(r), minimal_response: true, no_attributes: true,
     });
     const rows = (result || {})[entityId] || [];
     const distribution = {};
@@ -153,4 +130,4 @@ const analyze = {
   },
 };
 
-module.exports = { commands: [watch, monitor, monitorMulti, analyze], sleepOrInterrupt, toMillis };
+module.exports = { commands: [monitor, monitorMulti, analyze], sleepOrInterrupt, toMillis };

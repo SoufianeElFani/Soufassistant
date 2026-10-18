@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# ha-logs — read Home Assistant logs from the Supervisor's journald endpoints.
+# ha-tools logs — read Home Assistant logs from the Supervisor's journald endpoints.
 #
 # Why this exists: HA 2025.11 removed /config/home-assistant.log on HAOS and
 # Supervised installs and moved Core logging to the systemd journal. The Core
@@ -28,8 +28,8 @@ VERBOSE=false
 BOOT=""
 
 usage() {
-    # Reachable as either `ha-logs` or `ha-tools logs`; answer as it was called.
-    echo "Usage: ${HA_TOOLS_CMD:-ha-logs} [SOURCE] [OPTIONS]"
+    # Reached as `ha-tools logs`.
+    echo "Usage: ${HA_TOOLS_CMD:-ha-tools logs} [SOURCE] [OPTIONS]"
     cat << 'USAGE'
 
 Read Home Assistant logs (systemd journal, via the Supervisor).
@@ -54,12 +54,12 @@ Options:
   -h, --help          Show this help
 
 Examples:
-  ha-logs                             # last 100 lines of the Core log
-  ha-logs --errors -n 500             # errors/warnings from the last 500 lines
-  ha-logs self -n 200                 # this app's own log
-  ha-logs supervisor --errors
-  ha-logs app_core_mosquitto -n 50    # another app's log
-  ha-logs core --boot 0 --errors      # errors since the current boot started
+  ha-tools logs                             # last 100 lines of the Core log
+  ha-tools logs --errors -n 500             # errors/warnings from the last 500 lines
+  ha-tools logs self -n 200                 # this app's own log
+  ha-tools logs supervisor --errors
+  ha-tools logs app_core_mosquitto -n 50    # another app's log
+  ha-tools logs core --boot 0 --errors      # errors since the current boot started
 USAGE
 }
 
@@ -74,7 +74,7 @@ while [[ $# -gt 0 ]]; do
         --units)      SOURCE="__units__"; shift ;;
         --boots)      SOURCE="__boots__"; shift ;;
         -h|--help)    usage; exit 0 ;;
-        -*)           echo "Unknown option: $1" >&2; echo "Run 'ha-logs --help' for usage" >&2; exit 1 ;;
+        -*)           echo "Unknown option: $1" >&2; echo "Run 'ha-tools logs --help' for usage" >&2; exit 1 ;;
         *)            SOURCE="$1"; shift ;;
     esac
 done
@@ -85,7 +85,7 @@ if [ -z "$SUPERVISOR_TOKEN" ]; then
 fi
 
 # Map the friendly source name to a Supervisor path. Anything unrecognised is
-# treated as a journal identifier, so `ha-logs app_core_mosquitto` just works.
+# treated as a journal identifier, so `ha-tools logs app_core_mosquitto` just works.
 case "$SOURCE" in
     core)       path="core/logs" ;;
     host)       path="host/logs" ;;
@@ -156,7 +156,7 @@ code=$(curl -s "${timeout_args[@]}" -o "$body_file" -w '%{http_code}' \
 if [ "$code" != "200" ]; then
     echo "Error: ${SUPERVISOR_URL}/${path} returned HTTP ${code:-000}." >&2
     [ -s "$body_file" ] && echo "Supervisor said: $(head -c 200 "$body_file" | tr '\n' ' ')" >&2
-    echo "Run 'ha-logs --units' to list valid identifiers." >&2
+    echo "Run 'ha-tools logs --units' to list valid identifiers." >&2
     exit 1
 fi
 
@@ -168,7 +168,7 @@ if [ ! -s "$body_file" ]; then
        && ! curl -s -m 10 -H "Authorization: Bearer ${SUPERVISOR_TOKEN}" \
               "${SUPERVISOR_URL}/host/logs/identifiers" \
             | grep -q "\"${SOURCE}\""; then
-        echo "Error: no journal identifier '${SOURCE}'. Run 'ha-logs --units' to list them." >&2
+        echo "Error: no journal identifier '${SOURCE}'. Run 'ha-tools logs --units' to list them." >&2
         exit 1
     fi
     echo "No log entries for '${SOURCE}'." >&2
