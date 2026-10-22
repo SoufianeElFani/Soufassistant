@@ -11,11 +11,18 @@ name: Build app image
 # every push touching the app but only *publishes* when config.yaml carries a
 # version that hasn't been published yet — ordinary commits are a no-op, and a
 # release is a deliberate version bump. See claude-code-ui/CLAUDE.md § Releasing.
+#
+# Pull requests (Dependabot's Agent SDK bumps, mainly — see .github/dependabot.yml)
+# run the tests and the image smoke test but never publish anything.
 on:
   push:
     branches: [master]
     paths:
       - "claude-code-ui/**"
+  pull_request:
+    paths:
+      - "claude-code-ui/**"
+      - ".github/workflows/build.yml"
   workflow_dispatch:
     inputs:
       force:
@@ -70,11 +77,42 @@ jobs:
           CHROME_PATH: /usr/bin/google-chrome
         run: npm run test:browser
 
+  smoke:
+    name: Image smoke test
+    # Pull requests only: on master the build job below builds the image anyway,
+    # and doubling that on every push isn't worth it. This is what makes an SDK
+    # bump PR mean something — the unit suite runs against a stub SDK, so only a
+    # real image shows whether the new package installs, ships a working
+    # `claude` binary, and still exports what the server imports.
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the amd64 image (not pushed)
+        run: |
+          docker build \
+            --build-arg BUILD_FROM=ghcr.io/home-assistant/amd64-base-debian:bookworm \
+            --build-arg BUILD_ARCH=amd64 \
+            -t claude-code-ui:smoke claude-code-ui
+      - name: The bundled claude CLI runs
+        run: docker run --rm --entrypoint claude claude-code-ui:smoke --version
+      - name: The SDK exports what the server imports
+        run: |
+          docker run --rm --entrypoint node -w /opt/server claude-code-ui:smoke \
+            --input-type=module -e "
+              import { query } from '@anthropic-ai/claude-agent-sdk';
+              if (typeof query !== 'function') throw new Error('query is not exported as a function');
+              console.log('ok: query()');
+            "
+
   version:
     name: Resolve app version
     runs-on: ubuntu-latest
     # A failing test must not publish an image users will be told to update to.
     needs: test
+    # Nothing a pull request does may publish; init/build/manifest all need this
+    # job, so skipping it skips them too.
+    if: github.event_name != 'pull_request'
     outputs:
       version: ${{ steps.v.outputs.version }}
       publish: ${{ steps.v.outputs.publish }}

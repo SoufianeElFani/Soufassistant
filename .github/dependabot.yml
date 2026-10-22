@@ -1,0 +1,28 @@
+# Proposes Agent SDK updates as pull requests. The SDK bundles the `claude`
+# CLI the image ships (see the Dockerfile), so this one pin updates both.
+#
+# A merged bump is NOT a release: it lands on master and waits under
+# `## Unreleased` until config.yaml's version is bumped by hand (see
+# claude-code-ui/CLAUDE.md § Releasing). The PR runs the build workflow's tests
+# and its image smoke test before it can be merged.
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /claude-code-ui/server
+    schedule:
+      interval: weekly
+      day: monday
+    # Don't propose a release until it has been out a few days, so a broken
+    # one has been pulled or patched before it gets here.
+    cooldown:
+      default-days: 3
+    # Only the SDK. express and ws are pinned in both server/package.json and
+    # the dev package.json, and the manifests test fails if they disagree — a
+    # bump to one file alone would only ever produce a red PR.
+    allow:
+      - dependency-name: "@anthropic-ai/claude-agent-sdk"
+    open-pull-requests-limit: 1
+    commit-message:
+      prefix: "deps"
+    labels:
+      - dependencies

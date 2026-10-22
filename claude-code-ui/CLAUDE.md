@@ -218,6 +218,12 @@ Day to day, land changes with the version untouched and add them under
 `workflow_dispatch` takes a `force` input to rebuild and overwrite an
 already-published version; use it only to repair a broken publish.
 
+**Agent SDK updates** arrive as Dependabot PRs (`.github/dependabot.yml`:
+weekly, SDK only, held back until a release is 3 days old). A PR runs the tests
+plus an **image smoke test** — builds the amd64 image, runs `claude --version`,
+imports `query` — and never publishes. Merging one is not a release: add a line
+under `## Unreleased` and ship it with the next version bump.
+
 ## Prebuilt images (CI)
 
 `.github/workflows/build.yml` builds a multi-arch image with the Home Assistant
