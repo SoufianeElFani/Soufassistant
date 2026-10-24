@@ -21,7 +21,7 @@ underlying chat engine, Home Assistant tools, task list, workspace, and
 scheduled-tasks mechanism were built in that upstream project and carried
 over largely as-is.
 
-[![Add app repository to My Home Assistant.](https://my.home-assistant.io/badges/supervisor_add_addon_repository.svg)](https://my.home-assistant.io/redirect/supervisor_add_addon_repository/?repository_url=https%3A%2F%2Fgithub.com%2FREPLACE_ME%2Fsoufassistant)
+[![Add app repository to My Home Assistant.](https://my.home-assistant.io/badges/supervisor_add_addon_repository.svg)](https://my.home-assistant.io/redirect/supervisor_add_addon_repository/?repository_url=https%3A%2F%2Fgithub.com%2FSoufianeElFani%2Fsoufassistant)
 
 |              Chat              |            Permissions             |           Settings            |
 | :----------------------------: | :--------------------------------: | :---------------------------: |

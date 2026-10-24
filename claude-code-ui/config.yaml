@@ -6,7 +6,7 @@ slug: "soufassistant"
 # up GitHub Actions to publish images later, add this key back (see the
 # upstream project this was forked from for the exact workflow).
 description: "Soufiane's personal AI assistant for Home Assistant — a Claude-powered chat with a task list, a reusable workspace, scheduled unattended prompts, a team / 1:1 tracker, and live HA control. Forked and extended from the open-source claude-code-ui project (see Credits in the README)."
-url: "https://github.com/REPLACE_ME/soufassistant"
+url: "https://github.com/SoufianeElFani/soufassistant"
 arch:
   - aarch64
   - amd64
