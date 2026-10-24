@@ -81,6 +81,42 @@ export const questionStripOpen = document.getElementById('question-strip-open');
 export const bgTasksStrip      = document.getElementById('bg-tasks-strip');
 export const bgTasksText       = document.getElementById('bg-tasks-text');
 
+export const tasksBtn       = document.getElementById('tasks-btn');
+export const tasksPanel     = document.getElementById('tasks-panel');
+export const tasksListEl    = document.getElementById('tasks-list');
+
+export const workspaceBtn    = document.getElementById('workspace-btn');
+export const workspacePanel  = document.getElementById('workspace-panel');
+export const workspaceListEl = document.getElementById('workspace-list');
+
+export const scheduledBtn       = document.getElementById('scheduled-btn');
+export const scheduledPanel     = document.getElementById('scheduled-panel');
+export const scheduledListEl    = document.getElementById('scheduled-list');
+export const scheduledNewBtn    = document.getElementById('scheduled-new-btn');
+export const scheduledForm      = document.getElementById('scheduled-form');
+export const scheduledNameInput = document.getElementById('scheduled-name-input');
+export const scheduledCronInput = document.getElementById('scheduled-cron-input');
+export const scheduledPromptInput = document.getElementById('scheduled-prompt-input');
+export const scheduledFormError = document.getElementById('scheduled-form-error');
+export const scheduledFormCancel = document.getElementById('scheduled-form-cancel');
+export const scheduledFormSave   = document.getElementById('scheduled-form-save');
+
+export const teamBtn         = document.getElementById('team-btn');
+export const teamPanel       = document.getElementById('team-panel');
+export const teamListEl      = document.getElementById('team-list');
+export const teamNewBtn      = document.getElementById('team-new-btn');
+export const teamForm        = document.getElementById('team-form');
+export const teamNameInput   = document.getElementById('team-name-input');
+export const teamRoleInput   = document.getElementById('team-role-input');
+export const teamNotesInput  = document.getElementById('team-notes-input');
+export const teamFormError   = document.getElementById('team-form-error');
+export const teamFormCancel  = document.getElementById('team-form-cancel');
+export const teamFormSave    = document.getElementById('team-form-save');
+
+export const usageBtn    = document.getElementById('usage-btn');
+export const usagePanel  = document.getElementById('usage-panel');
+export const usageBodyEl = document.getElementById('usage-body');
+
 export const cmdMenu = document.getElementById('cmd-menu');
 export const attachInput   = document.getElementById('attach-input');
 export const attachBtn     = document.getElementById('attach-btn');

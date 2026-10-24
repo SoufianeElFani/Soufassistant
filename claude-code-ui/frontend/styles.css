@@ -5,17 +5,19 @@
 }
 
 :root {
-  --bg:           #1a1a1a;
-  --surface:      #242424;
-  --surface-2:    #2d2d2d;
-  --border:       #383838;
-  --text:         #e4e4e4;
-  --text-muted:   #888;
-  --accent:       #6b9fd4;
-  --user-bg:      #1e3a2e;
-  --user-border:  #2a5a40;
-  --tool-bg:      #1a2235;
-  --tool-border:  #2d4065;
+  /* Soufassistant brand: blue-green (teal) and white, dark theme. */
+  --bg:           #10201e;
+  --surface:      #16302c;
+  --surface-2:    #1c3a35;
+  --border:       #2a4a44;
+  --text:         #eaf6f4;
+  --text-muted:   #8aa8a3;
+  --accent:       #2dd4bf;
+  --accent-strong: #0d9488;
+  --user-bg:      #103a35;
+  --user-border:  #1a5c52;
+  --tool-bg:      #142e38;
+  --tool-border:  #1f4a56;
   --error-bg:     #2a1515;
   --error-border: #5a2020;
   --error-text:   #e87777;
@@ -81,8 +83,12 @@ body {
   right: 0;
   height: var(--app-height, 100dvh);
   max-height: var(--app-height, 100dvh);
-  max-width: 860px;
-  margin: 0 auto;
+  /* Full-bleed: the frame fills the whole screen/window edge to edge — the
+     old 860px cap + auto margin here is what produced "black bars" on
+     anything wider than a phone. Message bubbles cap their own width on a
+     wide screen instead (see .bubble's media query below), so a reply stays
+     readable on a desktop monitor without the app looking like a narrow card
+     floating on a void. */
   overflow: hidden;
 }
 
@@ -229,8 +235,8 @@ body {
    thing you came to the banner to press. */
 .ac-banner-action {
   flex: none; cursor: pointer;
-  background: #1e2a3a; color: #7fb0dd;
-  border: 1px solid #2a4560; border-radius: var(--radius-xs);
+  background: #123a35; color: #5eead4;
+  border: 1px solid #1f5950; border-radius: var(--radius-xs);
   padding: 4px 10px; font-size: 12px; white-space: nowrap;
 }
 .ac-banner-action:hover { opacity: .85; }
@@ -251,7 +257,7 @@ body {
 }
 .question-strip.hidden { display: none; }
 .question-strip-text {
-  flex: 1 1 auto; color: #7fb0dd;
+  flex: 1 1 auto; color: #5eead4;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 
@@ -293,7 +299,7 @@ body {
   font-size: 13px; color: var(--text);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.session-item.active .session-title { color: #9ec5f0; }
+.session-item.active .session-title { color: #7dd3c0; }
 .session-time { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
 
 .session-del {
@@ -434,6 +440,12 @@ mark.find-hit.find-current { background: #d8a93a; color: #1a1a1a; }
   word-break: break-word;
   flex-shrink: 0;
 }
+/* On a wide desktop window the app itself is full-bleed (see #app), but an
+   82%-wide bubble on a 2000px+ window would stretch into an unreadable line
+   length — cap it to a sane reading width there instead. */
+@media (min-width: 1000px) {
+  .bubble { max-width: min(82%, 760px); }
+}
 
 .bubble-user {
   background: var(--user-bg);
@@ -565,7 +577,7 @@ pre:hover > .copy-btn, .copy-btn:focus { opacity: 1; }
 
 .tool-call-name {
   font-size: 11px; font-weight: 700;
-  color: #7ba3d4;
+  color: #4fd1c5;
   text-transform: uppercase; letter-spacing: 0.07em;
   flex-shrink: 0;
 }
@@ -625,7 +637,7 @@ pre:hover > .copy-btn, .copy-btn:focus { opacity: 1; }
    formatQuestionDenial for why it arrives looking like one. */
 .tool-call-answer-label {
   font-size: 10px; font-weight: 700; letter-spacing: .08em;
-  text-transform: uppercase; color: #7ba3d4;
+  text-transform: uppercase; color: #4fd1c5;
   margin-top: 6px;
 }
 
@@ -668,7 +680,7 @@ pre:hover > .copy-btn, .copy-btn:focus { opacity: 1; }
 .tool-group-icon { font-size: 11px; opacity: .5; flex-shrink: 0; }
 .tool-group-count {
   flex: 1; font-size: 11px; font-weight: 700;
-  color: #7ba3d4; text-transform: uppercase; letter-spacing: 0.07em;
+  color: #4fd1c5; text-transform: uppercase; letter-spacing: 0.07em;
 }
 .tool-group-chevron {
   flex-shrink: 0; font-size: 10px; color: var(--text-muted);
@@ -714,7 +726,7 @@ pre:hover > .copy-btn, .copy-btn:focus { opacity: 1; }
   padding: 5px 11px; margin-bottom: 6px;
   border: 1px solid var(--tool-border); background: var(--tool-bg);
   border-radius: var(--radius-sm);
-  font-size: 11px; font-weight: 700; color: #7ba3d4;
+  font-size: 11px; font-weight: 700; color: #4fd1c5;
   text-transform: uppercase; letter-spacing: 0.07em;
 }
 .agent-report > summary::-webkit-details-marker { display: none; }
@@ -797,7 +809,7 @@ pre:hover > .copy-btn, .copy-btn:focus { opacity: 1; }
 
 .perm-tool-chip {
   font-size: 10px; font-weight: 700;
-  color: #7ba3d4; text-transform: uppercase; letter-spacing: 0.08em;
+  color: #4fd1c5; text-transform: uppercase; letter-spacing: 0.08em;
   background: var(--tool-bg); border: 1px solid var(--tool-border);
   padding: 2px 8px; border-radius: 20px;
   display: inline-block; width: fit-content;
@@ -833,7 +845,7 @@ pre:hover > .copy-btn, .copy-btn:focus { opacity: 1; }
 /* "Always" — allow and stop asking for this tool. Deliberately less prominent
    than Allow, since it's the stickier, wider-reaching choice. */
 .btn-always {
-  background: #1e2a3a; color: #7fb0dd; border-color: #2a4560;
+  background: #123a35; color: #5eead4; border-color: #1f5950;
 }
 .btn-always.hidden { display: none; }
 /* The affirmative answer to a confirmation, which is always the destructive
@@ -883,7 +895,7 @@ pre:hover > .copy-btn, .copy-btn:focus { opacity: 1; }
 .dialog-q { display: flex; flex-direction: column; gap: 8px; }
 .dialog-q.hidden { display: none; }
 .dialog-q-header {
-  font-size: 10px; font-weight: 700; color: #7ba3d4;
+  font-size: 10px; font-weight: 700; color: #4fd1c5;
   text-transform: uppercase; letter-spacing: 0.08em;
 }
 .dialog-q-text { font-size: 14px; font-weight: 500; }
@@ -959,7 +971,7 @@ pre:hover > .copy-btn, .copy-btn:focus { opacity: 1; }
 
 .cmd-item-name {
   font-family: monospace; font-size: 13px;
-  color: #7ba3d4; font-weight: 600;
+  color: #4fd1c5; font-weight: 600;
   flex-shrink: 0;
 }
 .cmd-item-desc {
@@ -1046,7 +1058,7 @@ pre:hover > .copy-btn, .copy-btn:focus { opacity: 1; }
   cursor: pointer;
   transition: background 0.15s, opacity 0.15s;
 }
-.send-btn:hover:not(:disabled) { background: #82b5e0; }
+.send-btn:hover:not(:disabled) { background: #5eead4; }
 .send-btn:disabled { opacity: 0.35; cursor: not-allowed; }
 .send-btn.stop { background: #8b2020; }
 .send-btn.stop:hover { background: #b03030; }
@@ -1171,3 +1183,81 @@ pre:hover > .copy-btn, .copy-btn:focus { opacity: 1; }
   border-radius: var(--radius-sm);
 }
 .settings-btn:hover { border-color: #555; }
+
+/* ── Header icon buttons that can be hidden (Tasks appears only when there is
+   something to show) ── */
+.icon-btn.hidden { display: none; }
+
+/* ── Tasks panel — reuses .sessions-panel/.session-item/.session-main/
+   .session-title/.session-time for the chrome; only the status icon and the
+   "done" strikethrough are new. ── */
+.task-icon {
+  flex: none; width: 18px; text-align: center;
+  font-size: 13px; line-height: 1;
+}
+.task-icon-pending     { color: var(--text-muted); }
+.task-icon-in_progress { color: #d8a93a; }
+.task-icon-completed   { color: #7fcc8a; }
+.task-done { color: var(--text-muted); text-decoration: line-through; }
+
+/* ── Workspace panel — a .session-item row is now an <a>, so it needs its own
+   text-decoration/color reset; everything else is inherited. ── */
+#workspace-list .session-item { text-decoration: none; color: inherit; }
+
+/* ── Scheduled-tasks panel ── */
+.sessions-head-row {
+  display: flex; align-items: center; justify-content: space-between;
+}
+.scheduled-new-btn {
+  background: none; border: 1px solid var(--border); color: var(--accent);
+  border-radius: var(--radius-xs); font-size: 11px; padding: 3px 8px; cursor: pointer;
+}
+.scheduled-new-btn:hover { border-color: var(--accent); }
+
+.scheduled-item { align-items: flex-start; cursor: default; }
+.scheduled-summary {
+  font-size: 11px; color: var(--text-muted); margin-top: 2px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.scheduled-actions { display: flex; flex: none; gap: 2px; }
+/* Always visible, unlike .session-del's hover-only reveal: three stacked
+   actions that only appear on hover would be unreachable on a touch screen,
+   and this app is mobile-first. */
+.scheduled-actions .session-del { opacity: 1; font-size: 13px; }
+
+.scheduled-form {
+  display: flex; flex-direction: column; gap: 8px; flex: none;
+  padding: 10px 14px; border-top: 1px solid var(--border);
+  max-height: 60vh; overflow-y: auto;
+}
+.scheduled-form.hidden { display: none; }
+.scheduled-form-label {
+  display: flex; flex-direction: column; gap: 3px;
+  font-size: 11px; color: var(--text-muted);
+}
+.scheduled-form-input, .scheduled-form-textarea {
+  background: var(--surface); border: 1px solid var(--border); color: var(--text);
+  border-radius: var(--radius-xs); font-size: 13px; padding: 6px 8px;
+  font-family: inherit; resize: vertical;
+}
+.scheduled-form-input:focus, .scheduled-form-textarea:focus { border-color: #555; outline: none; }
+.scheduled-form-error {
+  color: var(--error-text); font-size: 12px; margin: 0;
+}
+.scheduled-form-error.hidden { display: none; }
+.scheduled-form-actions { display: flex; justify-content: flex-end; gap: 8px; }
+
+/* ── Team panel: last-note preview reuses .scheduled-summary as-is. ── */
+
+/* ── Usage panel ── */
+.usage-body { padding: 10px 14px; display: flex; flex-direction: column; gap: 6px; }
+.usage-row {
+  display: flex; justify-content: space-between; align-items: baseline;
+  font-size: 13px; padding: 2px 0;
+}
+.usage-label { color: var(--text-muted); }
+.usage-value { color: var(--text); font-weight: 600; font-variant-numeric: tabular-nums; }
+.usage-note {
+  margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border);
+  font-size: 11px; color: var(--text-muted); line-height: 1.4;
+}

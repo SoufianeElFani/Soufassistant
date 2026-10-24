@@ -49,4 +49,23 @@ export const S = {
    *  the viewport around). */
   stickToBottom: true,
   suppressAutoScroll: false,
+
+  /** The task-list widget (see server/lib/tasks.js) — independent of the
+   *  transcript, driven by the claude-tasks CLI. */
+  tasks: [],
+
+  /** Files under /data/workspace (see server/lib/workspace.js), refreshed
+   *  after every reply and on demand when the panel opens. */
+  workspace: [],
+
+  /** Persisted scheduled prompts (see server/lib/scheduler.js). The id of the
+   *  entry currently open in the edit form, or null when the form is new/closed. */
+  scheduled: [],
+  scheduledEditingId: null,
+
+  /** The Team panel (see server/lib/team.js) — a 1:1 / team-roster tracker,
+   *  independent of the transcript. The id of the entry open in the edit
+   *  form, or null when the form is new/closed. */
+  team: [],
+  teamEditingId: null,
 };

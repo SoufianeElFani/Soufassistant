@@ -18,7 +18,8 @@ browser  ←→  WebSocket  ←→  server/lib/  ←→  @anthropic-ai/claude-ag
 - **`frontend/app.js`** — the browser composition root; `frontend/js/` holds the modules (see **Frontend layout**)
 - **`run.sh`** — App entrypoint; initialises `/data` environment, runs context generation, starts Node
 - **`plugins/homeassistant-config/`** — Local plugin with SKILL.md and pre-save YAML validation hook
-- **`scripts/`** — `ha-context.sh` (writes the generated HA context to `~/.claude/ha-context.md`), `browser-capture.sh` (auth flow URL capture), and the `ha-tools` helper suite:
+- **`plugins/productivity-tools/`** — Local plugin (SKILL.md only) covering `claude-tasks`, the `/data/workspace` convention, and scheduled tasks — see **Task List, Workspace, and Scheduled Tasks** below
+- **`scripts/`** — `ha-context.sh` (writes the generated HA context to `~/.claude/ha-context.md`), `browser-capture.sh` (auth flow URL capture), `claude-tasks.cjs`/`.sh` (the task-list CLI), and the `ha-tools` helper suite:
   - `ha-tools.sh` — dispatcher; the single entry point (see below)
   - `ha-tools.cjs` — the dispatcher: one command table loaded from `commands/`, one generated `--help`
   - `commands/*.cjs` — every command: `basic` (states, services, templates), `registry`, `history` (history / stats / timeline / logbook …), `monitor`, `automation` (automation, config-check, reload), `lovelace`, and `traces` (automation **and script** traces, `running`, `trace-stuck`, `trace-watch`); see **ha-tools** below
@@ -51,6 +52,12 @@ loads the persisted state, and listens. Everything with behaviour lives in
 | `diag.js` | the `/diag` routes (registered only when `debug` is on) |
 | `ha-auth.js` | the HA admin-token guard those routes sit behind |
 | `uploads.js`, `ha-links.js`, `mcp.js`, `exec.js`, `log.js` | attachments, entity link targets, MCP hygiene, shelling out, logging |
+| `tasks.js` | the task-list widget's state, fed by the `claude-tasks` CLI via `/internal/tasks` |
+| `workspace.js` | listing `/data/workspace` for the Workspace panel and `/api/workspace` |
+| `scheduler.js` | persisted cron-like prompts, ticked and fired as their own unattended SDK calls |
+| `cron.js` | the pure 5-field cron matcher `scheduler.js` is built on |
+| `team.js` | the Team panel's state, fed by both the UI and the `team-notes` CLI via `/internal/team` |
+| `internal.js` | the loopback guard in front of `/internal/*` routes |
 
 Rules that keep it readable: **no top-level side effects** beyond pure
 constants (the composition root does the starting); anything genuinely shared
@@ -644,6 +651,139 @@ When a **claude.ai subscription** hits its **5-hour** usage limit mid-run, the S
 - **Testing without a real limit:** `GET /diag/autocontinue?simulate=<seconds>` (debug option on) arms a resume that fires after N seconds against the active session, exercising the full schedule→resume path.
 - **A rejection can still throw, and the throw lies.** Confirmed live: `rate_limit_event(status:'rejected')` fires (setting `limitHit`) — then the query still emits a `'result'` event claiming `subtype:'success'` (cost $0, 1 turn) — then the async generator *throws*, landing in the `catch` block with `err.message` like `"Claude Code returned an error result: You've hit your session limit · resets 1am (Europe/London)"`. None of that later noise is trustworthy: `limitHit`, set from the real `rate_limit_event`, is. So once `limitHit` is set for a run, the `'result'` handler no longer touches an `endedSuccessfully` flag (removed — a `'success'` subtype can't override a rejection that already happened), and the `catch` block skips both the generic `error` broadcast (the `finally` block's `limit_notice` already explains it) **and** the stale-resume-id drop (`resuming` branch) — that drop used to fire here every time, silently swapping `activeSessionId` to `null` so the *next* prompt started a brand-new session instead of resuming the interrupted one. Nothing was actually lost (the old transcript is still on disk, just no longer `activeSessionId`, findable in the session list), but it read as if the conversation had vanished.
 
+## Branding
+
+This is Soufiane's personal fork (`name`/`slug` in `config.yaml`:
+`Soufassistant`/`soufassistant`), forked from the upstream `xionic/home-assistant-claude-code`
+project (AGPL-3.0 — see the repo-root `README.md`'s Credits section and
+`LICENSE`; this fork keeps the same license, which AGPL requires). There is
+**no `image:` key** in `config.yaml` — no CI publishes an image for this fork
+(yet), so every install, local or otherwise, builds from the Dockerfile. If
+CI is set up later to publish one, the key can be reintroduced (see the
+upstream project's `.github/workflows/build.yml` for the pattern this
+project used). `icon.png`/`logo.png` were regenerated (teal/white, script not
+kept in the repo — a plain PIL script, trivial to redo if the mark needs to
+change) to match the new brand colors (`frontend/styles.css`'s `:root`
+variables — `--accent`/`--bg`/`--surface`/`--surface-2`/`--border` — plus a
+handful of hardcoded accent-blue hex values that were swapped to teal
+equivalents; status colors — success green, error red, warning amber — were
+deliberately left alone, they're semantic, not brand).
+
+**Full-width desktop layout.** `#app` used to cap at `max-width: 860px` with
+`margin: 0 auto`, which is correct for a phone but left the `--bg` background
+showing as side bars on anything wider — reported as "black bars" on desktop.
+`#app` is now full-bleed (no cap); `.bubble` instead caps its own width at
+`min(82%, 760px)` above `1000px` viewports so a reply doesn't stretch into an
+unreadable line length on a wide monitor. Header/messages/composer are not
+separately constrained — they fill `#app` edge to edge, which is the normal
+look for a desktop chat app and is what actually fixes the "bars" complaint
+(a centered, narrower reading column would just reintroduce them in a
+different color).
+
+## Task List, Workspace, Scheduled Tasks, Team panel, and Usage panel
+
+Local, self-hosted analogues of a few things Claude's hosted products
+(including "Cowork") give for free — there is no public API to embed those
+products' own UI or backend here, so each is a from-scratch equivalent built
+on the same Agent SDK this app already drives. `plugins/productivity-tools`
+is the one skill that tells Claude about all three.
+
+**Task list (`server/lib/tasks.js`, `scripts/claude-tasks.cjs`).** A plain
+Node CLI, run via Bash like `ha-tools` (so it goes through the ordinary
+permission system), `POST`s to this app's own `/internal/tasks` — loopback
+only, guarded by `server/lib/internal.js`: each Docker container has its own
+network namespace, so 127.0.0.1 here is unreachable from anywhere outside
+this container, which is the same trust boundary a Bash call already sits
+inside. `tasks.js` owns validation (ids/descriptions length-capped, status
+restricted to `pending`/`in_progress`/`completed`, list capped at
+`MAX_TASKS`), persistence (`/data/tasks.json`, same pattern as
+`auto-continue.js`), and broadcasting `{type:'tasks', tasks}` to every tab —
+replayed on connect in `ws-protocol.js`'s `greet()`. The frontend
+(`frontend/js/tasks.js`) is a header button that only appears once the list
+is non-empty, opening a panel built from the same CSS as Sessions.
+
+**Workspace (`server/lib/workspace.js`).** `/data/workspace` is a scratch
+folder separate from `/config` — the plugin skill tells Claude to write
+anything worth keeping there (a report, an export, a self-contained HTML
+"artifact") instead of littering the Home Assistant config directory. Served
+read-only (`express.static`) at `/workspace/<relPath>` and listed (a bounded
+recursive walk, dotfiles/dot-dirs skipped, capped at `MAX_ENTRIES`) at
+`/api/workspace`. `frontend/js/workspace.js` fetches that listing over plain
+HTTP — no need to route it through the WebSocket protocol — and links each
+entry straight at the static route, opened in a new tab, which is simplest
+and avoids needing an iframe sandbox. `run-query.js`'s `finally` block
+re-broadcasts the listing (`{type:'workspace', entries}`) after every turn,
+the same way it already refreshes `ha_links`, so the panel updates live
+without reopening it.
+
+**Scheduled tasks (`server/lib/scheduler.js`, `server/lib/cron.js`).** A
+persisted list (`/data/scheduled-tasks.json`) of `{name, cron, prompt,
+enabled}`, ticked every `SCHEDULER_TICK_MS` against `cron.js` — a small,
+dependency-free 5-field matcher in the spirit of `ha-time.cjs`/`ha-trace.cjs`
+(own the small pieces of logic rather than pulling in a package for this).
+
+Deliberately **not** run through `run-query.js` / the single shared
+conversation this app otherwise models (see **Conversation Persistence**
+below): a scheduled prompt firing into whatever the user happens to be
+chatting about right now — or `abortActive()`-ing a run already in progress —
+would be exactly wrong. A firing instead calls the SDK's `query()` directly,
+as its own run with its own (resumable) session id, and never touches
+`runtime.activeSessionId` or broadcasts into the visible transcript — only
+`runtime.activeQuery` is checked, and only to skip a tick while something
+else is running (a manual "run now" instead reports `scheduled_run_busy`).
+It resumes the *same* session id on every firing (`entry.lastSessionId`), so
+a daily check-in genuinely continues yesterday's rather than starting cold.
+Nobody is there to answer a prompt, so its `canUseTool` allows every ordinary
+tool automatically (still behind `ADDON_CONFIGS_HOOKS`, same as every other
+mode) and **denies** `AskUserQuestion` with a message telling the model to
+use its own judgement — consistent with how every other mode here intercepts
+that tool via `canUseTool` rather than the SDK's own (non-functional, see
+**Interactive Tools** above) dialog transport. A hard `AbortController`
+timeout (`SCHEDULED_RUN_TIMEOUT_MS`, default 15 min) guarantees one stuck
+unattended prompt can never block every later firing. The run still writes to
+Claude Code's ordinary on-disk session store, so it is inspectable from the
+Sessions panel afterwards; the result reaches the user only through
+`notify.js` (a short summary kept on the entry, not the full transcript) and
+the Scheduled-tasks panel's own last-run line.
+
+`frontend/js/scheduled.js` is the panel: list, an inline add/edit form,
+run-now/edit/delete per entry. There is deliberately no tool for Claude to
+create one of these on its own behalf mid-conversation — an unattended prompt
+that runs with every tool pre-approved is something a person should set up
+deliberately from the panel, not something reached for in the middle of a
+chat; the skill tells Claude to say so if asked.
+
+**Team panel (`server/lib/team.js`, `scripts/team-notes.cjs`).** A persisted
+list (`/data/team.json`) of `{id, name, role, notes, lastOneOnOne,
+createdAt}` — a lightweight 1:1/roster tracker for a project or team lead.
+Unlike the task list (Claude-driven only) or scheduled tasks (UI-driven
+only), **both sides write to the same state**: the person edits a card
+directly from the Team panel (`frontend/js/team.js` — list, inline add/edit
+form, a one-tap "1:1 today" stamp, delete), and Claude can log a dated note
+via the `team-notes` CLI (same shape as `claude-tasks` — a plain Node http
+client against the loopback-only `/internal/team`, guarded by
+`internal.js`). Both paths converge on `team.js`'s `upsert()`/`addNote()`/
+`remove()`, which broadcast one `{type:'team_members', members}` update —
+there is no separate reconciliation step. `addNote()` matches an existing
+member case-insensitively by name (so "log a note about Bernard" updates the
+same card rather than creating a duplicate), creates one if none matches, and
+appends a `[YYYY-MM-DD] ...` line to `notes` rather than overwriting it. The
+skill instructs Claude to log only what the user actually said, and to leave
+out health/HR/disciplinary detail entirely rather than writing a softened
+version of it.
+
+**Usage panel (`frontend/js/usage-panel.js`).** A permanently-visible header
+button (unlike Tasks/Workspace, which only appear once there's something to
+show) rendering `S.usage` — the same per-session totals `/usage`
+(`commands.js`) has always accumulated from `result` events — as a live
+panel instead of only a one-off text block on request. `renderUsage()` is
+called from the two places `S.usage` is mutated (`connection.js`'s `result`
+case, `transcript.js`'s `renderHistory`) so the panel never shows stale
+numbers while open. Deliberately session-scoped, not an Anthropic
+account-wide billing dashboard: subscription auth exposes no such
+account-level API, so the panel says so in its own footer rather than
+implying it's your real account usage.
+
 ## Notifications
 
 "Tell me when Claude needs me" is **server-delivered through Home Assistant**, not
@@ -708,7 +848,7 @@ Reported symptom: a response stops coming, then resumes minutes later (not a tru
 |------|---------|
 | `config.yaml` | App manifest, options schema |
 | `build.yaml` | Docker build args (base image) |
-| `Dockerfile` | Image build: Node, Agent SDK binary, the one `ha-tools` symlink, plugin |
+| `Dockerfile` | Image build: Node, Agent SDK binary, the `ha-tools`/`claude-tasks` symlinks, plugins |
 | `run.sh` | Entrypoint: env init, packages, HA context, start server |
 | `server/index.js` | Composition root — wires `server/lib/` and listens |
 | `server/lib/` | The server proper, one module per concern (see **Server layout**) |
@@ -720,3 +860,8 @@ Reported symptom: a response stops coming, then resumes minutes later (not a tru
 | `test/` | Unit, integration, CLI, browser and live suites (see **Testing**) |
 | `plugins/homeassistant-config/PLUGIN.md` | Plugin manifest |
 | `plugins/homeassistant-config/skills/homeassistant-config/SKILL.md` | HA YAML patterns + tool docs |
+| `plugins/productivity-tools/skills/productivity-tools/SKILL.md` | `claude-tasks` / workspace / scheduled-tasks / `team-notes` instructions |
+| `scripts/claude-tasks.cjs` / `.sh` | The task-list CLI (see **Task List, Workspace, Scheduled Tasks, Team panel, and Usage panel**) |
+| `scripts/team-notes.cjs` / `.sh` | The Team-panel notes CLI (same section) |
+| `server/lib/tasks.js`, `workspace.js`, `scheduler.js`, `cron.js`, `team.js`, `internal.js` | See **Task List, Workspace, Scheduled Tasks, Team panel, and Usage panel** |
+| `frontend/js/usage-panel.js` | The live Usage panel (same section) |

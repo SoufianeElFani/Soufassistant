@@ -1,12 +1,12 @@
-name: "Claude Code UI"
-version: "1.17.0"
-slug: "claude-code-ui"
-# Prebuilt multi-arch image published by CI (.github/workflows/build.yml). Store
-# installs pull this instead of building locally. NOTE: local dev installs must
-# strip this line so the Supervisor builds from the Dockerfile (see CLAUDE.md).
-image: "ghcr.io/xionic/claude-code-ui"
-description: "Claude Code in your browser with Home Assistant integration and mobile-friendly chat UI."
-url: "https://github.com/xionic/home-assistant-claude-code"
+name: "Soufassistant"
+version: "0.1.0"
+slug: "soufassistant"
+# No `image:` key: this is Soufiane's personal fork with no CI image publishing
+# set up (yet) — Supervisor always builds from the Dockerfile here. If you set
+# up GitHub Actions to publish images later, add this key back (see the
+# upstream project this was forked from for the exact workflow).
+description: "Soufiane's personal AI assistant for Home Assistant — a Claude-powered chat with a task list, a reusable workspace, scheduled unattended prompts, a team / 1:1 tracker, and live HA control. Forked and extended from the open-source claude-code-ui project (see Credits in the README)."
+url: "https://github.com/REPLACE_ME/soufassistant"
 arch:
   - aarch64
   - amd64

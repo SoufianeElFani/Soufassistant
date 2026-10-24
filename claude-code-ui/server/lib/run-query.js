@@ -29,6 +29,7 @@ import { listSessions, saveActive, isQuestionAnswer, parseTaskNotification, trun
 import { hooksFor, makeCanUseTool } from './permissions.js';
 import { askQuestion } from './dialogs.js';
 import { refreshHaLinks } from './ha-links.js';
+import { listWorkspaceEntries } from './workspace.js';
 import { MCP_FREE_SETTINGS } from './mcp.js';
 import { usableSlashCommands } from './slash-commands.js';
 import { makeInputChannel } from './input-channel.js';
@@ -466,6 +467,10 @@ export async function runQuery(ws, { text, permissionMode, model, effort, autoAt
     // linkable in the reply that announces it.
     refreshHaLinks().then(() =>
       broadcast({ type: 'ha_links', entities: runtime.haLinks.entities, automations: runtime.haLinks.automations }));
+
+    // Likewise any file the run just wrote under /data/workspace — cheap (a
+    // bounded directory walk) and only worth doing once the turn is actually over.
+    broadcast({ type: 'workspace', entries: listWorkspaceEntries() });
 
     if (limitHit && !abortController.signal.aborted) {
       notify('stopped', { title: 'Claude hit the usage limit', message: 'The 5-hour limit was reached.' });
