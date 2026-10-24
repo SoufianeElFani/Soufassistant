@@ -15,6 +15,11 @@ import { renderSessions } from './sessions.js';
 import { setAutoContinueSupported } from './settings.js';
 import { hideThinking, showThinking } from './thinking.js';
 import { appendAgentReport, appendAssistantText, appendCompactedDivider, appendErrorBubble, appendInfoLine, appendResultLine, appendTaskNotice, appendToolResult, appendToolUse, appendUserBubble, endToolGroup, renderHistory } from './transcript.js';
+import { renderTasks, updateTasksVisibility } from './tasks.js';
+import { applyWorkspaceEntries } from './workspace.js';
+import { renderScheduled, showScheduledError } from './scheduled.js';
+import { renderTeam } from './team.js';
+import { renderUsage } from './usage-panel.js';
 
 // ── WebSocket ─────────────────────────────────────────────────────────────
 
@@ -162,6 +167,40 @@ export function handleServerMessage(msg) {
       appendTaskNotice(msg);
       break;
 
+    case 'tasks':
+      // The task-LIST widget (claude-tasks CLI) — distinct from 'task_notice'
+      // above, which is a background-subagent chip in the transcript.
+      S.tasks = Array.isArray(msg.tasks) ? msg.tasks : [];
+      updateTasksVisibility();
+      renderTasks();
+      break;
+
+    case 'workspace':
+      applyWorkspaceEntries(msg.entries);
+      break;
+
+    case 'scheduled_tasks':
+      S.scheduled = Array.isArray(msg.tasks) ? msg.tasks : [];
+      renderScheduled();
+      break;
+
+    case 'scheduled_error':
+      showScheduledError(msg.message);
+      break;
+
+    case 'scheduled_run_busy':
+      appendInfoLine('A scheduled task tried to run now, but the chat is busy — try again once it is free.');
+      break;
+
+    case 'team_members':
+      S.team = Array.isArray(msg.members) ? msg.members : [];
+      renderTeam();
+      break;
+
+    case 'team_error':
+      appendInfoLine(`Team panel: ${msg.message}`);
+      break;
+
     case 'agent_report':
       appendAgentReport(msg);
       break;
@@ -235,6 +274,7 @@ export function handleServerMessage(msg) {
       S.usage.outputTokens += msg.outputTokens || 0;
       S.usage.cacheReadTokens  += msg.cacheReadTokens  || 0;
       S.usage.cacheWriteTokens += msg.cacheWriteTokens || 0;
+      renderUsage();
       S.isRunning = false;
       updateSendBtn();
       if (!msg.background) attentionCue('Claude finished', 'Your reply is ready.');

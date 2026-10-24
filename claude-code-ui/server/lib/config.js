@@ -43,8 +43,17 @@ export const ENABLE_ESPHOME = process.env.ENABLE_ESPHOME === 'true';
 export const ESPHOME_CONFIG_DIR = process.env.ESPHOME_CONFIG_DIR || '';
 export const ESPHOME_PLUGIN_DIR = '/opt/plugins/esphome';
 
-/** Plugins loaded for every query (the HA-config plugin always; esphome opt-in). */
-export const PLUGINS = [{ type: 'local', path: PLUGIN_DIR }];
+/** Always-on local plugin providing the task-list and workspace conventions
+ *  (see PLUGINS just below) — distinct from the HA-specific
+ *  homeassistant-config plugin, since nothing in it is Home-Assistant-specific. */
+export const PRODUCTIVITY_PLUGIN_DIR = '/opt/plugins/productivity-tools';
+
+/** Plugins loaded for every query (the HA-config and productivity-tools
+ *  plugins always; esphome opt-in). */
+export const PLUGINS = [
+  { type: 'local', path: PLUGIN_DIR },
+  { type: 'local', path: PRODUCTIVITY_PLUGIN_DIR },
+];
 if (ENABLE_ESPHOME) PLUGINS.push({ type: 'local', path: ESPHOME_PLUGIN_DIR });
 
 // Whether the agent may touch other apps' config folders. HA always mounts
@@ -65,6 +74,28 @@ export const UPLOAD_DIR = path.join(DATA_DIR, 'uploads');
 export const ACTIVE_FILE = path.join(DATA_DIR, 'active-session.json');
 export const AUTO_CONTINUE_FILE = path.join(DATA_DIR, 'auto-continue.json');
 export const NOTIFY_FILE = path.join(DATA_DIR, 'notify.json');
+export const TASKS_FILE = path.join(DATA_DIR, 'tasks.json');
+export const SCHEDULED_FILE = path.join(DATA_DIR, 'scheduled-tasks.json');
+export const TEAM_FILE = path.join(DATA_DIR, 'team.json');
+
+/**
+ * A scratch/output folder, separate from `/config` (the live Home Assistant
+ * configuration). This is where a task list, workspace files and scheduled-task
+ * plugin tell Claude to put anything the user will want to keep or revisit — a
+ * report, a generated image, a self-contained HTML page — instead of littering
+ * `/config` with files HA was never meant to serve. Persists like everything
+ * else under /data; served read-only at `/workspace` and listed at
+ * `/api/workspace` (see server/lib/workspace.js).
+ */
+export const WORKSPACE_DIR = path.join(DATA_DIR, 'workspace');
+
+/** How often the scheduler checks persisted entries against the clock. Kept
+ *  well under a minute so a cron expression's minute field is never missed. */
+export const SCHEDULER_TICK_MS = parseInt(process.env.SCHEDULER_TICK_MS || '20000', 10);
+
+/** Hard ceiling on one scheduled run, so a stuck unattended prompt can never
+ *  block every future firing forever. */
+export const SCHEDULED_RUN_TIMEOUT_MS = parseInt(process.env.SCHEDULED_RUN_TIMEOUT_MS || '900000', 10); // 15 min
 
 /**
  * Claude Code's canonical transcript store, keyed on the project directory —

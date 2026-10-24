@@ -28,6 +28,11 @@
  *   scroll.js       scroll anchoring and the auto-hiding header
  *   promptnav.js    the ↑/↓ prompt arrows
  *   viewport.js     sizing the frame to the part of the screen we can see
+ *   tasks.js        the task-list widget
+ *   workspace.js    the /data/workspace files panel
+ *   scheduled.js    the scheduled-prompts panel
+ *   team.js         the team / 1:1 tracker panel
+ *   usage-panel.js  the live session-usage panel
  */
 import { promptInput } from './js/dom.js';
 import { connect } from './js/connection.js';
@@ -46,6 +51,11 @@ import './js/notify.js';
 import './js/banners.js';
 import './js/scroll.js';
 import './js/promptnav.js';
+import './js/tasks.js';
+import './js/workspace.js';
+import './js/scheduled.js';
+import './js/team.js';
+import './js/usage-panel.js';
 
 // Before anything renders: everything below is laid out inside the frame this
 // sizes, and getting it wrong puts the composer below the fold on a phone.

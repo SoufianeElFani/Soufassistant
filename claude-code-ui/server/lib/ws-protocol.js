@@ -19,6 +19,9 @@ import { saveAttachments, describeAttachments } from './uploads.js';
 import { runQuery, abortActive } from './run-query.js';
 import * as autoContinue from './auto-continue.js';
 import * as notifier from './notify.js';
+import { taskState } from './tasks.js';
+import * as scheduler from './scheduler.js';
+import * as team from './team.js';
 
 /** Everything a newly connected (or reconnected) tab needs to render the app. */
 function greet(ws) {
@@ -53,6 +56,12 @@ function greet(ws) {
   if (runtime.backgroundTasks.size) {
     send(ws, { type: 'background_tasks', tasks: [...runtime.backgroundTasks.values()] });
   }
+
+  // The task-list widget and the scheduled-tasks list are both independent of
+  // the active chat, so every connecting tab gets the current state up front.
+  send(ws, { type: 'tasks', tasks: taskState.tasks });
+  send(ws, { type: 'scheduled_tasks', tasks: scheduler.list() });
+  send(ws, { type: 'team_members', members: team.list() });
 
   // Replay a scheduled resume so a reconnecting tab shows the countdown, or —
   // when nothing is scheduled — the standing offer to turn one on.
@@ -192,6 +201,42 @@ const handlers = {
 
   async test_notify(ws) {
     send(ws, { type: 'notify_test', ...(await notifier.sendTest()) });
+  },
+
+  // ── Scheduled tasks ──────────────────────────────────────────────────────
+  // Deliberately independent of the active chat (see scheduler.js) — these
+  // just manage the persisted list; `upsert`/`remove` broadcast their own
+  // 'scheduled_tasks' update, so no explicit reply is needed here.
+  set_scheduled(ws, msg) {
+    try {
+      scheduler.upsert(msg.task || {});
+    } catch (e) {
+      send(ws, { type: 'scheduled_error', message: e.message });
+    }
+  },
+
+  delete_scheduled(_ws, msg) {
+    scheduler.remove(msg.id);
+  },
+
+  run_scheduled_now(_ws, msg) {
+    scheduler.runNow(msg.id);
+  },
+
+  // ── Team panel ───────────────────────────────────────────────────────────
+  // The person edits this directly from the panel; Claude can also log a note
+  // via the team-notes CLI (/internal/team) — both converge on team.js, which
+  // broadcasts its own 'team_members' update, so no explicit reply is needed.
+  set_team_member(ws, msg) {
+    try {
+      team.upsert(msg.member || {});
+    } catch (e) {
+      send(ws, { type: 'team_error', message: e.message });
+    }
+  },
+
+  delete_team_member(_ws, msg) {
+    team.remove(msg.id);
   },
 };
 

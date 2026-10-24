@@ -130,7 +130,7 @@ export async function sendTest() {
   if (!process.env.SUPERVISOR_TOKEN) return { ok: false, error: 'No Supervisor token.' };
   try {
     const res = await supervisorFetch(`services/notify/${notifySettings.service}`, {
-      method: 'POST', body: JSON.stringify({ title: 'Claude Code', message: 'Test notification', data: { tag: `${TAG}-test` } }),
+      method: 'POST', body: JSON.stringify({ title: 'Soufassistant', message: 'Test notification', data: { tag: `${TAG}-test` } }),
     });
     return res.ok ? { ok: true } : { ok: false, error: `Home Assistant answered ${res.status}` };
   } catch (e) { return { ok: false, error: e.message }; }

@@ -7,6 +7,7 @@ import { clearScreen } from './commands.js';
 import { messagesEl } from './dom.js';
 import { addCopyButton, renderMarkdown } from './links.js';
 import { scrollBottom } from './scroll.js';
+import { renderUsage } from './usage-panel.js';
 
 // ── Message rendering ──────────────────────────────────────────────────────
 
@@ -438,6 +439,7 @@ export function renderHistory(items) {
     }
     S.lastAssistantBubble = null;
     endToolGroup();   // finalise (and collapse) any trailing tool-call group
+    renderUsage();    // keep the Usage panel in sync with the just-rebuilt totals
   } finally {
     S.suppressAutoScroll = false;
   }

@@ -1,0 +1,8 @@
+{
+  "name": "productivity-tools",
+  "description": "Local, self-hosted analogues of a few things Claude's hosted products offer out of the box: a visible task list for multi-step work, a workspace folder for files worth keeping, and scheduled prompts",
+  "version": "1.0.0",
+  "author": {
+    "name": "claude-code-ui"
+  }
+}

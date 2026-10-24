@@ -56,7 +56,7 @@ WORKDIR /config
 
 # Copy application files
 # (bump SCRIPTS_VER to force Docker layer re-copy on next build)
-ARG SCRIPTS_VER=29
+ARG SCRIPTS_VER=31
 COPY server/index.js /opt/server/index.js
 COPY server/lib/ /opt/server/lib/
 COPY frontend/ /opt/frontend/
@@ -75,6 +75,18 @@ RUN chmod +x /run.sh \
 # the old third-party ha-ws-client binary and the ha-history / ha-stats / … shortcuts
 # are gone, so there is nothing for the dispatcher to read from argv[0].
 RUN ln -sf /opt/scripts/ha-tools.sh /usr/local/bin/ha-tools
+
+# `claude-tasks` — drives the chat UI's task-list widget (see
+# server/lib/tasks.js and plugins/productivity-tools). A plain Node CLI, no
+# symlink dance needed for arch-specific modules the way ha-tools has.
+RUN ln -sf /opt/scripts/claude-tasks.sh /usr/local/bin/claude-tasks \
+    && chmod +x /opt/scripts/claude-tasks.sh /opt/scripts/claude-tasks.cjs
+
+# `team-notes` — logs a dated note on a Team-panel member (see
+# server/lib/team.js and plugins/productivity-tools). Same shape as
+# claude-tasks above.
+RUN ln -sf /opt/scripts/team-notes.sh /usr/local/bin/team-notes \
+    && chmod +x /opt/scripts/team-notes.sh /opt/scripts/team-notes.cjs
 
 # `esphome` command — thin wrapper over the venv the app installs into /data
 # on first enable (optional ESPHome capability). Present even when disabled so an

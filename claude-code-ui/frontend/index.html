@@ -3,21 +3,16 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>Claude Code UI</title>
+  <title>Soufassistant</title>
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
   <div id="app">
     <header class="header">
       <div class="header-left">
-        <span class="brand-logo" title="Claude Code" aria-label="Claude Code">
+        <span class="brand-logo" title="Soufassistant" aria-label="Soufassistant">
           <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
-            <g fill="#d97757">
-              <rect x="11" y="2" width="2" height="20" rx="1"/>
-              <rect x="2" y="11" width="20" height="2" rx="1"/>
-              <rect x="11" y="2" width="2" height="20" rx="1" transform="rotate(45 12 12)"/>
-              <rect x="11" y="2" width="2" height="20" rx="1" transform="rotate(-45 12 12)"/>
-            </g>
+            <path d="M12 2l1.8 6.2L20 10l-6.2 1.8L12 18l-1.8-6.2L4 10l6.2-1.8L12 2z" fill="#2dd4bf"/>
           </svg>
         </span>
         <span id="status-dot" class="status-dot"></span>
@@ -41,6 +36,39 @@
             <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/>
             <path d="M3 3v5h5"/>
             <path d="M12 7v5l4 2"/>
+          </svg>
+        </button>
+        <button id="tasks-btn" class="icon-btn hidden" title="Tasks" aria-label="Tasks">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M9 11l3 3L22 4"/>
+            <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/>
+          </svg>
+        </button>
+        <button id="workspace-btn" class="icon-btn" title="Workspace" aria-label="Workspace">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
+          </svg>
+        </button>
+        <button id="scheduled-btn" class="icon-btn" title="Scheduled tasks" aria-label="Scheduled tasks">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="13" r="8"/>
+            <path d="M12 9v4l3 2"/>
+            <path d="M9 1h6"/>
+          </svg>
+        </button>
+        <button id="team-btn" class="icon-btn" title="Team" aria-label="Team">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
+            <circle cx="9" cy="7" r="4"/>
+            <path d="M23 21v-2a4 4 0 0 0-3-3.87"/>
+            <path d="M16 3.13a4 4 0 0 1 0 7.75"/>
+          </svg>
+        </button>
+        <button id="usage-btn" class="icon-btn" title="Usage" aria-label="Usage">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="18" y1="20" x2="18" y2="10"/>
+            <line x1="12" y1="20" x2="12" y2="4"/>
+            <line x1="6" y1="20" x2="6" y2="14"/>
           </svg>
         </button>
         <button id="settings-btn" class="icon-btn" title="Settings" aria-label="Settings">
@@ -70,6 +98,69 @@
     <div id="sessions-panel" class="sessions-panel hidden">
       <div class="sessions-head">Sessions</div>
       <div id="sessions-list" class="sessions-list"></div>
+    </div>
+
+    <div id="tasks-panel" class="sessions-panel hidden">
+      <div class="sessions-head">Tasks</div>
+      <div id="tasks-list" class="sessions-list"></div>
+    </div>
+
+    <div id="workspace-panel" class="sessions-panel hidden">
+      <div class="sessions-head">Workspace</div>
+      <div id="workspace-list" class="sessions-list"></div>
+    </div>
+
+    <div id="scheduled-panel" class="sessions-panel hidden">
+      <div class="sessions-head sessions-head-row">
+        <span>Scheduled tasks</span>
+        <button id="scheduled-new-btn" type="button" class="scheduled-new-btn" title="New scheduled task" aria-label="New scheduled task">+ New</button>
+      </div>
+      <div id="scheduled-list" class="sessions-list"></div>
+      <form id="scheduled-form" class="scheduled-form hidden">
+        <label class="scheduled-form-label">Name
+          <input id="scheduled-name-input" class="scheduled-form-input" type="text" placeholder="Morning entity check" maxlength="100" autocomplete="off">
+        </label>
+        <label class="scheduled-form-label">Schedule (cron: minute hour dom month dow)
+          <input id="scheduled-cron-input" class="scheduled-form-input" type="text" placeholder="0 7 * * *" maxlength="60" autocomplete="off" spellcheck="false">
+        </label>
+        <label class="scheduled-form-label">Prompt
+          <textarea id="scheduled-prompt-input" class="scheduled-form-textarea" rows="3" maxlength="4000" placeholder="Check if any entity has been unavailable for more than an hour and tell me."></textarea>
+        </label>
+        <p id="scheduled-form-error" class="scheduled-form-error hidden"></p>
+        <div class="scheduled-form-actions">
+          <button id="scheduled-form-cancel" type="button" class="btn btn-deny">Cancel</button>
+          <button id="scheduled-form-save" type="submit" class="btn btn-allow">Save</button>
+        </div>
+      </form>
+    </div>
+
+    <div id="team-panel" class="sessions-panel hidden">
+      <div class="sessions-head sessions-head-row">
+        <span>Team</span>
+        <button id="team-new-btn" type="button" class="scheduled-new-btn" title="New team member" aria-label="New team member">+ New</button>
+      </div>
+      <div id="team-list" class="sessions-list"></div>
+      <form id="team-form" class="scheduled-form hidden">
+        <label class="scheduled-form-label">Name
+          <input id="team-name-input" class="scheduled-form-input" type="text" placeholder="Jamie Ortiz" maxlength="80" autocomplete="off">
+        </label>
+        <label class="scheduled-form-label">Role
+          <input id="team-role-input" class="scheduled-form-input" type="text" placeholder="Developer" maxlength="120" autocomplete="off">
+        </label>
+        <label class="scheduled-form-label">Notes
+          <textarea id="team-notes-input" class="scheduled-form-textarea" rows="4" maxlength="4000" placeholder="Free-text notes — Claude can also append a dated note here via team-notes when you tell it about a conversation."></textarea>
+        </label>
+        <p id="team-form-error" class="scheduled-form-error hidden"></p>
+        <div class="scheduled-form-actions">
+          <button id="team-form-cancel" type="button" class="btn btn-deny">Cancel</button>
+          <button id="team-form-save" type="submit" class="btn btn-allow">Save</button>
+        </div>
+      </form>
+    </div>
+
+    <div id="usage-panel" class="sessions-panel hidden">
+      <div class="sessions-head">Usage (this session)</div>
+      <div id="usage-body" class="usage-body"></div>
     </div>
 
     <div id="settings-panel" class="settings-panel hidden">
