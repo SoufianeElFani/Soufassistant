@@ -16,7 +16,10 @@ import { setAutoContinueSupported } from './settings.js';
 import { hideThinking, showThinking } from './thinking.js';
 import { appendAgentReport, appendAssistantText, appendCompactedDivider, appendErrorBubble, appendInfoLine, appendResultLine, appendTaskNotice, appendToolResult, appendToolUse, appendUserBubble, endToolGroup, renderHistory } from './transcript.js';
 import { renderTasks, updateTasksVisibility } from './tasks.js';
-import { applyWorkspaceEntries, applyWorkspaceState, applyWorkspaceResult } from './workspace.js';
+import { applyWorkspaceEntries, applyWorkspaceState, applyWorkspaceResult, applyPreviews } from './workspace.js';
+import { applyWorkspaceStat, applyWriteResult, applyDeleteResult } from './artifacts.js';
+import { applySearchResults, applySessionActionResult } from './sessions.js';
+import { applyTurns, applyRewindResult } from './changes.js';
 import { applySessionMode, applySessionModes } from './modes.js';
 import { applySkills, applySkillDetail, applySkillResult } from './skills.js';
 import { renderScheduled, showScheduledError } from './scheduled.js';
@@ -167,6 +170,32 @@ export function handleServerMessage(msg) {
 
     case 'skills':
       applySkills(msg);
+      break;
+
+    case 'previews':
+      applyPreviews(msg.previews);
+      break;
+    case 'workspace_stat':
+      applyWorkspaceStat(msg);
+      break;
+    case 'workspace_write_result':
+      applyWriteResult(msg);
+      break;
+    case 'workspace_delete_result':
+      applyDeleteResult(msg);
+      break;
+    case 'session_search_results':
+      applySearchResults(msg);
+      break;
+    case 'session_export_result':
+    case 'session_duplicate_result':
+      applySessionActionResult(msg);
+      break;
+    case 'turns':
+      applyTurns(msg);
+      break;
+    case 'rewind_result':
+      applyRewindResult(msg);
       break;
 
     case 'skill_detail':

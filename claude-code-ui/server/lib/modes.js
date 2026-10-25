@@ -56,6 +56,10 @@ export function coworkPrompt(projectDirAbs, projectName) {
     'workspace opens in the artifact viewer next to the chat. Run and test what you build',
     '(scripts, a headless check, a validator) before saying it works, and keep a short',
     'README.md in the project describing what is there.',
+    'If the deliverable needs a server (an API, a dev server), start it in the background bound',
+    'to 127.0.0.1 on a port between 8100 and 8199 and use only relative URLs in the page: it then',
+    'appears under "Live previews" in the Workspace panel and opens in the viewer (served under',
+    'a sub-path, so absolute URLs like "/app.js" would break). Tell the user the port you used.',
   ].join(' ');
 }
 

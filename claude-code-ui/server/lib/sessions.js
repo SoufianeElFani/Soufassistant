@@ -69,7 +69,7 @@ export function isHarnessEcho(text) {
  * (older transcripts, or this app's own synthesized turns) are the only kinds
  * rendered as an ordinary user bubble.
  */
-const NON_HUMAN_ORIGIN_KINDS = new Set([
+export const NON_HUMAN_ORIGIN_KINDS = new Set([
   'task-notification', 'peer', 'channel', 'coordinator', 'observer', 'auto-continuation', 'observer-activity',
 ]);
 

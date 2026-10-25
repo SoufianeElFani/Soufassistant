@@ -108,8 +108,23 @@
     </div>
 
     <div id="sessions-panel" class="sessions-panel hidden">
-      <div class="sessions-head">Sessions</div>
+      <div class="sessions-head sessions-head-row">
+        <span>Sessions</span>
+        <button id="changes-open-btn" type="button" class="scheduled-new-btn" title="File changes made in this conversation, and undo">Changes…</button>
+      </div>
+      <div class="sessions-search-row">
+        <input id="sessions-search" class="scheduled-form-input sessions-search" type="search" placeholder="Search all conversations…" autocomplete="off" spellcheck="false">
+      </div>
       <div id="sessions-list" class="sessions-list"></div>
+    </div>
+
+    <div id="changes-panel" class="sessions-panel changes-panel hidden">
+      <div class="sessions-head sessions-head-row">
+        <span id="changes-title">Changes</span>
+        <button id="changes-close" type="button" class="find-nav" aria-label="Close">&#10005;</button>
+      </div>
+      <div class="workspace-info"><div class="usage-note">Files Claude changed with its file tools, message by message. “Restore” puts them back as they were just before that message (changes made by shell commands are not tracked).</div></div>
+      <div id="changes-list" class="sessions-list"></div>
     </div>
 
     <div id="tasks-panel" class="sessions-panel hidden">
@@ -137,7 +152,9 @@
       <div class="workspace-projects-row">
         <div id="workspace-projects" class="workspace-projects"></div>
         <button id="workspace-new-project" type="button" class="scheduled-new-btn" title="New project folder">+ Project</button>
+        <button id="workspace-new-file" type="button" class="scheduled-new-btn" title="New text file">+ File</button>
       </div>
+      <div id="workspace-previews" class="workspace-previews hidden"></div>
       <div id="workspace-list" class="sessions-list"></div>
     </div>
 
@@ -320,6 +337,10 @@
       <div class="artifact-head">
         <span id="artifact-title" class="artifact-title"></span>
         <div class="artifact-actions">
+          <button id="artifact-edit" type="button" class="find-nav hidden" title="Edit" aria-label="Edit">&#9998;</button>
+          <button id="artifact-save" type="button" class="find-nav artifact-save hidden" title="Save (Ctrl+S)" aria-label="Save">Save</button>
+          <button id="artifact-cancel" type="button" class="find-nav hidden" title="Stop editing" aria-label="Stop editing">Cancel</button>
+          <button id="artifact-delete" type="button" class="find-nav hidden" title="Delete this file" aria-label="Delete">&#128465;</button>
           <button id="artifact-reload" type="button" class="find-nav" title="Reload" aria-label="Reload">&#8635;</button>
           <a id="artifact-open" class="find-nav artifact-link" target="_blank" rel="noopener" title="Open in a new tab" aria-label="Open in a new tab">&#8599;</a>
           <a id="artifact-download" class="find-nav artifact-link" download title="Download" aria-label="Download">&#8681;</a>

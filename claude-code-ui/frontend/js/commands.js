@@ -161,6 +161,9 @@ sessionsBtn.onclick = (e) => {
 };
 
 document.addEventListener('click', (e) => {
+  // A click that re-rendered the panel leaves its target detached — it was
+  // still inside, so it must not count as a click outside.
+  if (!e.target.isConnected) return;
   if (sessionsPanel.classList.contains('hidden')) return;
   if (sessionsPanel.contains(e.target) || sessionsBtn.contains(e.target)) return;
   closeSessions();

@@ -12,13 +12,21 @@ name: Build app image
 # version that hasn't been published yet — ordinary commits are a no-op, and a
 # release is a deliberate version bump. See claude-code-ui/CLAUDE.md § Releasing.
 #
+# STAGING (Soufassistant): Home Assistant polls master on its own schedule, so a
+# version bump pushed straight to master is offered as an update *before* CI has
+# built its image — and that update fails with "manifest unknown" (seen with
+# 0.3.0). Releases therefore go to the `next` branch: this workflow tests and
+# builds there, and the `promote` job fast-forwards master to the same commit
+# only once the images exist. Home Assistant never sees a version it cannot pull.
+#
 # Pull requests (Dependabot's Agent SDK bumps, mainly — see .github/dependabot.yml)
 # run the tests and the image smoke test but never publish anything.
 on:
   push:
-    branches: [master]
+    branches: [master, next]
     paths:
       - "claude-code-ui/**"
+      - ".github/workflows/build.yml"
   pull_request:
     paths:
       - "claude-code-ui/**"
@@ -197,3 +205,25 @@ jobs:
 # No multi-arch manifest job: Home Assistant pulls the per-arch image named by
 # config.yaml's `image: ghcr.io/soufianeelfani/{arch}-soufassistant`, never a
 # combined tag. (GHCR also refused the combined package with a 403.)
+
+  promote:
+    name: Promote next → master
+    # Only for the staging branch, and only when nothing upstream failed: the
+    # tests passed and, if this commit is a release, its images were built.
+    needs: [test, version, init, build]
+    if: >-
+      always() && github.ref == 'refs/heads/next' &&
+      needs.test.result == 'success' && needs.version.result == 'success' &&
+      needs.init.result != 'failure' && needs.init.result != 'cancelled' &&
+      (needs.version.outputs.publish != 'true' || needs.build.result == 'success')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      # A fast-forward only: if master has moved on, this fails rather than
+      # overwrite it. Pushes made with GITHUB_TOKEN do not start another run.
+      - name: Fast-forward master
+        run: git push origin HEAD:refs/heads/master

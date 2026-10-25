@@ -56,6 +56,8 @@ loads the persisted state, and listens. Everything with behaviour lives in
 | `workspace.js` | the configurable workspace root, projects, listing and sync status |
 | `modes.js` | Chat / Code / Cowork: per-mode SDK options, the Cowork write fence, per-session modes |
 | `skills.js`, `zip.js` | the Skills panel: discovery, on/off, local CRUD, .zip export |
+| `session-tools.js` | conversation titles/pins, search, export, duplicate, per-turn changes and rewind |
+| `previews.js` | the /preview/<port>/ proxy for apps running in a Cowork project |
 | `plan-usage.js` | claude.ai plan limits for the Usage panel |
 | `scheduler.js` | persisted cron-like prompts, ticked and fired as their own unattended SDK calls |
 | `cron.js` | the pure 5-field cron matcher `scheduler.js` is built on |
@@ -223,7 +225,13 @@ Day to day, land changes with the version untouched and add them under
 
 1. Rename the `## Unreleased` heading to the new version number
 2. Bump `version:` in `config.yaml` to match
-3. Commit and push — CI sees the new version and publishes it
+3. Commit and push **to the `next` branch** (`git push origin HEAD:next`), never
+   straight to `master`. CI tests and builds there; the `promote` job then
+   fast-forwards `master` to that commit **only once the images exist**, so
+   Home Assistant (which polls `master` on its own schedule) never offers a
+   version it cannot pull. Pushing a bump straight to master is what made the
+   0.3.0 update fail with "manifest unknown" for a few minutes. Non-release
+   commits go through `next` the same way (promoted once the tests pass).
 
 `workflow_dispatch` takes a `force` input to rebuild and overwrite an
 already-published version; use it only to repair a broken publish.
@@ -754,6 +762,53 @@ must not split the Sessions list. Each session's last mode/project is kept in
 `/data/session-modes.json` and pushed as `session_modes`; opening a session
 restores its mode. A Cowork prompt with no valid project is refused before
 anything is aborted. A chat turn does not overwrite the cached slash commands.
+
+**Conversations (`server/lib/session-tools.js`, `frontend/js/sessions.js`).**
+Custom titles and pins live in `/data/session-meta.json` (the transcript is not
+touched; `decoratedSessions()` overlays them, pins first). Search is a
+case-insensitive scan of every conversation's prompts and replies
+(`parseSession`), with a snippet. Export writes Markdown to
+`<workspace>/Conversations/`. Duplicate uses the SDK's `forkSession(id, {dir:
+WORK_DIR})` (the stub implements it as a copy). The ⋯ menu holds these; ✕ stays
+a direct delete (a browser test clicks `.session-del`).
+
+**Changes and restore (`session-tools.js` listTurns/rewindTo, `frontend/js/changes.js`).**
+Every non-chat turn runs with `enableFileCheckpointing: true`. `listTurns()`
+pairs each human prompt (its transcript `uuid`) with the Write/Edit/MultiEdit/
+NotebookEdit calls made answering it, which the panel shows as a simple
+before/after. "Restore files to before this message" calls `rewindTo()`: a
+**promptless Query that resumes the session** with checkpointing on and calls
+`rewindFiles(uuid, {dryRun})` — verified live to work on a finished
+conversation, spending no tokens. Dry run first (files, ±lines), then the real
+one after confirmation; refused while that conversation is running. Only
+file-tool changes are tracked, not Bash; conversations from before 0.4.0 have
+no checkpoints.
+
+**File editor (`workspace.js` writeWorkspaceFile/deleteWorkspaceFile, `artifacts.js`).**
+Text formats only (`EDITABLE_EXT`), 2 MB max, never dot-paths or outside the
+root. The editor records the file's mtime when it opens (`workspace_stat`) and
+a save with a stale mtime returns `conflict` (Claude or the Drive sync changed
+it) — the user can overwrite. "+ File" creates with `create: true` (refuses to
+replace). Plain `<textarea>` (no build step, no CDN): Ctrl/⌘+S saves, Tab
+indents.
+
+**Live previews (`server/lib/previews.js`).** `/preview/<port>/…` reverse-proxies
+to `127.0.0.1:<port>` for ports `PREVIEW_PORT_MIN..MAX` (8100–8199) only;
+anything else is a 404, so it is not an open proxy. Cookies/Authorization are
+not forwarded, `X-Frame-Options`/CSP are dropped, redirects to absolute paths
+are rewritten under the preview prefix (using `X-Ingress-Path`), and responses
+get `Access-Control-Allow-Origin: *` with preflights answered locally — the
+viewer iframe has no `allow-same-origin`, so the page's own `fetch()`es come
+from an opaque origin. WebSockets are not proxied. Running previews are read
+from `/proc/net/tcp{,6}` LISTEN sockets; Stop SIGTERMs the owning pid (found via
+`/proc/<pid>/fd`). The Cowork prompt tells Claude the port range and to use
+relative URLs. `/preview/<port>` (no slash) redirects — an exact regex route,
+because Express's non-strict routing would otherwise loop.
+
+**Outside clicks.** Panels close on a click outside them, but a click that
+re-renders the panel detaches its own target — handlers return early on
+`!e.target.isConnected` (that bug closed the Workspace panel on a project-chip
+click in 0.3.0).
 
 **Skills panel (`server/lib/skills.js`, `server/lib/zip.js`, `frontend/js/skills.js`).**
 Discovers SKILL.md files from three sources: **account** (`~/.claude/skills/

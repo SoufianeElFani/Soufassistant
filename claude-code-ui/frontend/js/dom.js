@@ -168,3 +168,19 @@ export const artifactClose    = document.getElementById('artifact-close');
 export const composerModeSel    = document.getElementById('composer-mode');
 export const composerProjectSel = document.getElementById('composer-project');
 export const settingsSkillsBtn  = document.getElementById('settings-skills-btn');
+
+// ── Conversations: search, changes ──
+export const sessionsSearch   = document.getElementById('sessions-search');
+export const changesOpenBtn   = document.getElementById('changes-open-btn');
+export const changesPanel     = document.getElementById('changes-panel');
+export const changesTitle     = document.getElementById('changes-title');
+export const changesList      = document.getElementById('changes-list');
+export const changesClose     = document.getElementById('changes-close');
+
+// ── Workspace: new file, live previews; artifact editor ──
+export const workspaceNewFile   = document.getElementById('workspace-new-file');
+export const workspacePreviews  = document.getElementById('workspace-previews');
+export const artifactEdit       = document.getElementById('artifact-edit');
+export const artifactSave       = document.getElementById('artifact-save');
+export const artifactCancel     = document.getElementById('artifact-cancel');
+export const artifactDelete     = document.getElementById('artifact-delete');

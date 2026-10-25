@@ -50,6 +50,8 @@ import {
 import { loadSkillsConfig, skillDirFor } from './lib/skills.js';
 import { loadSessionModes } from './lib/modes.js';
 import { zipDirectory } from './lib/zip.js';
+import { loadSessionMeta } from './lib/session-tools.js';
+import { previewProxy } from './lib/previews.js';
 import { requireLoopback } from './lib/internal.js';
 import * as tasks from './lib/tasks.js';
 import * as scheduler from './lib/scheduler.js';
@@ -87,6 +89,13 @@ app.use('/workspace', (req, res, next) => {
   wsStatic.handler(req, res, next);
 });
 app.get('/api/workspace', (_req, res) => res.json({ root: workspaceRoot(), entries: listWorkspaceEntries() }));
+
+// Live previews of an app running in a Cowork project (previews.js): only the
+// preview port range, only to localhost.
+// Exact match (a regex): Express's non-strict routing would also send
+// "/preview/8100/" here, and the redirect would loop.
+app.all(/^\/preview\/(\d+)$/, (req, res) => res.redirect(301, `${req.headers['x-ingress-path'] || ''}/preview/${req.params[0]}/`));
+app.all('/preview/:port/*', previewProxy);
 
 // A skill folder as a .zip — to upload to claude.ai (Settings → Capabilities),
 // since there is no public API to push a skill to an account.
@@ -164,6 +173,7 @@ sanitizeMcpState();
 loadActive();
 loadSkillsConfig();
 loadSessionModes();
+loadSessionMeta();
 autoContinue.load();
 notifier.load();
 tasks.load();

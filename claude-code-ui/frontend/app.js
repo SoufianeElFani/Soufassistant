@@ -36,6 +36,7 @@
  *   modes.js        the Chat / Code / Cowork switch
  *   artifacts.js    the artifact viewer next to the chat
  *   skills.js       the skills panel
+ *   changes.js      per-message file changes and restore (rewind)
  */
 import { promptInput } from './js/dom.js';
 import { connect } from './js/connection.js';
@@ -62,6 +63,7 @@ import './js/usage-panel.js';
 import './js/modes.js';
 import './js/artifacts.js';
 import './js/skills.js';
+import './js/changes.js';
 
 // Before anything renders: everything below is laid out inside the frame this
 // sizes, and getting it wrong puts the composer below the fold on a phone.

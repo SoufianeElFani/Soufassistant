@@ -35,7 +35,9 @@
  * options the server built (suggestions, permissionMode, hooks, resume …)
  * without reaching into its internals.
  */
-import { appendFileSync, readFileSync } from 'fs';
+import { appendFileSync, readFileSync, writeFileSync, existsSync } from 'fs';
+import { randomUUID } from 'crypto';
+import pathMod from 'path';
 
 const SCENARIO_FILE = process.env.STUB_SDK_SCENARIO || '';
 const RECORD_FILE = process.env.STUB_SDK_RECORD || '';
@@ -77,6 +79,7 @@ function describeOptions(options = {}) {
     toolConfig: options.toolConfig ?? null,
     plugins: (options.plugins || []).map((p) => p.path),
     settings: options.settings ?? null,
+    enableFileCheckpointing: !!options.enableFileCheckpointing,
     tools: options.tools ?? null,
     settingSources: options.settingSources ?? null,
     additionalDirectories: options.additionalDirectories ?? null,
@@ -189,6 +192,12 @@ export function query({ prompt, options = {} }) {
       throw: async (e) => { throw e; },
       close() {},
       [USAGE_METHOD]: planUsageAnswer,
+      // session-tools.js rewindTo(): a promptless resume asked to rewind.
+      rewindFiles: async (uuid, opts = {}) => {
+        record({ kind: 'rewind', resume: options.resume ?? null, uuid, dryRun: !!opts.dryRun,
+          checkpointing: !!options.enableFileCheckpointing });
+        return scenario.rewind || { canRewind: true, filesChanged: ['/config/x.yaml'], insertions: 1, deletions: 1 };
+      },
     };
   }
   const run = scenario.runs?.[runIndex] || { steps: [{ text: 'ok' }] };
@@ -304,4 +313,21 @@ export function query({ prompt, options = {} }) {
   };
 }
 
-export default { query };
+/**
+ * forkSession(): copy the transcript under a new id, as the real SDK does
+ * (minus the uuid remapping, which nothing under test looks at).
+ */
+export async function forkSession(sessionId, { dir } = {}) {
+  const store = pathMod.join(process.env.HOME, '.claude', 'projects', String(dir || process.env.WORK_DIR).replaceAll('/', '-'));
+  const src = pathMod.join(store, `${sessionId}.jsonl`);
+  if (!existsSync(src)) throw new Error(`no session ${sessionId}`);
+  const id = randomUUID();
+  const lines = readFileSync(src, 'utf8').split('\n').filter(Boolean).map((l) => {
+    try { const o = JSON.parse(l); o.sessionId = id; return JSON.stringify(o); } catch { return l; }
+  });
+  writeFileSync(pathMod.join(store, `${id}.jsonl`), `${lines.join('\n')}\n`);
+  record({ kind: 'fork', from: sessionId, to: id });
+  return { sessionId: id };
+}
+
+export default { query, forkSession };
