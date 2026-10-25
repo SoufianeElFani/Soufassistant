@@ -35,6 +35,7 @@ import { usableSlashCommands } from './slash-commands.js';
 import { makeInputChannel } from './input-channel.js';
 import { notify } from './notify.js';
 import * as autoContinue from './auto-continue.js';
+import { refreshPlanUsage } from './plan-usage.js';
 
 // STALL_WARN_MS / STALL_CHECK_MS (config.js): how long the SDK may go quiet
 // before the log says so, and how often it checks — only while a turn is
@@ -375,6 +376,7 @@ export async function runQuery(ws, { text, permissionMode, model, effort, autoAt
           `resetsAt=${info.resetsAt || 'n/a'} util=${info.utilization ?? 'n/a'}`);
         broadcast({ type: 'rate_limit', status: info.status, rateLimitType: info.rateLimitType,
           resetsAt: info.resetsAt, utilization: info.utilization });
+        refreshPlanUsage({ q, force: info.status !== 'allowed' });
         if (info.status === 'rejected' && info.rateLimitType === 'five_hour' && info.resetsAt) {
           limitHit = { resetsAt: info.resetsAt, rateLimitType: info.rateLimitType };
           log('WARN', `usage limit reached (five_hour); resets at ${new Date(info.resetsAt * 1000).toISOString()}`);
@@ -404,6 +406,8 @@ export async function runQuery(ws, { text, permissionMode, model, effort, autoAt
           background: runtime.backgroundTasks.size > 0,
         });
         await reportContextUsage(q);
+        // Plan limits moved with this turn — fire-and-forget, never delays the stream.
+        refreshPlanUsage({ q });
         // A single streamed query can legitimately emit more than one `result`
         // — confirmed live: once for the foreground turn, then another each
         // time a background task's completion hands control back for a short

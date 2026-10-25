@@ -157,7 +157,35 @@ async function decideTool(t, id, options, signal) {
 
 // `query()` stays synchronous — like the real SDK, it returns the iterator
 // object immediately; nothing here awaits before that return.
+// What the experimental /usage control request answers (plan-usage.js).
+// A scenario may override it with `planUsage`.
+const USAGE_METHOD = 'usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET';
+const DEFAULT_PLAN_USAGE = {
+  subscription_type: 'pro', rate_limits_available: true,
+  rate_limits: {
+    five_hour: { utilization: 31, resets_at: '2030-01-01T12:00:00Z' },
+    seven_day: { utilization: 12, resets_at: '2030-01-05T12:00:00Z' },
+    extra_usage: { is_enabled: false, monthly_limit: null, used_credits: null, utilization: null, currency: null },
+  },
+};
+const planUsageAnswer = async () => {
+  record({ kind: 'plan_usage' });
+  return scenario.planUsage || DEFAULT_PLAN_USAGE;
+};
+
 export function query({ prompt, options = {} }) {
+  // plan-usage.js's probe: answers control requests, never runs a turn, and
+  // must not consume a scripted run.
+  if (options.env?.SOUFASSISTANT_USAGE_PROBE === '1') {
+    return {
+      [Symbol.asyncIterator]() { return this; },
+      next: async () => ({ done: true, value: undefined }),
+      return: async () => ({ done: true, value: undefined }),
+      throw: async (e) => { throw e; },
+      close() {},
+      [USAGE_METHOD]: planUsageAnswer,
+    };
+  }
   const run = scenario.runs?.[runIndex] || { steps: [{ text: 'ok' }] };
   runIndex += 1;
 
@@ -267,6 +295,7 @@ export function query({ prompt, options = {} }) {
       return run.models || DEFAULT_MODELS;
     },
     setModel: async (m) => { record({ kind: 'setModel', sessionId, model: m }); },
+    [USAGE_METHOD]: planUsageAnswer,
   };
 }
 

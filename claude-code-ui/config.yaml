@@ -1,5 +1,5 @@
 name: "Soufassistant"
-version: "0.1.0"
+version: "0.2.0"
 slug: "soufassistant"
 # No `image:` key: this is Soufiane's personal fork with no CI image publishing
 # set up (yet) — Supervisor always builds from the Dockerfile here. If you set

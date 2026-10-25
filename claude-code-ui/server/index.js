@@ -55,6 +55,7 @@ import { attach } from './lib/ws-protocol.js';
 import { runQuery } from './lib/run-query.js';
 import * as autoContinue from './lib/auto-continue.js';
 import * as notifier from './lib/notify.js';
+import * as planUsage from './lib/plan-usage.js';
 
 // ── HTTP ─────────────────────────────────────────────────────────────────────
 const app = express();
@@ -138,6 +139,7 @@ scheduler.load();
 team.load();
 cleanupUploads();          // drop attachments older than a week
 refreshHaLinks();          // populate entity/automation link targets
+planUsage.startPolling();  // plan limits for the Usage panel while a tab is open
 autoContinue.rearmOnBoot();
 scheduler.start();
 

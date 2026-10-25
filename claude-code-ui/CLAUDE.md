@@ -772,17 +772,33 @@ skill instructs Claude to log only what the user actually said, and to leave
 out health/HR/disciplinary detail entirely rather than writing a softened
 version of it.
 
-**Usage panel (`frontend/js/usage-panel.js`).** A permanently-visible header
-button (unlike Tasks/Workspace, which only appear once there's something to
-show) rendering `S.usage` — the same per-session totals `/usage`
-(`commands.js`) has always accumulated from `result` events — as a live
-panel instead of only a one-off text block on request. `renderUsage()` is
-called from the two places `S.usage` is mutated (`connection.js`'s `result`
-case, `transcript.js`'s `renderHistory`) so the panel never shows stale
-numbers while open. Deliberately session-scoped, not an Anthropic
-account-wide billing dashboard: subscription auth exposes no such
-account-level API, so the panel says so in its own footer rather than
-implying it's your real account usage.
+**Usage panel (`frontend/js/usage-panel.js`, `server/lib/plan-usage.js`).** A
+permanently-visible header button with two sections, plus a badge on the button
+showing the 5-hour session % (coloured: normal < 75 % ≤ warn < 90 % ≤ high).
+
+1. **Plan limits** — the claude.ai subscription meters Claude Desktop shows: the
+   5-hour session window, the weekly window(s) (overall, and per model when the
+   plan has one), and the monthly extra-usage budget when enabled, each with a
+   bar and a "resets in …" countdown. Source: the SDK's **experimental**
+   structured `/usage` control request
+   (`usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET`, called with
+   `skip_behaviors: true`). The method name lives in one constant
+   (`USAGE_METHOD`) and `normalizePlanUsage()` turns any unknown shape into
+   "unavailable" rather than throwing — expect to touch this when the SDK
+   stabilizes the API. Fetched from the active run's Query when there is one,
+   otherwise from a **probe**: a Query that is never sent a prompt, asked the
+   control request, then closed — no tokens spent (~4 s on a Green). Refreshed
+   after every `result`, on any non-`allowed` `rate_limit_event`, when the panel
+   opens (`plan_usage_refresh`), when a tab connects, and every 5 min while a tab
+   is connected and nothing is running; never more than once a minute and never
+   concurrently. API-key logins never fetch (`isSubscriptionAuth()`). There is no
+   monthly *token* limit on claude.ai plans — the only monthly figure is the
+   extra-usage budget. The probe sets `SOUFASSISTANT_USAGE_PROBE=1` in its env:
+   the real CLI ignores it, the test stub uses it so a probe never consumes a
+   scripted run.
+2. **This conversation** — `S.usage`, the per-session totals accumulated from
+   `result` events (`connection.js`'s `result` case, `transcript.js`'s
+   `renderHistory`), resetting on New chat.
 
 ## Notifications
 

@@ -22,6 +22,9 @@ export const S = {
   /** Session usage totals for /usage, accumulated from result events. */
   usage: { messages: 0, turns: 0, cost: 0, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 },
 
+  /** Plan limits (5-hour / weekly / extra usage) from the server's 'plan_usage' message. */
+  planUsage: null,
+
   /** Multi-session state, sourced from Claude Code's on-disk store via the server. */
   sessions: [],
   activeSessionId: null,
