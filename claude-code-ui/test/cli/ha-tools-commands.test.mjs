@@ -691,7 +691,9 @@ describe('trace-stuck', () => {
     assert.ok(first !== -1 && second > first, out);
     assert.match(out, /wait_template "\{\{ is_state\('binary_sensor\.stairs', 'off'\) \}\}" \(timeout 00:30:00\)/);
     assert.match(out, /template currently renders: "2"/);
-    assert.match(out, /delay 0:05:00 — remaining: overdue by 0:37:\d\d/);
+    // The fixture's start time is relative to "now", so the CLI can land a
+    // second either side of the 37-minute mark (seen on CI: 0:36:59).
+    assert.match(out, /delay 0:05:00 — remaining: overdue by 0:3[67]:\d\d/);
   });
 
   test('JSON carries the same facts as fields', async () => {
