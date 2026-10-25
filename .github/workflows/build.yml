@@ -32,7 +32,10 @@ on:
 
 env:
   ARCHITECTURES: '["amd64", "aarch64"]'
-  IMAGE_NAME: claude-code-ui
+  IMAGE_NAME: soufassistant
+  # GHCR requires lowercase repository names; github.repository_owner keeps the
+  # account's capitals (SoufianeElFani), which buildx rejects as a tag.
+  REGISTRY: ghcr.io/soufianeelfani
   BUILDER_VERSION: "2026.06.0"
 
 permissions:
@@ -124,7 +127,7 @@ jobs:
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           VERSION=$(grep '^version:' claude-code-ui/config.yaml | head -1 | cut -d'"' -f2)
-          IMAGE="ghcr.io/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}"
+          IMAGE="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}"
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
           echo "App version: ${VERSION}"
 
@@ -158,7 +161,7 @@ jobs:
         with:
           architectures: ${{ env.ARCHITECTURES }}
           image-name: ${{ env.IMAGE_NAME }}
-          registry-prefix: ghcr.io/${{ github.repository_owner }}
+          registry-prefix: ${{ env.REGISTRY }}
 
   build:
     name: Build ${{ matrix.arch }}
@@ -203,7 +206,7 @@ jobs:
         with:
           architectures: ${{ env.ARCHITECTURES }}
           image-name: ${{ env.IMAGE_NAME }}
-          registry-prefix: ghcr.io/${{ github.repository_owner }}
+          registry-prefix: ${{ env.REGISTRY }}
           image-tags: |
             ${{ needs.version.outputs.version }}
             latest

@@ -1,10 +1,11 @@
 name: "Soufassistant"
 version: "0.2.0"
 slug: "soufassistant"
-# No `image:` key: this is Soufiane's personal fork with no CI image publishing
-# set up (yet) — Supervisor always builds from the Dockerfile here. If you set
-# up GitHub Actions to publish images later, add this key back (see the
-# upstream project this was forked from for the exact workflow).
+# No `image:` key yet: CI (.github/workflows/build.yml) now publishes
+# ghcr.io/soufianeelfani/{arch}-soufassistant:<version>, but this key must only
+# be added once those packages exist AND are public — an `image:` naming a
+# version GHCR doesn't serve breaks install/update. Until then Supervisor
+# builds from the Dockerfile here.
 description: "Soufiane's personal AI assistant for Home Assistant — a Claude-powered chat with a task list, a reusable workspace, scheduled unattended prompts, a team / 1:1 tracker, and live HA control. Forked and extended from the open-source claude-code-ui project (see Credits in the README)."
 url: "https://github.com/SoufianeElFani/soufassistant"
 arch:
