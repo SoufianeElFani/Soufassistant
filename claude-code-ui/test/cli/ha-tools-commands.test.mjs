@@ -385,7 +385,16 @@ describe('live subscriptions', () => {
       let out = '';
       proc.stdout.on('data', (c) => { out += c; });
       const closed = new Promise((r) => proc.on('close', r));
-      await new Promise((r) => setTimeout(r, 800));
+      // Interrupt only once the monitor is really waiting: it installs its
+      // SIGINT handler right after HA acknowledges the subscription, so wait
+      // for that request to reach the fake HA. A fixed 800 ms sleep was too
+      // short on a slow host — the CLI was killed before it had started.
+      const started = Date.now();
+      const subscribed = () => (ha.requests || []).some((r) => r.ws === 'subscribe_trigger');
+      while (!subscribed() && Date.now() - started < 15000) {
+        await new Promise((r) => setTimeout(r, 50));
+      }
+      await new Promise((r) => setTimeout(r, 300));
       proc.kill('SIGINT');
       const code = await closed;
       assert.ok(code === 0 || code === null, `exit ${code}`);
@@ -597,7 +606,10 @@ describe('running', () => {
     assert.match(lines[1], /^ENTITY\s+MODE\s+RUNS\s+RUNNING FOR\s+STARTED\s+LAST TRIGGERED\s+EFFECT\s+LAST STEP$/);
     assert.match(lines[2], /^script\.nick_blind_creep_open\s+single\s+1\/1\s+0:42:0\d\s+\d{4}-\d\d-\d\d \d\d:\d\d:\d\d\+0[01]:00\s+\d{4}.*new runs dropped\s+sequence\[1\] › parallel branch 1 › sequence\[0\]$/);
     assert.match(lines[3], /^script\.caller\s+single/);
-    assert.match(lines[4], /^script\.child_script\s+queued\s+1\/3\s+0:19:5\d/);
+    // The fixture started this run 20 min − 0.5 s before the world was built, so
+    // it reads 0:19:59 on a fast machine and 0:20:00 once the CLI takes longer
+    // than half a second to answer (a Home Assistant Green does).
+    assert.match(lines[4], /^script\.child_script\s+queued\s+1\/3\s+0:(19:5\d|20:0\d)/);
     assert.doesNotMatch(r.stdout, /script\.idle/, 'a script that is off is not running');
   });
 
