@@ -13,6 +13,7 @@
  * persisted, broadcast state.
  */
 import { existsSync, readFileSync, writeFileSync } from 'fs';
+import { writeFileAtomic } from './atomic.js';
 import { TASKS_FILE } from './config.js';
 import { log } from './log.js';
 import { broadcast } from './broadcast.js';
@@ -32,7 +33,7 @@ export function load() {
 }
 
 function save() {
-  try { writeFileSync(TASKS_FILE, JSON.stringify(taskState)); }
+  try { writeFileAtomic(TASKS_FILE, JSON.stringify(taskState)); }
   catch (e) { console.warn('Could not save tasks:', e.message); }
 }
 

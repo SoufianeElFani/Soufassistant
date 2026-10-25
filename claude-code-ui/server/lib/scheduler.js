@@ -21,6 +21,7 @@
  * lands while the chat is busy simply tries again next tick; nothing queues.
  */
 import { randomUUID } from 'crypto';
+import { writeFileAtomic } from './atomic.js';
 import { existsSync, readFileSync, writeFileSync } from 'fs';
 import { query } from '@anthropic-ai/claude-agent-sdk';
 import {
@@ -52,7 +53,7 @@ export function load() {
 }
 
 function save() {
-  try { writeFileSync(SCHEDULED_FILE, JSON.stringify(scheduledState)); }
+  try { writeFileAtomic(SCHEDULED_FILE, JSON.stringify(scheduledState)); }
   catch (e) { console.warn('Could not save scheduled tasks:', e.message); }
 }
 

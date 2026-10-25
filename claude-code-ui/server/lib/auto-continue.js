@@ -11,6 +11,7 @@
  * resume fires with no browser open.
  */
 import { existsSync, readFileSync, writeFileSync } from 'fs';
+import { writeFileAtomic } from './atomic.js';
 import {
   AUTO_CONTINUE_FILE, AUTO_CONTINUE_BUFFER_MS, AUTO_CONTINUE_MAX_ATTEMPTS,
   AUTO_CONTINUE_PROMPT, LIMIT_OFFER_GRACE_MS,
@@ -48,7 +49,7 @@ export function load() {
 }
 
 export function save() {
-  try { writeFileSync(AUTO_CONTINUE_FILE, JSON.stringify(autoContinue)); }
+  try { writeFileAtomic(AUTO_CONTINUE_FILE, JSON.stringify(autoContinue)); }
   catch (e) { console.warn('Could not save auto-continue state:', e.message); }
 }
 

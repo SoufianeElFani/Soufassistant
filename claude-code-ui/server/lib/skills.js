@@ -22,6 +22,7 @@
  * Capabilities, after which it syncs back down here as an account skill.
  */
 import { existsSync, readdirSync, readFileSync, writeFileSync, mkdirSync, rmSync, statSync } from 'fs';
+import { writeFileAtomic } from './atomic.js';
 import path from 'path';
 import { USER_SKILLS_DIR, SKILLS_CONFIG_FILE, PLUGINS } from './config.js';
 import { runtime } from './state.js';
@@ -37,7 +38,7 @@ export function loadSkillsConfig() {
 }
 
 function saveConfig() {
-  try { writeFileSync(SKILLS_CONFIG_FILE, JSON.stringify({ disabled: [...state.disabled].sort() }, null, 2)); }
+  try { writeFileAtomic(SKILLS_CONFIG_FILE, JSON.stringify({ disabled: [...state.disabled].sort() }, null, 2)); }
   catch (e) { log('WARN', `skills config not saved: ${e.message}`); }
 }
 

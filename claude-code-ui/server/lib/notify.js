@@ -11,6 +11,7 @@
  * notification matters most when no browser is open.
  */
 import { existsSync, readFileSync, writeFileSync } from 'fs';
+import { writeFileAtomic } from './atomic.js';
 import { NOTIFY_FILE, SUPERVISOR_URL } from './config.js';
 import { log, vlog } from './log.js';
 import { connections } from './broadcast.js';
@@ -32,7 +33,7 @@ export function load() {
 }
 
 function save() {
-  try { writeFileSync(NOTIFY_FILE, JSON.stringify(notifySettings)); }
+  try { writeFileAtomic(NOTIFY_FILE, JSON.stringify(notifySettings)); }
   catch (e) { console.warn('Could not save notify settings:', e.message); }
 }
 

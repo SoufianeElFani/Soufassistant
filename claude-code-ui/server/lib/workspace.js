@@ -15,6 +15,7 @@
  * error and counts `*.conflict*` files. Nothing here runs the sync itself.
  */
 import { existsSync, mkdirSync, readdirSync, statSync, readFileSync, writeFileSync, realpathSync, openSync, readSync, closeSync, unlinkSync } from 'fs';
+import { writeFileAtomic } from './atomic.js';
 import path from 'path';
 import { WORKSPACE_DIR, WORKSPACE_CONFIG_FILE, WORKSPACE_SYNC_LOG } from './config.js';
 import { log } from './log.js';
@@ -36,7 +37,7 @@ export function loadWorkspaceConfig() {
 }
 
 function saveConfig() {
-  try { writeFileSync(WORKSPACE_CONFIG_FILE, JSON.stringify(cfg, null, 2)); }
+  try { writeFileAtomic(WORKSPACE_CONFIG_FILE, JSON.stringify(cfg, null, 2)); }
   catch (e) { log('WARN', `workspace config not saved: ${e.message}`); }
 }
 
