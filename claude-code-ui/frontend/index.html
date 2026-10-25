@@ -16,6 +16,12 @@
           </svg>
         </span>
         <span id="status-dot" class="status-dot"></span>
+        <div id="mode-switch" class="mode-switch" role="tablist" aria-label="Mode">
+          <button type="button" class="mode-btn" data-mode="chat" role="tab" title="Chat — a plain conversation, no files or house access">Chat</button>
+          <button type="button" class="mode-btn" data-mode="code" role="tab" title="Code — full access to Home Assistant and /config">Code</button>
+          <button type="button" class="mode-btn" data-mode="cowork" role="tab" title="Cowork — build, edit and test inside a workspace project">Cowork</button>
+        </div>
+        <select id="cowork-project" class="perm-mode-select cowork-project hidden" title="Cowork project"></select>
       </div>
       <div class="header-right">
         <select id="perm-mode" class="perm-mode-select" title="Permission mode">
@@ -64,6 +70,12 @@
             <path d="M16 3.13a4 4 0 0 1 0 7.75"/>
           </svg>
         </button>
+        <button id="skills-btn" class="icon-btn" title="Skills" aria-label="Skills">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 2l2.4 4.9 5.4.8-3.9 3.8.9 5.4L12 14.4l-4.8 2.5.9-5.4L4.2 7.7l5.4-.8L12 2z"/>
+            <path d="M5 21h14"/>
+          </svg>
+        </button>
         <button id="usage-btn" class="icon-btn" title="Usage" aria-label="Usage">
           <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <line x1="18" y1="20" x2="18" y2="10"/>
@@ -105,9 +117,57 @@
       <div id="tasks-list" class="sessions-list"></div>
     </div>
 
-    <div id="workspace-panel" class="sessions-panel hidden">
-      <div class="sessions-head">Workspace</div>
+    <div id="workspace-panel" class="sessions-panel workspace-panel hidden">
+      <div class="sessions-head sessions-head-row">
+        <span>Workspace</span>
+        <button id="workspace-folder-btn" type="button" class="scheduled-new-btn" title="Change the workspace folder">Folder…</button>
+      </div>
+      <div id="workspace-info" class="workspace-info"></div>
+      <form id="workspace-root-form" class="scheduled-form hidden">
+        <label class="scheduled-form-label">Workspace folder (absolute path inside /config, /data, /share or /media)
+          <input id="workspace-root-input" class="scheduled-form-input" type="text" placeholder="/config/Claude_Travail" autocomplete="off" spellcheck="false">
+        </label>
+        <p id="workspace-root-error" class="scheduled-form-error hidden"></p>
+        <div class="scheduled-form-actions">
+          <button id="workspace-root-default" type="button" class="btn btn-deny">Use default</button>
+          <button id="workspace-root-cancel" type="button" class="btn btn-deny">Cancel</button>
+          <button type="submit" class="btn btn-allow">Save</button>
+        </div>
+      </form>
+      <div class="workspace-projects-row">
+        <div id="workspace-projects" class="workspace-projects"></div>
+        <button id="workspace-new-project" type="button" class="scheduled-new-btn" title="New project folder">+ Project</button>
+      </div>
       <div id="workspace-list" class="sessions-list"></div>
+    </div>
+
+    <div id="skills-panel" class="sessions-panel skills-panel hidden">
+      <div class="sessions-head sessions-head-row">
+        <span>Skills</span>
+        <button id="skills-new-btn" type="button" class="scheduled-new-btn" title="New skill">+ New</button>
+      </div>
+      <div id="skills-info" class="workspace-info"></div>
+      <div id="skills-list" class="sessions-list"></div>
+      <form id="skill-form" class="scheduled-form hidden">
+        <label class="scheduled-form-label">Name (lowercase, digits, hyphens)
+          <input id="skill-name-input" class="scheduled-form-input" type="text" placeholder="weekly-energy-report" maxlength="64" autocomplete="off" spellcheck="false">
+        </label>
+        <label class="scheduled-form-label">Description — when should Claude use it?
+          <textarea id="skill-desc-input" class="scheduled-form-textarea" rows="2" maxlength="1024" placeholder="Use when the user asks for the weekly energy report of the house…"></textarea>
+        </label>
+        <label class="scheduled-form-label">Instructions (Markdown)
+          <textarea id="skill-body-input" class="scheduled-form-textarea skill-body-input" rows="8" placeholder="# Weekly energy report&#10;&#10;1. Read the P1 meter statistics…"></textarea>
+        </label>
+        <p id="skill-form-error" class="scheduled-form-error hidden"></p>
+        <div class="scheduled-form-actions">
+          <button id="skill-form-cancel" type="button" class="btn btn-deny">Cancel</button>
+          <button id="skill-form-save" type="submit" class="btn btn-allow">Save</button>
+        </div>
+      </form>
+      <div id="skill-view" class="skill-view hidden">
+        <div class="skill-view-head"><strong id="skill-view-title"></strong><button id="skill-view-close" type="button" class="find-nav" aria-label="Close">&#10005;</button></div>
+        <pre id="skill-view-body" class="skill-view-body"></pre>
+      </div>
     </div>
 
     <div id="scheduled-panel" class="sessions-panel hidden">
@@ -191,6 +251,11 @@
       <p class="settings-hint" id="auto-continue-hint">
         Resume automatically when the 5-hour usage limit resets.
       </p>
+      <div class="settings-row settings-row-toggle">
+        <label for="auto-open-artifacts">Open artifacts automatically</label>
+        <input type="checkbox" id="auto-open-artifacts" class="settings-toggle" checked>
+      </div>
+      <p class="settings-hint">Show files a reply creates in the viewer next to the chat.</p>
       <div class="settings-row">
         <label for="notify-service">Notify</label>
         <select id="notify-service" class="settings-select"><option value="">Off</option></select>
@@ -205,6 +270,10 @@
       </div>
       <div class="settings-row">
         <button type="button" id="notify-test" class="settings-btn">Send test</button>
+      </div>
+      <div class="settings-row">
+        <label>Skills</label>
+        <button type="button" id="settings-skills-btn" class="settings-btn">Manage skills…</button>
       </div>
       <p class="settings-hint" id="notify-hint">
         Sent through Home Assistant (e.g. the companion app) while no tab is open and visible.
@@ -243,6 +312,22 @@
       <button id="prompt-next" class="prompt-nav prompt-nav-down hidden" type="button"
               title="Next message of yours" aria-label="Next message of yours">&#8595;</button>
     </div>
+
+    <!-- Artifact viewer: a workspace file (HTML page, image, SVG, Markdown, PDF,
+         CSV, text) previewed next to the chat. HTML runs in a sandboxed iframe
+         with an opaque origin, so a page cannot reach the app or its socket. -->
+    <aside id="artifact-pane" class="artifact-pane hidden" aria-label="Artifact viewer">
+      <div class="artifact-head">
+        <span id="artifact-title" class="artifact-title"></span>
+        <div class="artifact-actions">
+          <button id="artifact-reload" type="button" class="find-nav" title="Reload" aria-label="Reload">&#8635;</button>
+          <a id="artifact-open" class="find-nav artifact-link" target="_blank" rel="noopener" title="Open in a new tab" aria-label="Open in a new tab">&#8599;</a>
+          <a id="artifact-download" class="find-nav artifact-link" download title="Download" aria-label="Download">&#8681;</a>
+          <button id="artifact-close" type="button" class="find-nav" title="Close" aria-label="Close">&#10005;</button>
+        </div>
+      </div>
+      <div id="artifact-body" class="artifact-body"></div>
+    </aside>
 
     <div id="permission-overlay" class="permission-overlay hidden">
       <div class="permission-card">
@@ -345,11 +430,21 @@
           spellcheck="false"
         ></textarea>
         <div class="composer-actions">
+          <div class="composer-left">
           <button type="button" id="attach-btn" class="attach-btn" title="Attach files or photos" aria-label="Attach">
             <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/>
             </svg>
           </button>
+          <!-- Phone-width stand-ins for the header's mode switch and project picker
+               (the header has no room for them there); kept in sync by modes.js. -->
+          <select id="composer-mode" class="perm-mode-select composer-mode" title="Mode" aria-label="Mode">
+            <option value="chat">Chat</option>
+            <option value="code">Code</option>
+            <option value="cowork">Cowork</option>
+          </select>
+          <select id="composer-project" class="perm-mode-select composer-project hidden" title="Cowork project" aria-label="Cowork project"></select>
+          </div>
           <button type="submit" id="send-btn" class="send-btn" disabled aria-label="Send">
             <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
               <line x1="12" y1="19" x2="12" y2="5"/>

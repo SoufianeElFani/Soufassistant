@@ -77,6 +77,11 @@ function describeOptions(options = {}) {
     toolConfig: options.toolConfig ?? null,
     plugins: (options.plugins || []).map((p) => p.path),
     settings: options.settings ?? null,
+    tools: options.tools ?? null,
+    settingSources: options.settingSources ?? null,
+    additionalDirectories: options.additionalDirectories ?? null,
+    systemPrompt: typeof options.systemPrompt === 'string' ? 'custom'
+      : (options.systemPrompt?.type === 'preset' ? `preset+${options.systemPrompt.append ? 'append' : 'none'}` : null),
   };
 }
 

@@ -89,6 +89,23 @@ export const TEAM_FILE = path.join(DATA_DIR, 'team.json');
  */
 export const WORKSPACE_DIR = path.join(DATA_DIR, 'workspace');
 
+/** The Workspace panel's choices (root folder, active Cowork project). */
+export const WORKSPACE_CONFIG_FILE = path.join(DATA_DIR, 'workspace-config.json');
+
+/** An rclone (bisync) log whose last success/error the Workspace panel shows,
+ *  when the file exists. Overridable per install in workspace-config.json. */
+export const WORKSPACE_SYNC_LOG = process.env.WORKSPACE_SYNC_LOG || path.join(DATA_DIR, 'tools', 'drive-sync.log');
+
+/** Which skills the Skills panel turned off. */
+export const SKILLS_CONFIG_FILE = path.join(DATA_DIR, 'skills-config.json');
+
+/** The mode (chat / code / cowork) and Cowork project each conversation last used. */
+export const SESSION_MODES_FILE = path.join(DATA_DIR, 'session-modes.json');
+
+/** Where skills live on disk: the user's own (and, under synced/, the ones
+ *  claude.ai syncs down for the signed-in account). */
+export const USER_SKILLS_DIR = path.join(HOME_DIR, '.claude', 'skills');
+
 /** How often the scheduler checks persisted entries against the clock. Kept
  *  well under a minute so a cron expression's minute field is never missed. */
 export const SCHEDULER_TICK_MS = parseInt(process.env.SCHEDULER_TICK_MS || '20000', 10);

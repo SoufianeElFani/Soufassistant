@@ -1,5 +1,5 @@
 name: "Soufassistant"
-version: "0.2.0"
+version: "0.3.0"
 slug: "soufassistant"
 # Prebuilt by CI (.github/workflows/build.yml) and public on GHCR, so Supervisor
 # pulls instead of building on the Green. CI publishes a version only when
@@ -7,7 +7,7 @@ slug: "soufassistant"
 # the "Build app image" run to go green before updating in Home Assistant
 # (an `image:` naming an unpublished version cannot be installed).
 image: "ghcr.io/soufianeelfani/{arch}-soufassistant"
-description: "Soufiane's personal AI assistant for Home Assistant — a Claude-powered chat with a task list, a reusable workspace, scheduled unattended prompts, a team / 1:1 tracker, and live HA control. Forked and extended from the open-source claude-code-ui project (see Credits in the README)."
+description: "Soufiane's personal AI assistant for Home Assistant — a Claude-powered assistant with Chat / Code / Cowork modes, artifacts, a configurable workspace, skills management, plan-usage meters, a task list, a reusable workspace, scheduled unattended prompts, a team / 1:1 tracker, and live HA control. Forked and extended from the open-source claude-code-ui project (see Credits in the README)."
 url: "https://github.com/SoufianeElFani/soufassistant"
 arch:
   - aarch64

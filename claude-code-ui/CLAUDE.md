@@ -53,7 +53,10 @@ loads the persisted state, and listens. Everything with behaviour lives in
 | `ha-auth.js` | the HA admin-token guard those routes sit behind |
 | `uploads.js`, `ha-links.js`, `mcp.js`, `exec.js`, `log.js` | attachments, entity link targets, MCP hygiene, shelling out, logging |
 | `tasks.js` | the task-list widget's state, fed by the `claude-tasks` CLI via `/internal/tasks` |
-| `workspace.js` | listing `/data/workspace` for the Workspace panel and `/api/workspace` |
+| `workspace.js` | the configurable workspace root, projects, listing and sync status |
+| `modes.js` | Chat / Code / Cowork: per-mode SDK options, the Cowork write fence, per-session modes |
+| `skills.js`, `zip.js` | the Skills panel: discovery, on/off, local CRUD, .zip export |
+| `plan-usage.js` | claude.ai plan limits for the Usage panel |
 | `scheduler.js` | persisted cron-like prompts, ticked and fired as their own unattended SDK calls |
 | `cron.js` | the pure 5-field cron matcher `scheduler.js` is built on |
 | `team.js` | the Team panel's state, fed by both the UI and the `team-notes` CLI via `/internal/team` |
@@ -702,19 +705,70 @@ replayed on connect in `ws-protocol.js`'s `greet()`. The frontend
 (`frontend/js/tasks.js`) is a header button that only appears once the list
 is non-empty, opening a panel built from the same CSS as Sessions.
 
-**Workspace (`server/lib/workspace.js`).** `/data/workspace` is a scratch
-folder separate from `/config` — the plugin skill tells Claude to write
-anything worth keeping there (a report, an export, a self-contained HTML
-"artifact") instead of littering the Home Assistant config directory. Served
-read-only (`express.static`) at `/workspace/<relPath>` and listed (a bounded
-recursive walk, dotfiles/dot-dirs skipped, capped at `MAX_ENTRIES`) at
-`/api/workspace`. `frontend/js/workspace.js` fetches that listing over plain
-HTTP — no need to route it through the WebSocket protocol — and links each
-entry straight at the static route, opened in a new tab, which is simplest
-and avoids needing an iframe sandbox. `run-query.js`'s `finally` block
-re-broadcasts the listing (`{type:'workspace', entries}`) after every turn,
-the same way it already refreshes `ha_links`, so the panel updates live
-without reopening it.
+**Workspace (`server/lib/workspace.js`, `frontend/js/workspace.js`).** A folder
+separate from `/config` for anything worth keeping — default `/data/workspace`,
+but the root is **chosen in the Workspace panel** ("Folder…", persisted in
+`/data/workspace-config.json`; `validateRoot()` only accepts folders inside
+/config, /data, /share or /media, never `.storage` or `/data/secrets`). Its
+top-level folders are **projects** (chips in the panel; "+ Project" creates
+one; double-click / the Cowork selector marks the active one). Served
+read-only at `/workspace/<relPath>` by a small middleware that rebuilds the
+`express.static` handler when the root changes; listed at `/api/workspace`
+(bounded walk, dot-entries and node_modules skipped, `MAX_ENTRIES` cap). The
+socket carries the rest: `workspace_state` ({root, defaultRoot, activeProject,
+projects, sync}) in the greeting and on change; `workspace_set_root`,
+`workspace_create_project`, `workspace_set_active` from the panel. **Sync
+status:** when `WORKSPACE_SYNC_LOG` (default `/data/tools/drive-sync.log`, an
+rclone bisync log) exists, `parseSyncLog()` reports the last
+`Bisync successful` line and any later ERROR, plus a count of `*.conflict*`
+files. rclone logs nothing at NOTICE on success, so the sync script writes
+that marker line itself. The app never runs the sync.
+`run-query.js` re-broadcasts the listing after every turn, and the system
+prompt names the current root (modes.js `workspacePrompt()`), so Claude writes
+where the user is looking.
+
+**Artifact viewer (`frontend/js/artifacts.js`).** A pane beside the chat (full
+screen under 1000px) previewing a workspace file: HTML in an iframe with
+`sandbox="allow-scripts allow-forms allow-modals allow-popups allow-downloads"`
+and **no `allow-same-origin`** (opaque origin: the page cannot touch the app,
+its cookies or its socket — verified in Chromium); Markdown rendered by marked
+into a script-less sandboxed `srcdoc`; images/SVG via `<img>`; PDF via the
+browser viewer; CSV/TSV as a table; text as `<pre>`. After each reply, files
+whose mtime is newer than the prompt (`S.runStartedAt`, set in composer.js)
+get an "Artifacts" card in the transcript and the newest previewable one opens
+(Settings → "Open artifacts automatically").
+
+**Modes: Chat / Code / Cowork (`server/lib/modes.js`, `frontend/js/modes.js`).**
+A switch in the header (a select in the composer under 700px) sent with every
+prompt as `mode` (+ `project` for Cowork). `modeOptions()` returns the SDK
+overrides: **code** — unchanged agent, plus the workspace note appended to the
+`claude_code` preset; **chat** — `tools: ['WebSearch','WebFetch']`,
+`plugins: []`, `settingSources: []` and a plain-string system prompt
+(no files, shell, HA or CLAUDE.md); **cowork** — `additionalDirectories:
+[project]`, a preset append telling Claude to build/test inside the project,
+and `coworkWriteGuard()` as a PreToolUse hook that denies Write/Edit/
+MultiEdit/NotebookEdit outside the project (or /tmp) **in every permission
+mode**. Bash is not fenced (documented to the user). The cwd stays `WORK_DIR` in
+all modes on purpose — the transcript store is keyed on cwd, so switching modes
+must not split the Sessions list. Each session's last mode/project is kept in
+`/data/session-modes.json` and pushed as `session_modes`; opening a session
+restores its mode. A Cowork prompt with no valid project is refused before
+anything is aborted. A chat turn does not overwrite the cached slash commands.
+
+**Skills panel (`server/lib/skills.js`, `server/lib/zip.js`, `frontend/js/skills.js`).**
+Discovers SKILL.md files from three sources: **account** (`~/.claude/skills/
+synced/<bucket>/` — claude.ai-enabled skills the CLI syncs down; last sync from
+the bucket's `manifest.json`), **plugin** (the loaded plugins' `skills/`), and
+**local** (`~/.claude/skills/<name>/`, editable). Switching one off is applied
+per run as inline `settings.skillOverrides: {name: 'off'}` — keyed by the bare
+name *and* the invocation name the CLI reported in the init slash commands
+(e.g. `anthropic-skills:pptx`); unmatched keys are ignored, so a wrong guess
+can never hide a different skill. The SDK's `skills` allow-list option was
+deliberately not used: a wrong name there would hide skills. Local skills are
+created/edited/deleted from the panel (`skill_save` / `skill_delete`);
+`/api/skills/export?id=` zips any skill (STORE method, no dependency) for
+upload at claude.ai → Settings → Capabilities — there is no public API to push
+a skill to an account; once uploaded it syncs back down as an account skill.
 
 **Scheduled tasks (`server/lib/scheduler.js`, `server/lib/cron.js`).** A
 persisted list (`/data/scheduled-tasks.json`) of `{name, cron, prompt,

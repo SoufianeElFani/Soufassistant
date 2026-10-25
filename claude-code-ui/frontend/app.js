@@ -32,7 +32,10 @@
  *   workspace.js    the /data/workspace files panel
  *   scheduled.js    the scheduled-prompts panel
  *   team.js         the team / 1:1 tracker panel
- *   usage-panel.js  the live session-usage panel
+ *   usage-panel.js  the usage panel: plan limits + this conversation
+ *   modes.js        the Chat / Code / Cowork switch
+ *   artifacts.js    the artifact viewer next to the chat
+ *   skills.js       the skills panel
  */
 import { promptInput } from './js/dom.js';
 import { connect } from './js/connection.js';
@@ -56,6 +59,9 @@ import './js/workspace.js';
 import './js/scheduled.js';
 import './js/team.js';
 import './js/usage-panel.js';
+import './js/modes.js';
+import './js/artifacts.js';
+import './js/skills.js';
 
 // Before anything renders: everything below is laid out inside the frame this
 // sizes, and getting it wrong puts the composer below the fold on a phone.

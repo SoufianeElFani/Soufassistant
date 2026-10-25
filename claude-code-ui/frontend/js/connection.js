@@ -16,7 +16,9 @@ import { setAutoContinueSupported } from './settings.js';
 import { hideThinking, showThinking } from './thinking.js';
 import { appendAgentReport, appendAssistantText, appendCompactedDivider, appendErrorBubble, appendInfoLine, appendResultLine, appendTaskNotice, appendToolResult, appendToolUse, appendUserBubble, endToolGroup, renderHistory } from './transcript.js';
 import { renderTasks, updateTasksVisibility } from './tasks.js';
-import { applyWorkspaceEntries } from './workspace.js';
+import { applyWorkspaceEntries, applyWorkspaceState, applyWorkspaceResult } from './workspace.js';
+import { applySessionMode, applySessionModes } from './modes.js';
+import { applySkills, applySkillDetail, applySkillResult } from './skills.js';
 import { renderScheduled, showScheduledError } from './scheduled.js';
 import { renderTeam } from './team.js';
 import { renderUsage } from './usage-panel.js';
@@ -141,10 +143,38 @@ export function handleServerMessage(msg) {
       }
       break;
 
-    case 'sessions':
+    case 'sessions': {
+      const prevActive = S.activeSessionId;
       S.sessions = Array.isArray(msg.sessions) ? msg.sessions : [];
       S.activeSessionId = msg.activeId || null;
+      // Opening another conversation restores the mode it was last used in.
+      if (S.activeSessionId && S.activeSessionId !== prevActive) applySessionMode(S.activeSessionId);
       if (!sessionsPanel.classList.contains('hidden')) renderSessions();
+      break;
+    }
+
+    case 'session_modes':
+      applySessionModes(msg.modes);
+      break;
+
+    case 'workspace_state':
+      applyWorkspaceState(msg.state);
+      break;
+
+    case 'workspace_result':
+      applyWorkspaceResult(msg);
+      break;
+
+    case 'skills':
+      applySkills(msg);
+      break;
+
+    case 'skill_detail':
+      applySkillDetail(msg);
+      break;
+
+    case 'skill_result':
+      applySkillResult(msg);
       break;
 
     case 'history':

@@ -37,7 +37,14 @@ Typical shape: `set` the whole plan once you know the steps, `update` each
 one as you finish it, `clear` at the end. Don't bother for a one- or two-step
 request — the list itself would be more overhead than the work.
 
-## Workspace (`/data/workspace`)
+## Workspace (`/data/workspace` by default)
+
+The user can point the workspace at another folder from the Workspace panel
+(e.g. one synced with their cloud drive); **the system prompt names the current
+workspace folder — use that path**, and the `/data/workspace` examples below
+then mean that folder. Its top-level folders are projects; in Cowork mode you
+work inside one of them. Files written there open in the artifact viewer next
+to the chat (HTML, Markdown, images/SVG, PDF, CSV, text).
 
 A folder outside `/config` (the live Home Assistant configuration) for
 anything the user will want to **download, reopen, or revisit** — a

@@ -124,3 +124,47 @@ export const attachPreview = document.getElementById('attach-preview');
 
 export const loginTitle = document.getElementById('login-title');
 export const loginDesc  = document.getElementById('login-desc');
+
+// ── Modes (Chat / Code / Cowork) ──
+export const modeSwitch        = document.getElementById('mode-switch');
+export const coworkProjectSel  = document.getElementById('cowork-project');
+
+// ── Workspace panel (beyond the list above) ──
+export const workspaceInfoEl      = document.getElementById('workspace-info');
+export const workspaceFolderBtn   = document.getElementById('workspace-folder-btn');
+export const workspaceRootForm    = document.getElementById('workspace-root-form');
+export const workspaceRootInput   = document.getElementById('workspace-root-input');
+export const workspaceRootError   = document.getElementById('workspace-root-error');
+export const workspaceRootDefault = document.getElementById('workspace-root-default');
+export const workspaceRootCancel  = document.getElementById('workspace-root-cancel');
+export const workspaceProjectsEl  = document.getElementById('workspace-projects');
+export const workspaceNewProject  = document.getElementById('workspace-new-project');
+
+// ── Skills panel ──
+export const skillsBtn        = document.getElementById('skills-btn');
+export const skillsPanel      = document.getElementById('skills-panel');
+export const skillsInfoEl     = document.getElementById('skills-info');
+export const skillsListEl     = document.getElementById('skills-list');
+export const skillsNewBtn     = document.getElementById('skills-new-btn');
+export const skillForm        = document.getElementById('skill-form');
+export const skillNameInput   = document.getElementById('skill-name-input');
+export const skillDescInput   = document.getElementById('skill-desc-input');
+export const skillBodyInput   = document.getElementById('skill-body-input');
+export const skillFormError   = document.getElementById('skill-form-error');
+export const skillFormCancel  = document.getElementById('skill-form-cancel');
+export const skillView        = document.getElementById('skill-view');
+export const skillViewTitle   = document.getElementById('skill-view-title');
+export const skillViewBody    = document.getElementById('skill-view-body');
+export const skillViewClose   = document.getElementById('skill-view-close');
+
+// ── Artifact viewer ──
+export const artifactPane     = document.getElementById('artifact-pane');
+export const artifactTitle    = document.getElementById('artifact-title');
+export const artifactBody     = document.getElementById('artifact-body');
+export const artifactOpen     = document.getElementById('artifact-open');
+export const artifactDownload = document.getElementById('artifact-download');
+export const artifactReload   = document.getElementById('artifact-reload');
+export const artifactClose    = document.getElementById('artifact-close');
+export const composerModeSel    = document.getElementById('composer-mode');
+export const composerProjectSel = document.getElementById('composer-project');
+export const settingsSkillsBtn  = document.getElementById('settings-skills-btn');

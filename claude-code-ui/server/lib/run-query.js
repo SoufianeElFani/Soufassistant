@@ -36,6 +36,9 @@ import { makeInputChannel } from './input-channel.js';
 import { notify } from './notify.js';
 import * as autoContinue from './auto-continue.js';
 import { refreshPlanUsage } from './plan-usage.js';
+import { modeOptions, normalizeMode, coworkWriteGuard, rememberSessionMode, sessionModeMap } from './modes.js';
+import { workspaceRoot, activeProject, projectDir } from './workspace.js';
+import { disabledOverrides } from './skills.js';
 
 // STALL_WARN_MS / STALL_CHECK_MS (config.js): how long the SDK may go quiet
 // before the log says so, and how often it checks — only while a turn is
@@ -56,7 +59,7 @@ export function abortActive() {
   }
 }
 
-export async function runQuery(ws, { text, permissionMode, model, effort, autoAttempts = 0 }) {
+export async function runQuery(ws, { text, permissionMode, model, effort, mode, project, autoAttempts = 0 }) {
   // The previous turn already reported its `result`, but a background task it
   // spawned (a subagent, a backgrounded shell command) is still running. Push
   // the new message into that SAME still-open run instead of aborting it below
@@ -75,6 +78,18 @@ export async function runQuery(ws, { text, permissionMode, model, effort, autoAt
     // makeCanUseTool reading runtime.activePermMode at call time; a run that
     // started in 'auto' can't be live-switched regardless of this path.
     if (permissionMode) runtime.activePermMode = permissionMode;
+    return;
+  }
+
+  // Chat / Code / Cowork (modes.js). Resolved before anything is torn down, so
+  // a Cowork prompt with no project is refused without killing a running turn.
+  const runMode = normalizeMode(mode);
+  const runProject = runMode === 'cowork' ? (project || activeProject()) : null;
+  const mo = modeOptions(runMode, {
+    root: workspaceRoot(), project: runProject, projectDir: runProject ? projectDir(runProject) : null,
+  });
+  if (mo.error) {
+    send(ws, { type: 'error', message: mo.error });
     return;
   }
 
@@ -119,6 +134,18 @@ export async function runQuery(ws, { text, permissionMode, model, effort, autoAt
 
   const hooks = hooksFor(runtime.activePermMode);
   if (hooks) opts.hooks = hooks;
+
+  // Mode overrides (tools, plugins, setting sources, extra dirs) and the
+  // system-prompt addendum telling Claude where the workspace is.
+  Object.assign(opts, mo.opts);
+  opts.systemPrompt = mo.systemPrompt ?? { type: 'preset', preset: 'claude_code', append: mo.append };
+  if (mo.coworkDir) {
+    const pre = [...(opts.hooks?.PreToolUse || []), { hooks: [coworkWriteGuard(mo.coworkDir, WORK_DIR)] }];
+    opts.hooks = { ...(opts.hooks || {}), PreToolUse: pre };
+  }
+  // Skills switched off in the Skills panel (a listing filter; see skills.js).
+  const skillOff = runMode === 'chat' ? null : disabledOverrides();
+  if (skillOff) opts.settings = { ...opts.settings, skillOverrides: skillOff };
 
   if (runtime.activePermMode === 'auto') {
     // A model classifier approves or denies each tool — no prompts, no canUseTool.
@@ -186,7 +213,7 @@ export async function runQuery(ws, { text, permissionMode, model, effort, autoAt
     } catch (e) { vlog(`supportedModels failed: ${e?.message || e}`); }
   };
 
-  log('INFO', `query start: mode=${runtime.activePermMode} effort=${opts.effort || 'default'} ` +
+  log('INFO', `query start: ${runMode}${runProject ? `(${runProject})` : ''} perm=${runtime.activePermMode} effort=${opts.effort || 'default'} ` +
     `model=${model || 'default'} resume=${resuming} promptLen=${text.length}`);
 
   // Streamed input — see the file header. Kept open until every background
@@ -281,12 +308,16 @@ export async function runQuery(ws, { text, permissionMode, model, effort, autoAt
       if (event.type === 'system' && event.subtype === 'init') {
         runtime.activeSessionId = event.session_id;
         saveActive();
+        if (rememberSessionMode(event.session_id, runMode, runProject)) {
+          broadcast({ type: 'session_modes', modes: sessionModeMap() });
+        }
         broadcast({ type: 'session', id: event.session_id });
         if (event.model) broadcast({ type: 'model', model: event.model });
         // Terminal-only commands (/exit, /statusline …) are dropped here rather
         // than in the browser, so there is one place that knows this is a
         // remote UI — see slash-commands.js.
-        const commands = usableSlashCommands(event);
+        // A chat turn loads no plugins, so its list is not the app's real one.
+        const commands = runMode === 'chat' ? null : usableSlashCommands(event);
         if (commands) {
           runtime.cachedSlashCommands = commands;
           broadcast({ type: 'slash_commands', commands });

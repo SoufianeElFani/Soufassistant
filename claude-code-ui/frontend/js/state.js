@@ -25,6 +25,18 @@ export const S = {
   /** Plan limits (5-hour / weekly / extra usage) from the server's 'plan_usage' message. */
   planUsage: null,
 
+  /** Chat / Code / Cowork, and the Cowork project (modes.js). */
+  mode: 'code',
+  coworkProject: null,
+  /** sessionId → { mode, project }: what each conversation last used. */
+  sessionModes: {},
+
+  /** The Workspace panel's state: { root, defaultRoot, activeProject, projects, sync }. */
+  workspaceState: null,
+
+  /** When the current turn was sent — artifacts newer than this are "from this reply". */
+  runStartedAt: 0,
+
   /** Multi-session state, sourced from Claude Code's on-disk store via the server. */
   sessions: [],
   activeSessionId: null,

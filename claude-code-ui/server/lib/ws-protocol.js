@@ -23,6 +23,9 @@ import { taskState } from './tasks.js';
 import * as scheduler from './scheduler.js';
 import * as team from './team.js';
 import { planUsage, refreshPlanUsage } from './plan-usage.js';
+import * as workspace from './workspace.js';
+import * as skills from './skills.js';
+import { sessionModeMap } from './modes.js';
 
 /** Everything a newly connected (or reconnected) tab needs to render the app. */
 function greet(ws) {
@@ -64,6 +67,10 @@ function greet(ws) {
   send(ws, { type: 'scheduled_tasks', tasks: scheduler.list() });
   send(ws, { type: 'team_members', members: team.list() });
 
+  // Workspace (root, projects, sync status) and each conversation's last mode.
+  send(ws, { type: 'workspace_state', state: workspace.workspaceState() });
+  send(ws, { type: 'session_modes', modes: sessionModeMap() });
+
   // Plan limits (5-hour / weekly / extra usage): the last snapshot right away,
   // then a refresh (rate-limited inside plan-usage.js) that broadcasts if newer.
   if (planUsage.snapshot) send(ws, { type: 'plan_usage', usage: planUsage.snapshot });
@@ -103,7 +110,59 @@ function broadcastSessions() {
 }
 
 /** Everything the browser may send. One entry per message type. */
+function broadcastWorkspace() {
+  broadcast({ type: 'workspace_state', state: workspace.workspaceState() });
+  broadcast({ type: 'workspace', entries: workspace.listWorkspaceEntries() });
+}
+
+function sendSkills(ws) {
+  send(ws, { type: 'skills', ...skills.listSkills() });
+}
+
 const handlers = {
+  // ── Workspace panel ──
+  workspace_state(ws) {
+    send(ws, { type: 'workspace_state', state: workspace.workspaceState() });
+  },
+  workspace_set_root(ws, msg) {
+    const r = workspace.setRoot(msg.path);
+    send(ws, { type: 'workspace_result', action: 'set_root', ...r });
+    if (r.ok) broadcastWorkspace();
+  },
+  workspace_create_project(ws, msg) {
+    const r = workspace.createProject(msg.name);
+    if (r.ok && msg.activate) workspace.setActiveProject(r.name);
+    send(ws, { type: 'workspace_result', action: 'create_project', ...r });
+    if (r.ok) broadcastWorkspace();
+  },
+  workspace_set_active(ws, msg) {
+    const r = workspace.setActiveProject(msg.name);
+    send(ws, { type: 'workspace_result', action: 'set_active', ...r });
+    if (r.ok) broadcast({ type: 'workspace_state', state: workspace.workspaceState() });
+  },
+
+  // ── Skills panel ──
+  skills_list(ws) { sendSkills(ws); },
+  skill_toggle(ws, msg) {
+    if (typeof msg.id !== 'string') return;
+    skills.setSkillEnabled(msg.id, !!msg.enabled);
+    broadcast({ type: 'skills', ...skills.listSkills() });
+  },
+  skill_get(ws, msg) {
+    const s = typeof msg.id === 'string' ? skills.readSkill(msg.id) : null;
+    send(ws, { type: 'skill_detail', skill: s });
+  },
+  skill_save(ws, msg) {
+    const r = skills.saveLocalSkill({ id: msg.id || null, name: msg.name, description: msg.description, body: msg.body });
+    send(ws, { type: 'skill_result', action: 'save', ...r });
+    if (r.ok) broadcast({ type: 'skills', ...skills.listSkills() });
+  },
+  skill_delete(ws, msg) {
+    const r = skills.deleteLocalSkill(msg.id);
+    send(ws, { type: 'skill_result', action: 'delete', ...r });
+    if (r.ok) broadcast({ type: 'skills', ...skills.listSkills() });
+  },
+
   /** The Usage panel was opened — refresh plan limits (rate-limited; replies via broadcast). */
   plan_usage_refresh(ws) {
     refreshPlanUsage().then((snap) => { if (snap) send(ws, { type: 'plan_usage', usage: snap }); });

@@ -2,6 +2,7 @@
  * The message box: sending, stopping, the send button's two states, and the
  * keyboard shortcuts.
  */
+import { currentModeFields } from './modes.js';
 import { S } from './state.js';
 import { attachments, clearAttachments, fileToDataURL } from './attachments.js';
 import { SEND_ICON, STOP_ICON, UI_COMMANDS, clearScreen, hideCmdMenu, showHelp, showUsage } from './commands.js';
@@ -74,6 +75,7 @@ inputForm.onsubmit = async (e) => {
   S.usage.messages++;
   updateSendBtn();
   showThinking();
+  S.runStartedAt = Date.now();
 
   // Only send a model override if the user explicitly picked one; otherwise let
   // the SDK use its default (which it reports back via the 'model' event).
@@ -84,6 +86,7 @@ inputForm.onsubmit = async (e) => {
     permissionMode: permModeSelect.value,
     model: localStorage.getItem('model') || undefined,
     effort: localStorage.getItem('effort') || undefined,
+    ...currentModeFields(),
   }));
 };
 
