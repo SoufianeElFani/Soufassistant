@@ -12,6 +12,7 @@
  * conversation run with checkpointing are tracked; Bash changes are not.
  */
 import { query, forkSession } from '@anthropic-ai/claude-agent-sdk';
+import { writeFileAtomic } from './atomic.js';
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs';
 import path from 'path';
 import { SESSION_META_FILE, WORK_DIR } from './config.js';
@@ -30,7 +31,7 @@ export function loadSessionMeta() {
   } catch { meta = { titles: {}, pinned: [] }; }
 }
 function saveMeta() {
-  try { writeFileSync(SESSION_META_FILE, JSON.stringify(meta, null, 2)); }
+  try { writeFileAtomic(SESSION_META_FILE, JSON.stringify(meta, null, 2)); }
   catch (e) { log('WARN', `session meta not saved: ${e.message}`); }
 }
 

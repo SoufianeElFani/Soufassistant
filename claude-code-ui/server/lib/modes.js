@@ -21,6 +21,7 @@
  * SESSION_MODES_FILE so reopening it restores the selector.
  */
 import { readFileSync, writeFileSync } from 'fs';
+import { writeFileAtomic } from './atomic.js';
 import path from 'path';
 import { SESSION_MODES_FILE, EDIT_TOOLS } from './config.js';
 import { log } from './log.js';
@@ -147,7 +148,7 @@ export function rememberSessionMode(sessionId, mode, project) {
   const next = { mode: normalizeMode(mode), project: mode === 'cowork' ? (project || null) : (prev?.project || null) };
   if (prev && prev.mode === next.mode && prev.project === next.project) return false;
   sessionModes[sessionId] = next;
-  try { writeFileSync(SESSION_MODES_FILE, JSON.stringify(sessionModes)); }
+  try { writeFileAtomic(SESSION_MODES_FILE, JSON.stringify(sessionModes)); }
   catch (e) { log('WARN', `session modes not saved: ${e.message}`); }
   return true;
 }

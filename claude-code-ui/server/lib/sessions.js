@@ -7,6 +7,7 @@
  * only thing this app keeps of its own is a pointer to the active session.
  */
 import { existsSync, readFileSync, writeFileSync, readdirSync, statSync, unlinkSync } from 'fs';
+import { writeFileAtomic } from './atomic.js';
 import path from 'path';
 import { STORE_DIR, ACTIVE_FILE } from './config.js';
 import { runtime } from './state.js';
@@ -29,7 +30,7 @@ export function loadActive() {
 }
 
 export function saveActive() {
-  try { writeFileSync(ACTIVE_FILE, JSON.stringify({ sessionId: runtime.activeSessionId })); }
+  try { writeFileAtomic(ACTIVE_FILE, JSON.stringify({ sessionId: runtime.activeSessionId })); }
   catch (e) { console.warn('Could not save active session:', e.message); }
 }
 

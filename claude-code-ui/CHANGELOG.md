@@ -1,3 +1,6 @@
+## Unreleased
+- **Sturdier saved settings.** The app's small state files (auto-continue, sessions, pins and titles, workspace, skills, schedules, tasks, team, notifications) are now written atomically, so a crash or a reader at the wrong moment can never leave one empty or half-written.
+
 ## 0.4.0
 - **See and undo what Claude changed.** A new **Changes** view (Sessions → "Changes…", or ⋯ → Changes on any conversation) lists each message you sent and the files Claude changed while answering it, with a before/after of every edit. **"Restore files to before this message"** shows what would change, then puts those files back as they were — handy after a Code-mode edit of your Home Assistant config that went wrong. It covers changes made through Claude's file tools from this version on (not changes made by shell commands, nor older conversations).
 - **Live previews of what Cowork builds.** When Claude builds something that needs a server (a small web app with an API, a dashboard with live data), it starts it on a port between 8100 and 8199 and it shows up under **Live previews** in the Workspace panel: click to use it right in the viewer, **Stop** to shut it down. It stays isolated from the app like any other artifact.

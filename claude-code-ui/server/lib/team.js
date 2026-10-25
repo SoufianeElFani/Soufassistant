@@ -14,6 +14,7 @@
  * there is one source of truth and one broadcast.
  */
 import { randomUUID } from 'crypto';
+import { writeFileAtomic } from './atomic.js';
 import { existsSync, readFileSync, writeFileSync } from 'fs';
 import { TEAM_FILE } from './config.js';
 import { log } from './log.js';
@@ -32,7 +33,7 @@ export function load() {
 }
 
 function save() {
-  try { writeFileSync(TEAM_FILE, JSON.stringify(teamState)); }
+  try { writeFileAtomic(TEAM_FILE, JSON.stringify(teamState)); }
   catch (e) { console.warn('Could not save team members:', e.message); }
 }
 
