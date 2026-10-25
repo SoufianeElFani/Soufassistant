@@ -127,7 +127,8 @@ jobs:
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           VERSION=$(grep '^version:' claude-code-ui/config.yaml | head -1 | cut -d'"' -f2)
-          IMAGE="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}"
+          # Probe the aarch64 image — the one a Home Assistant Green actually pulls.
+          IMAGE="${{ env.REGISTRY }}/aarch64-${{ env.IMAGE_NAME }}"
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
           echo "App version: ${VERSION}"
 
@@ -193,22 +194,6 @@ jobs:
           cosign: "false"
           container-registry-password: ${{ secrets.GITHUB_TOKEN }}
 
-  manifest:
-    name: Publish multi-arch manifest
-    needs: [version, init, build]
-    if: needs.version.outputs.publish == 'true'
-    runs-on: ubuntu-latest
-    permissions:
-      packages: write
-    steps:
-      - name: Publish manifest
-        uses: home-assistant/builder/actions/publish-multi-arch-manifest@2026.06.0
-        with:
-          architectures: ${{ env.ARCHITECTURES }}
-          image-name: ${{ env.IMAGE_NAME }}
-          registry-prefix: ${{ env.REGISTRY }}
-          image-tags: |
-            ${{ needs.version.outputs.version }}
-            latest
-          cosign: "false"
-          container-registry-password: ${{ secrets.GITHUB_TOKEN }}
+# No multi-arch manifest job: Home Assistant pulls the per-arch image named by
+# config.yaml's `image: ghcr.io/soufianeelfani/{arch}-soufassistant`, never a
+# combined tag. (GHCR also refused the combined package with a 403.)
