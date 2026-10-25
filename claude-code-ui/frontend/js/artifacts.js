@@ -21,8 +21,9 @@
 import { S } from './state.js';
 import {
   wsBase, messagesEl, artifactPane, artifactTitle, artifactBody, artifactOpen,
-  artifactDownload, artifactReload, artifactClose,
+  artifactDownload, artifactReload, artifactClose, artifactEdit, artifactSave, artifactCancel, artifactDelete,
 } from './dom.js';
+import { confirmAction } from './confirm.js';
 
 const IMAGE = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp', 'ico']);
 const TEXT = new Set(['txt', 'json', 'yaml', 'yml', 'log', 'js', 'mjs', 'cjs', 'ts', 'py', 'sh', 'css',
@@ -67,7 +68,28 @@ export function parseDelimited(text, delim = ',') {
   return rows;
 }
 
-let current = null;   // { path, ext }
+let current = null;   // { path, ext } for a workspace file, or { preview: port }
+let editing = null;   // { text, mtime } while the editor is open
+
+/** Text formats the editor may change (mirrors server EDITABLE_EXT). */
+const EDITABLE = new Set(['txt', 'md', 'markdown', 'html', 'htm', 'css', 'js', 'mjs', 'cjs', 'ts', 'tsx', 'jsx',
+  'json', 'yaml', 'yml', 'csv', 'tsv', 'svg', 'xml', 'py', 'sh', 'ini', 'conf', 'toml', 'sql', 'log', 'env', 'vue']);
+export function isEditableExt(ext) { return EDITABLE.has(String(ext || '').toLowerCase()); }
+
+function send(msg) {
+  if (S.ws && S.isConnected) S.ws.send(JSON.stringify(msg));
+}
+
+function setToolbar() {
+  const file = !!current?.path;
+  const canEdit = file && isEditableExt(current.ext);
+  artifactEdit.classList.toggle('hidden', !canEdit || !!editing);
+  artifactSave.classList.toggle('hidden', !editing);
+  artifactCancel.classList.toggle('hidden', !editing);
+  artifactDelete.classList.toggle('hidden', !file || !!editing);
+  artifactDownload.classList.toggle('hidden', !file);
+  artifactReload.classList.toggle('hidden', !!editing);
+}
 
 function sandboxFrame(attrs) {
   const f = document.createElement('iframe');
@@ -76,10 +98,11 @@ function sandboxFrame(attrs) {
   return f;
 }
 
-async function fetchText(url) {
+async function fetchText(url, { raw = false } = {}) {
   const res = await fetch(url, { cache: 'no-store' });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   const text = await res.text();
+  if (raw) return text;
   return text.length > MAX_TEXT ? `${text.slice(0, MAX_TEXT)}\n\n… (truncated)` : text;
 }
 
@@ -92,6 +115,18 @@ function note(text) {
 
 async function render() {
   if (!current) return;
+  setToolbar();
+  if (current.preview) {
+    const url = `${wsBase}/preview/${current.preview}/`;
+    artifactTitle.textContent = `Live preview · port ${current.preview}`;
+    artifactTitle.title = url;
+    artifactOpen.href = url;
+    artifactBody.innerHTML = '';
+    artifactBody.appendChild(sandboxFrame({
+      src: url, sandbox: 'allow-scripts allow-forms allow-modals allow-popups allow-downloads', title: 'Live preview',
+    }));
+    return;
+  }
   const { path, ext } = current;
   const url = fileUrl(path);
   const bust = `${url}?t=${Date.now()}`;
@@ -153,24 +188,124 @@ async function render() {
   }
 }
 
-export function openArtifact(path, ext) {
+export function openArtifact(path, ext, { edit = false } = {}) {
+  if (editing && !confirmLeaveEdit()) return;
+  editing = null;
   current = { path, ext: ext || path.split('.').pop() };
+  artifactPane.classList.remove('hidden');
+  document.body.classList.add('artifact-open');
+  render().then(() => { if (edit) startEdit(); });
+}
+
+/** A web app running in a Cowork project, through /preview/<port>/ (previews.js). */
+export function openPreview(port) {
+  if (editing && !confirmLeaveEdit()) return;
+  editing = null;
+  current = { preview: port };
   artifactPane.classList.remove('hidden');
   document.body.classList.add('artifact-open');
   render();
 }
 
+function confirmLeaveEdit() {
+  return !editing || editing.text === editorEl()?.value || window.confirm('Discard your unsaved changes?');
+}
+
 export function closeArtifact() {
+  if (editing && !confirmLeaveEdit()) return;
+  editing = null;
   current = null;
   artifactPane.classList.add('hidden');
   document.body.classList.remove('artifact-open');
   artifactBody.innerHTML = '';
 }
 
+// ── Editor ───────────────────────────────────────────────────────────────────
+function editorEl() { return artifactBody.querySelector('textarea.artifact-editor'); }
+
+async function startEdit() {
+  if (!current?.path || !isEditableExt(current.ext)) return;
+  let text;
+  try { text = await fetchText(`${fileUrl(current.path)}?t=${Date.now()}`, { raw: true }); }
+  catch (e) { alert(`Could not open ${current.path}: ${e.message}`); return; }
+  editing = { text, mtime: null };
+  send({ type: 'workspace_stat', reqId: 'edit', path: current.path });
+  artifactBody.innerHTML = '';
+  const ta = document.createElement('textarea');
+  ta.className = 'artifact-editor';
+  ta.spellcheck = false;
+  ta.value = text;
+  ta.addEventListener('keydown', (e) => {
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') { e.preventDefault(); save(); }
+    else if (e.key === 'Tab' && !e.shiftKey) {
+      e.preventDefault();
+      const a = ta.selectionStart, b = ta.selectionEnd;
+      ta.setRangeText('  ', a, b, 'end');
+    }
+    e.stopPropagation();
+  });
+  artifactBody.appendChild(ta);
+  setToolbar();
+  ta.focus();
+}
+
+function save(force = false) {
+  const ta = editorEl();
+  if (!editing || !ta) return;
+  artifactSave.disabled = true;
+  send({ type: 'workspace_write', reqId: 'edit', path: current.path, content: ta.value, mtime: editing.mtime, force });
+}
+
+export function applyWorkspaceStat(msg) {
+  if (msg.reqId === 'edit' && editing && current?.path === msg.path) editing.mtime = msg.stat?.mtime || null;
+}
+
+export async function applyWriteResult(msg) {
+  artifactSave.disabled = false;
+  if (msg.reqId === 'newfile') {
+    if (msg.ok) openArtifact(msg.path, msg.path.split('.').pop(), { edit: true });
+    else alert(msg.error || 'Could not create the file.');
+    return;
+  }
+  if (msg.reqId !== 'edit' || !editing) return;
+  if (msg.ok) {
+    editing = null;
+    render();
+  } else if (msg.conflict) {
+    const ok = await confirmAction({
+      title: 'The file changed meanwhile',
+      body: 'Claude or the Drive sync changed this file since you opened it. Overwrite it with your version?',
+      confirm: 'Overwrite', cancel: 'Keep editing',
+    });
+    if (ok) save(true);
+  } else {
+    alert(msg.error || 'Could not save.');
+  }
+}
+
+export function applyDeleteResult(msg) {
+  if (!msg.ok) { alert(msg.error || 'Could not delete.'); return; }
+  if (current?.path === msg.path) { editing = null; closeArtifact(); }
+}
+
+/** "+ File" in the Workspace panel. */
+export function createFile(rel) {
+  send({ type: 'workspace_write', reqId: 'newfile', path: rel, content: '', create: true });
+}
+
+artifactEdit.onclick = () => startEdit();
+artifactSave.onclick = () => save();
+artifactCancel.onclick = () => { if (confirmLeaveEdit()) { editing = null; render(); } };
+artifactDelete.onclick = async () => {
+  if (!current?.path) return;
+  const ok = await confirmAction({ title: 'Delete this file?', body: current.path, confirm: 'Delete', cancel: 'Keep it' });
+  if (ok) send({ type: 'workspace_delete', path: current.path });
+};
+
 artifactClose.onclick = closeArtifact;
 artifactReload.onclick = () => render();
 document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape' && current && !document.querySelector('.permission-overlay:not(.hidden)')) closeArtifact();
+  if (e.key === 'Escape' && current && !editing && !document.querySelector('.permission-overlay:not(.hidden)')) closeArtifact();
 });
 
 // ── "Artifacts from this reply" ────────────────────────────────────────────

@@ -26,6 +26,8 @@ import { planUsage, refreshPlanUsage } from './plan-usage.js';
 import * as workspace from './workspace.js';
 import * as skills from './skills.js';
 import { sessionModeMap } from './modes.js';
+import * as sessionTools from './session-tools.js';
+import * as previews from './previews.js';
 
 /** Everything a newly connected (or reconnected) tab needs to render the app. */
 function greet(ws) {
@@ -46,7 +48,7 @@ function greet(ws) {
   send(ws, { type: 'slash_commands', commands: runtime.cachedSlashCommands });
   send(ws, { type: 'models', models: runtime.cachedModels });
   send(ws, { type: 'ha_links', entities: runtime.haLinks.entities, automations: runtime.haLinks.automations });
-  send(ws, { type: 'sessions', sessions: listSessions(), activeId: runtime.activeSessionId });
+  send(ws, { type: 'sessions', sessions: sessionTools.decoratedSessions(), activeId: runtime.activeSessionId });
   send(ws, {
     type: 'history',
     items: parseSession(runtime.activeSessionId),
@@ -106,7 +108,7 @@ function sendNotifyState(ws) {
 }
 
 function broadcastSessions() {
-  broadcast({ type: 'sessions', sessions: listSessions(), activeId: runtime.activeSessionId });
+  broadcast({ type: 'sessions', sessions: sessionTools.decoratedSessions(), activeId: runtime.activeSessionId });
 }
 
 /** Everything the browser may send. One entry per message type. */
@@ -139,6 +141,77 @@ const handlers = {
     const r = workspace.setActiveProject(msg.name);
     send(ws, { type: 'workspace_result', action: 'set_active', ...r });
     if (r.ok) broadcast({ type: 'workspace_state', state: workspace.workspaceState() });
+  },
+
+  // ── Conversations (rename, pin, search, export, duplicate) ──
+  session_rename(_ws, msg) {
+    if (typeof msg.id !== 'string') return;
+    sessionTools.renameSession(msg.id, msg.title);
+    broadcastSessions();
+  },
+  session_pin(_ws, msg) {
+    if (typeof msg.id !== 'string') return;
+    sessionTools.setPinned(msg.id, !!msg.pinned);
+    broadcastSessions();
+  },
+  session_search(ws, msg) {
+    send(ws, { type: 'session_search_results', q: msg.q, results: sessionTools.searchSessions(msg.q) });
+  },
+  session_export(ws, msg) {
+    const r = sessionTools.exportSession(msg.id, workspace.workspaceRoot());
+    send(ws, { type: 'session_export_result', ...r });
+    if (r.ok) broadcast({ type: 'workspace', entries: workspace.listWorkspaceEntries() });
+  },
+  async session_duplicate(ws, msg) {
+    try {
+      const r = await sessionTools.duplicateSession(msg.id);
+      send(ws, { type: 'session_duplicate_result', ...r });
+      if (r.ok) broadcastSessions();
+    } catch (e) {
+      send(ws, { type: 'session_duplicate_result', ok: false, error: e?.message || String(e) });
+    }
+  },
+
+  // ── Changes / rewind ──
+  turns_list(ws, msg) {
+    const id = msg.id || runtime.activeSessionId;
+    send(ws, { type: 'turns', id, turns: id ? sessionTools.listTurns(id) : [] });
+  },
+  async rewind(ws, msg) {
+    const id = msg.id || runtime.activeSessionId;
+    if (!id || typeof msg.uuid !== 'string') return;
+    if (runtime.activeQuery && id === runtime.activeSessionId) {
+      send(ws, { type: 'rewind_result', dryRun: !!msg.dryRun, canRewind: false, error: 'Stop the running turn first.' });
+      return;
+    }
+    const r = await sessionTools.rewindTo(id, msg.uuid, { dryRun: !!msg.dryRun });
+    send(ws, { type: 'rewind_result', id, uuid: msg.uuid, dryRun: !!msg.dryRun, ...r });
+    if (!msg.dryRun && r.canRewind) broadcast({ type: 'workspace', entries: workspace.listWorkspaceEntries() });
+  },
+
+  // ── File editor ──
+  workspace_write(ws, msg) {
+    const r = workspace.writeWorkspaceFile(msg.path, msg.content, { expectedMtime: msg.mtime || null, force: !!msg.force, create: !!msg.create });
+    send(ws, { type: 'workspace_write_result', reqId: msg.reqId, ...r });
+    if (r.ok) broadcast({ type: 'workspace', entries: workspace.listWorkspaceEntries() });
+  },
+  workspace_delete(ws, msg) {
+    const r = workspace.deleteWorkspaceFile(msg.path);
+    send(ws, { type: 'workspace_delete_result', path: msg.path, ...r });
+    if (r.ok) broadcast({ type: 'workspace', entries: workspace.listWorkspaceEntries() });
+  },
+  workspace_stat(ws, msg) {
+    send(ws, { type: 'workspace_stat', reqId: msg.reqId, path: msg.path, stat: workspace.statWorkspaceFile(msg.path), editable: workspace.isEditable(msg.path) });
+  },
+
+  // ── Live previews ──
+  previews_list(ws) {
+    send(ws, { type: 'previews', previews: previews.listPreviews() });
+  },
+  preview_stop(ws, msg) {
+    const r = previews.stopPreview(msg.port);
+    send(ws, { type: 'preview_stop_result', port: msg.port, ...r });
+    setTimeout(() => broadcast({ type: 'previews', previews: previews.listPreviews() }), 500);
   },
 
   // ── Skills panel ──
@@ -204,7 +277,7 @@ const handlers = {
   },
 
   sessions_list(ws) {
-    send(ws, { type: 'sessions', sessions: listSessions(), activeId: runtime.activeSessionId });
+    send(ws, { type: 'sessions', sessions: sessionTools.decoratedSessions(), activeId: runtime.activeSessionId });
   },
 
   session_switch(_ws, msg) {
@@ -219,6 +292,7 @@ const handlers = {
 
   session_delete(_ws, msg) {
     deleteSession(msg.id);
+    sessionTools.forgetSession(msg.id);
     if (msg.id === runtime.activeSessionId) {
       runtime.activeSessionId = null;
       saveActive();

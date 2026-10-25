@@ -16,9 +16,9 @@ import { S } from './state.js';
 import {
   workspaceBtn, workspacePanel, workspaceListEl, wsBase, workspaceInfoEl, workspaceFolderBtn,
   workspaceRootForm, workspaceRootInput, workspaceRootError, workspaceRootDefault, workspaceRootCancel,
-  workspaceProjectsEl, workspaceNewProject,
+  workspaceProjectsEl, workspaceNewProject, workspaceNewFile, workspacePreviews,
 } from './dom.js';
-import { openArtifact, isPreviewable, fileUrl, noteWorkspaceEntries } from './artifacts.js';
+import { openArtifact, openPreview, createFile, isPreviewable, fileUrl, noteWorkspaceEntries } from './artifacts.js';
 import { renderProjectSelect } from './modes.js';
 
 const ICONS_BY_EXT = {
@@ -32,6 +32,7 @@ const ICONS_BY_EXT = {
 };
 
 let filter = null;   // project name the list is narrowed to, or null for all
+let previews = [];   // [{ port, command }] — apps listening on a preview port
 
 function formatSize(bytes) {
   if (bytes < 1024) return `${bytes} B`;
@@ -101,9 +102,34 @@ function renderProjects() {
   }
 }
 
+function renderPreviews() {
+  workspacePreviews.innerHTML = '';
+  workspacePreviews.classList.toggle('hidden', !previews.length);
+  if (!previews.length) return;
+  workspacePreviews.appendChild(el('div', 'usage-section-title', 'Live previews'));
+  for (const p of previews) {
+    const r = el('div', 'preview-row');
+    const main = el('div', 'session-main');
+    main.append(el('div', 'session-title', `Port ${p.port}`), el('div', 'session-time', p.command || 'running'));
+    main.onclick = () => openPreview(p.port);
+    main.title = 'Open in the viewer';
+    const stop = el('button', 'scheduled-new-btn', 'Stop');
+    stop.type = 'button';
+    stop.onclick = (e) => { e.stopPropagation(); send({ type: 'preview_stop', port: p.port }); };
+    r.append(el('span', 'task-icon', '▶'), main, stop);
+    workspacePreviews.appendChild(r);
+  }
+}
+
+export function applyPreviews(list) {
+  previews = Array.isArray(list) ? list : [];
+  if (!workspacePanel.classList.contains('hidden')) renderPreviews();
+}
+
 export function renderWorkspace() {
   renderInfo();
   renderProjects();
+  renderPreviews();
   workspaceListEl.innerHTML = '';
   const files = filter ? S.workspace.filter((f) => f.path.startsWith(`${filter}/`)) : S.workspace;
   if (!files.length) {
@@ -143,6 +169,7 @@ async function refreshWorkspace() {
 export function openWorkspace() {
   refreshWorkspace();
   send({ type: 'workspace_state' });
+  send({ type: 'previews_list' });
   workspacePanel.classList.remove('hidden');
   workspaceBtn.classList.add('active');
 }
@@ -202,7 +229,16 @@ workspaceNewProject.onclick = () => {
   if (name && name.trim()) send({ type: 'workspace_create_project', name: name.trim(), activate: true });
 };
 
+workspaceNewFile.onclick = () => {
+  const suggestion = filter ? `${filter}/notes.md` : 'notes.md';
+  const rel = prompt('New file (path inside the workspace):', suggestion);
+  if (rel && rel.trim()) createFile(rel.trim().replace(/^\/+/, ''));
+};
+
 document.addEventListener('click', (e) => {
+  // A click that re-rendered the panel leaves its target detached — it was
+  // still inside, so it must not count as a click outside.
+  if (!e.target.isConnected) return;
   if (workspacePanel.classList.contains('hidden')) return;
   if (workspacePanel.contains(e.target) || workspaceBtn.contains(e.target)) return;
   closeWorkspace();

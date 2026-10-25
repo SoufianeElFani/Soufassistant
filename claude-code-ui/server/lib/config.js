@@ -99,6 +99,13 @@ export const WORKSPACE_SYNC_LOG = process.env.WORKSPACE_SYNC_LOG || path.join(DA
 /** Which skills the Skills panel turned off. */
 export const SKILLS_CONFIG_FILE = path.join(DATA_DIR, 'skills-config.json');
 
+/** Custom titles and pins for conversations (the Sessions panel). */
+export const SESSION_META_FILE = path.join(DATA_DIR, 'session-meta.json');
+
+/** Ports a Cowork app may serve on to be previewed through /preview/<port>/. */
+export const PREVIEW_PORT_MIN = parseInt(process.env.PREVIEW_PORT_MIN || '8100', 10);
+export const PREVIEW_PORT_MAX = parseInt(process.env.PREVIEW_PORT_MAX || '8199', 10);
+
 /** The mode (chat / code / cowork) and Cowork project each conversation last used. */
 export const SESSION_MODES_FILE = path.join(DATA_DIR, 'session-modes.json');
 

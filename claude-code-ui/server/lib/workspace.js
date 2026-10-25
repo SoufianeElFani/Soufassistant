@@ -14,7 +14,7 @@
  * written by /data/tools/drive-sync.sh) the panel shows the last success /
  * error and counts `*.conflict*` files. Nothing here runs the sync itself.
  */
-import { existsSync, mkdirSync, readdirSync, statSync, readFileSync, writeFileSync, realpathSync, openSync, readSync, closeSync } from 'fs';
+import { existsSync, mkdirSync, readdirSync, statSync, readFileSync, writeFileSync, realpathSync, openSync, readSync, closeSync, unlinkSync } from 'fs';
 import path from 'path';
 import { WORKSPACE_DIR, WORKSPACE_CONFIG_FILE, WORKSPACE_SYNC_LOG } from './config.js';
 import { log } from './log.js';
@@ -234,4 +234,64 @@ export function workspaceState() {
     projects: listProjects(),
     sync: syncStatus(entries),
   };
+}
+
+// ── Editing (the artifact viewer's editor) ───────────────────────────────────
+/** Extensions the editor may write — text only; binary files are view/download only. */
+export const EDITABLE_EXT = new Set(['txt', 'md', 'markdown', 'html', 'htm', 'css', 'js', 'mjs', 'cjs', 'ts', 'tsx', 'jsx',
+  'json', 'yaml', 'yml', 'csv', 'tsv', 'svg', 'xml', 'py', 'sh', 'ini', 'conf', 'toml', 'sql', 'log', 'env', 'gitignore', 'vue']);
+export const MAX_EDIT_BYTES = 2 * 1024 * 1024;
+
+export function isEditable(rel) {
+  const base = path.basename(String(rel || ''));
+  const ext = base.includes('.') ? base.split('.').pop().toLowerCase() : base.toLowerCase();
+  return EDITABLE_EXT.has(ext);
+}
+
+function checkTarget(rel) {
+  if (!rel || String(rel).split('/').some((seg) => seg.startsWith('.'))) return { error: 'Hidden files cannot be edited here.' };
+  const abs = resolveInWorkspace(rel);
+  if (!abs || abs === workspaceRoot()) return { error: 'That path is outside the workspace.' };
+  if (!isEditable(rel)) return { error: 'Only text files can be edited here.' };
+  return { abs };
+}
+
+/**
+ * Save a text file. `expectedMtime` (from when the editor loaded it) guards
+ * against overwriting a change made meanwhile — by Claude, or the Drive sync —
+ * unless `force`. `create` refuses to replace an existing file.
+ */
+export function writeWorkspaceFile(rel, content, { expectedMtime = null, force = false, create = false } = {}) {
+  const t = checkTarget(rel);
+  if (t.error) return { ok: false, error: t.error };
+  const text = String(content ?? '');
+  if (Buffer.byteLength(text) > MAX_EDIT_BYTES) return { ok: false, error: 'File too large for the editor (2 MB max).' };
+  let cur = null;
+  try { cur = statSync(t.abs); } catch {}
+  if (cur && create) return { ok: false, error: 'A file with that name already exists.' };
+  if (cur && !cur.isFile()) return { ok: false, error: 'Not a file.' };
+  if (cur && expectedMtime && !force && Math.abs(cur.mtimeMs - expectedMtime) > 1) {
+    return { ok: false, conflict: true, error: 'The file changed since you opened it.' };
+  }
+  try {
+    mkdirSync(path.dirname(t.abs), { recursive: true });
+    writeFileSync(t.abs, text);
+    return { ok: true, path: rel, mtime: statSync(t.abs).mtimeMs };
+  } catch (e) { return { ok: false, error: e.message }; }
+}
+
+export function statWorkspaceFile(rel) {
+  const abs = resolveInWorkspace(rel);
+  try { const st = statSync(abs); return st.isFile() ? { mtime: st.mtimeMs, size: st.size } : null; } catch { return null; }
+}
+
+export function deleteWorkspaceFile(rel) {
+  if (!rel || String(rel).split('/').some((seg) => seg.startsWith('.'))) return { ok: false, error: 'Not allowed.' };
+  const abs = resolveInWorkspace(rel);
+  if (!abs || abs === workspaceRoot()) return { ok: false, error: 'That path is outside the workspace.' };
+  try {
+    if (!statSync(abs).isFile()) return { ok: false, error: 'Only files can be deleted here.' };
+    unlinkSync(abs);
+    return { ok: true };
+  } catch (e) { return { ok: false, error: e.message }; }
 }

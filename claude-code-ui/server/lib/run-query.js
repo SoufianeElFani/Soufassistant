@@ -39,6 +39,8 @@ import { refreshPlanUsage } from './plan-usage.js';
 import { modeOptions, normalizeMode, coworkWriteGuard, rememberSessionMode, sessionModeMap } from './modes.js';
 import { workspaceRoot, activeProject, projectDir } from './workspace.js';
 import { disabledOverrides } from './skills.js';
+import { decoratedSessions } from './session-tools.js';
+import { listPreviews } from './previews.js';
 
 // STALL_WARN_MS / STALL_CHECK_MS (config.js): how long the SDK may go quiet
 // before the log says so, and how often it checks — only while a turn is
@@ -138,6 +140,9 @@ export async function runQuery(ws, { text, permissionMode, model, effort, mode, 
   // Mode overrides (tools, plugins, setting sources, extra dirs) and the
   // system-prompt addendum telling Claude where the workspace is.
   Object.assign(opts, mo.opts);
+  // File checkpoints, so a turn's file changes can be restored later from the
+  // Changes panel (session-tools.js rewindTo). A chat turn writes no files.
+  if (runMode !== 'chat') opts.enableFileCheckpointing = true;
   opts.systemPrompt = mo.systemPrompt ?? { type: 'preset', preset: 'claude_code', append: mo.append };
   if (mo.coworkDir) {
     const pre = [...(opts.hooks?.PreToolUse || []), { hooks: [coworkWriteGuard(mo.coworkDir, WORK_DIR)] }];
@@ -496,7 +501,7 @@ export async function runQuery(ws, { text, permissionMode, model, effort, mode, 
     }
 
     // The new or updated session (and its title) should appear in the list.
-    broadcast({ type: 'sessions', sessions: listSessions(), activeId: runtime.activeSessionId });
+    broadcast({ type: 'sessions', sessions: decoratedSessions(), activeId: runtime.activeSessionId });
 
     // Anything the run just created — a new automation, a new entity — should be
     // linkable in the reply that announces it.
@@ -506,6 +511,8 @@ export async function runQuery(ws, { text, permissionMode, model, effort, mode, 
     // Likewise any file the run just wrote under /data/workspace — cheap (a
     // bounded directory walk) and only worth doing once the turn is actually over.
     broadcast({ type: 'workspace', entries: listWorkspaceEntries() });
+    // A Cowork turn may have started (or stopped) a preview server.
+    broadcast({ type: 'previews', previews: listPreviews() });
 
     if (limitHit && !abortController.signal.aborted) {
       notify('stopped', { title: 'Claude hit the usage limit', message: 'The 5-hour limit was reached.' });
