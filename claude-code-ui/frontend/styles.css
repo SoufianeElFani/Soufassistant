@@ -1283,3 +1283,124 @@ pre:hover > .copy-btn, .copy-btn:focus { opacity: 1; }
 }
 .usage-badge-warn { background: #b7791f; }
 .usage-badge-high { background: #c53030; }
+
+/* ── Mode switch (Chat / Code / Cowork) ── */
+.mode-switch {
+  display: inline-flex; background: var(--surface-2); border: 1px solid var(--border);
+  border-radius: 99px; padding: 2px; gap: 2px; margin-left: 6px;
+}
+.mode-btn {
+  border: 0; background: transparent; color: var(--text-muted); font-size: 12px; font-weight: 600;
+  padding: 4px 11px; border-radius: 99px; cursor: pointer; line-height: 1.2;
+}
+.mode-btn:hover { color: var(--text); }
+.mode-btn.active { background: var(--accent-strong); color: #fff; }
+.cowork-project { max-width: 170px; margin-left: 6px; }
+@media (max-width: 640px) {
+  .mode-btn { padding: 4px 8px; font-size: 11px; }
+  .cowork-project { max-width: 110px; }
+}
+
+/* ── Workspace panel ── */
+.workspace-panel, .skills-panel { width: 400px; }
+.workspace-info { padding: 8px 14px 4px; display: flex; flex-direction: column; gap: 4px; font-size: 12px; }
+.workspace-root { display: flex; gap: 6px; align-items: center; min-width: 0; }
+.workspace-root-path {
+  font-size: 11.5px; color: var(--text); background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius-xs); padding: 2px 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.workspace-sync { color: var(--text-muted); line-height: 1.4; }
+.workspace-sync.sync-ok { color: var(--accent); }
+.workspace-sync.sync-error { color: #f5b942; }
+.workspace-projects-row { display: flex; align-items: flex-start; gap: 6px; padding: 6px 14px; border-bottom: 1px solid var(--border); }
+.workspace-projects { display: flex; flex-wrap: wrap; gap: 5px; flex: 1; }
+.ws-chip {
+  border: 1px solid var(--border); background: var(--surface); color: var(--text-muted);
+  font-size: 11.5px; padding: 3px 9px; border-radius: 99px; cursor: pointer;
+}
+.ws-chip.active { border-color: var(--accent); color: var(--text); background: var(--user-bg); }
+.workspace-item { cursor: pointer; display: flex; align-items: center; }
+.workspace-ext { margin-left: auto; padding: 4px 8px; color: var(--text-muted); text-decoration: none; font-size: 14px; }
+.workspace-ext:hover { color: var(--accent); }
+
+/* ── Skills panel ── */
+.skills-group { padding: 10px 14px 4px; }
+.skill-row { display: flex; align-items: center; gap: 8px; padding: 7px 14px; border-bottom: 1px solid var(--border); }
+.skill-row.skill-off .skill-main { opacity: .5; }
+.skill-main { flex: 1; min-width: 0; cursor: pointer; }
+.skill-title { font-size: 13px; font-weight: 600; color: var(--text); display: flex; gap: 6px; align-items: baseline; }
+.skill-inv { font-size: 10.5px; font-weight: 400; color: var(--text-muted); font-family: ui-monospace, monospace; }
+.skill-desc {
+  font-size: 11.5px; color: var(--text-muted); line-height: 1.35;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+.skill-actions { display: flex; align-items: center; gap: 2px; flex-shrink: 0; }
+.skills-link { color: var(--accent); }
+.skill-body-input { font-family: ui-monospace, monospace; font-size: 12px; }
+.skill-view { border-top: 1px solid var(--border); padding: 8px 14px; max-height: 45%; display: flex; flex-direction: column; }
+.skill-view-head { display: flex; justify-content: space-between; align-items: center; font-size: 13px; }
+.skill-view-body { white-space: pre-wrap; font-size: 11.5px; color: var(--text-muted); overflow: auto; margin: 6px 0 0; }
+.skill-view.hidden { display: none; }
+.artifact-link { text-decoration: none; display: inline-flex; align-items: center; justify-content: center; }
+
+/* ── Artifact viewer ── */
+.artifact-pane {
+  position: fixed; top: 0; right: 0; bottom: 0; width: min(48vw, 860px); z-index: 55;
+  background: var(--surface); border-left: 1px solid var(--border);
+  display: flex; flex-direction: column; box-shadow: -8px 0 24px rgba(0,0,0,.35);
+}
+.artifact-pane.hidden { display: none; }
+.artifact-head {
+  display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-bottom: 1px solid var(--border);
+  background: var(--surface-2); flex-shrink: 0;
+}
+.artifact-title { flex: 1; min-width: 0; font-size: 13px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.artifact-actions { display: flex; gap: 2px; }
+.artifact-body { flex: 1; min-height: 0; overflow: auto; background: #fff; }
+.artifact-frame { width: 100%; height: 100%; border: 0; display: block; background: #fff; }
+.artifact-image { display: block; max-width: 100%; margin: 16px auto; }
+.artifact-text { margin: 0; padding: 14px; font-size: 12px; color: #1d2b2a; white-space: pre-wrap; word-break: break-word; }
+.artifact-table-wrap { overflow: auto; padding: 10px; }
+.artifact-table { border-collapse: collapse; font-size: 12px; color: #1d2b2a; }
+.artifact-table th, .artifact-table td { border: 1px solid #d5dedc; padding: 4px 8px; text-align: left; white-space: nowrap; }
+.artifact-table th { background: #eef5f2; position: sticky; top: 0; }
+.artifact-note { padding: 20px; color: #4a5a58; font-size: 13px; }
+/* Wide screens: the chat makes room for the viewer instead of being covered. */
+@media (min-width: 1000px) {
+  body.artifact-open #app { margin-right: min(48vw, 860px); }
+}
+@media (max-width: 999px) {
+  .artifact-pane { width: 100vw; }
+}
+
+/* "Artifacts from this reply" card in the transcript */
+.artifact-card {
+  align-self: flex-start; max-width: min(720px, 92%); margin: 4px 0 8px;
+  border: 1px solid var(--tool-border); background: var(--tool-bg); border-radius: var(--radius-sm);
+  padding: 8px 10px; display: flex; flex-direction: column; gap: 5px;
+}
+.artifact-card-head { font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--accent); }
+.artifact-chip {
+  text-align: left; border: 1px solid var(--border); background: var(--surface); color: var(--text);
+  border-radius: var(--radius-xs); padding: 6px 9px; font-size: 12.5px; cursor: pointer;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.artifact-chip:hover { border-color: var(--accent); }
+
+/* Selects that may be hidden need an explicit rule (.perm-mode-select sets display). */
+.cowork-project.hidden, .composer-project.hidden { display: none; }
+.composer-left { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.composer-mode, .composer-project { display: none; }
+@media (max-width: 700px) {
+  #mode-switch, #cowork-project, #skills-btn { display: none; }
+  .composer-mode { display: inline-block; }
+  .composer-project { display: inline-block; max-width: 140px; }
+}
+/* Narrow phones: the header icons used to run past the right edge below ~430px
+   (the New-chat button was cut off). Tighten them so the row fits at 360px. */
+@media (max-width: 440px) {
+  .header { padding-left: 10px; padding-right: 10px; gap: 6px; }
+  .header-right { gap: 1px; }
+  .header-right .icon-btn { padding: 3px; }
+  #perm-mode { padding: 3px 16px 3px 5px; font-size: 11px; max-width: 72px; }
+}

@@ -47,10 +47,13 @@ over largely as-is.
 - 🔒 **HA ingress auth** — protected by Home Assistant; no separate login. Claude credentials (subscription or API key) persist across restarts
 - 🏗️ **Multi-arch** — aarch64 and amd64, installed from a **prebuilt image** (no building on your Pi)
 - ✅ **Task list** — a `claude-tasks` command Claude drives for multi-step work, shown as a checklist widget separate from the chat
-- 🗂️ **Workspace panel** — a `/data/workspace` folder (separate from `/config`) for files Claude produces that you'll want to keep — a report, an export, a self-contained HTML page — with a direct open/download link, refreshed after every reply. This app's local, honest stand-in for a hosted "Artifact": no claude.ai URL, nothing to share outside this home, but a page you can genuinely reopen
+- 💬 **Chat / Code / Cowork modes** — like Claude Desktop: a plain web-enabled conversation, the full Home Assistant agent, or Claude building and testing things inside one workspace project (writes outside it are blocked in every permission mode). Each conversation remembers its mode
+- 🗂️ **Workspace panel** — a workspace folder you choose (default `/data/workspace`; e.g. a folder synced with Google Drive), its projects, and its sync status when a sync log is present. Files open in the artifact viewer
+- 🖼️ **Artifacts** — HTML pages (sandboxed), images, SVG, Markdown, PDF, CSV and text that Claude writes open in a viewer beside the chat, with an "Artifacts" card after each reply. Local files, no claude.ai URL
+- ⭐ **Skills panel** — every skill Claude can use (synced from your claude.ai account, built in, or your own): switch them on/off, read, create, edit, delete, and export as a .zip to upload to claude.ai
 - ⏰ **Scheduled tasks** — define a prompt that fires on a cron-style schedule (e.g. a daily check-in); it runs unattended, continues the same thread each time, and reaches you through a Home Assistant notification without interrupting whatever you're chatting about
 - 👥 **Team panel** — a lightweight roster for a project/team lead: one card per teammate (name, role, free-text notes, a "last 1:1" stamp). Edit it directly from the panel, or tell Claude about a 1:1/team conversation and it can log a dated note itself via `team-notes` — see **Productivity tools** below
-- 📊 **Usage panel** — a permanent header button showing this session's running token counts and estimated cost, live, instead of only on request via `/usage`. Session-scoped, not an Anthropic account-wide billing figure — subscription auth doesn't expose that
+- 📊 **Usage panel** — your claude.ai plan limits like Claude Desktop shows them (5-hour session, weekly, per-model weekly, monthly extra-usage budget) with reset countdowns, a session-% badge on the button, and this conversation's token counts
 - 🖥️ **Full-width desktop layout** — the app fills the whole browser window on a laptop/desktop (no side letterboxing); message bubbles still cap their own width for readability on a very wide screen
 
 ## Installation

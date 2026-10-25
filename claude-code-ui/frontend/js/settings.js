@@ -45,3 +45,10 @@ autoContinueToggle.onchange = () => {
 //               lifts and offers to have the chat carry on by itself then.
 // `S.limitOffer` is the standing offer, if any, so turning the toggle on from
 // anywhere schedules *this* limit rather than only affecting the next one.
+
+// Artifact viewer: open what a reply creates (artifacts.js reads the same key).
+const autoOpenArtifacts = document.getElementById('auto-open-artifacts');
+if (autoOpenArtifacts) {
+  autoOpenArtifacts.checked = localStorage.getItem('autoOpenArtifacts') !== 'off';
+  autoOpenArtifacts.onchange = () => localStorage.setItem('autoOpenArtifacts', autoOpenArtifacts.checked ? 'on' : 'off');
+}

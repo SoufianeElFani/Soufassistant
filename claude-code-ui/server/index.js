@@ -44,7 +44,12 @@ import { isSubscriptionAuth } from './lib/auth.js';
 import { loadActive } from './lib/sessions.js';
 import { sanitizeMcpState } from './lib/mcp.js';
 import { ensureUploadDir, cleanupUploads } from './lib/uploads.js';
-import { ensureWorkspaceDir, listWorkspaceEntries } from './lib/workspace.js';
+import {
+  ensureWorkspaceDir, listWorkspaceEntries, loadWorkspaceConfig, workspaceRoot,
+} from './lib/workspace.js';
+import { loadSkillsConfig, skillDirFor } from './lib/skills.js';
+import { loadSessionModes } from './lib/modes.js';
+import { zipDirectory } from './lib/zip.js';
 import { requireLoopback } from './lib/internal.js';
 import * as tasks from './lib/tasks.js';
 import * as scheduler from './lib/scheduler.js';
@@ -67,11 +72,36 @@ app.use(express.static(FRONTEND_DIR));
 ensureUploadDir();
 app.use('/uploads', express.static(UPLOAD_DIR));
 
+loadWorkspaceConfig();
 ensureWorkspaceDir();
 // Read-only: files land here only because Claude (or the user, via Bash/Write)
-// put them there, same trust level as everything else under /config.
-app.use('/workspace', express.static(WORKSPACE_DIR));
-app.get('/api/workspace', (_req, res) => res.json({ entries: listWorkspaceEntries() }));
+// put them there, same trust level as everything else under /config. The root
+// is chosen in the Workspace panel, so the static handler follows it.
+let wsStatic = { root: null, handler: null };
+app.use('/workspace', (req, res, next) => {
+  const root = workspaceRoot();
+  if (wsStatic.root !== root) wsStatic = { root, handler: express.static(root, { dotfiles: 'deny' }) };
+  // Artifacts render in a sandboxed iframe; also stop a workspace page from
+  // framing the app or being treated as same-origin script.
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  wsStatic.handler(req, res, next);
+});
+app.get('/api/workspace', (_req, res) => res.json({ root: workspaceRoot(), entries: listWorkspaceEntries() }));
+
+// A skill folder as a .zip — to upload to claude.ai (Settings → Capabilities),
+// since there is no public API to push a skill to an account.
+app.get('/api/skills/export', (req, res) => {
+  const found = typeof req.query.id === 'string' ? skillDirFor(req.query.id) : null;
+  if (!found) return res.status(404).json({ error: 'No such skill' });
+  try {
+    const zip = zipDirectory(found.dir, found.folder);
+    res.setHeader('Content-Type', 'application/zip');
+    res.setHeader('Content-Disposition', `attachment; filename="${found.folder}.zip"`);
+    res.end(zip);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
 
 // The claude-tasks CLI (a Bash tool call, so it goes through the ordinary
 // permission system) posts here to update the task-list widget. Loopback-only
@@ -132,6 +162,8 @@ autoContinue.setResumeRunner(runQuery);
 
 sanitizeMcpState();
 loadActive();
+loadSkillsConfig();
+loadSessionModes();
 autoContinue.load();
 notifier.load();
 tasks.load();
@@ -146,7 +178,7 @@ scheduler.start();
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`Claude Code UI listening on port ${PORT}`);
   console.log(`  Working dir: ${WORK_DIR}`);
-  console.log(`  Workspace:   ${WORKSPACE_DIR}`);
+  console.log(`  Workspace:   ${workspaceRoot()}`);
   console.log(`  Plugin dir:  ${PLUGIN_DIR}`);
   console.log(`  /addon_configs access: ${ALLOW_ADDON_CONFIGS ? 'enabled' : 'blocked'}`);
   console.log(`  ESPHome capability: ${ENABLE_ESPHOME ? `on (${ESPHOME_CONFIG_DIR || 'no config dir'})` : 'off'}`);
