@@ -370,6 +370,11 @@ export function handleServerMessage(msg) {
       updateSendBtn();
       break;
 
+    case 'plan_usage':
+      S.planUsage = msg.usage || null;
+      renderUsage();
+      break;
+
     case 'rate_limit':
       // Live utilization telemetry; the banner is driven by the pending/cancel
       // messages, so nothing to render here for now.

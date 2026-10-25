@@ -1250,7 +1250,7 @@ pre:hover > .copy-btn, .copy-btn:focus { opacity: 1; }
 /* ── Team panel: last-note preview reuses .scheduled-summary as-is. ── */
 
 /* ── Usage panel ── */
-.usage-body { padding: 10px 14px; display: flex; flex-direction: column; gap: 6px; }
+.usage-body { padding: 10px 14px; display: flex; flex-direction: column; gap: 6px; overflow-y: auto; }
 .usage-row {
   display: flex; justify-content: space-between; align-items: baseline;
   font-size: 13px; padding: 2px 0;
@@ -1258,6 +1258,28 @@ pre:hover > .copy-btn, .copy-btn:focus { opacity: 1; }
 .usage-label { color: var(--text-muted); }
 .usage-value { color: var(--text); font-weight: 600; font-variant-numeric: tabular-nums; }
 .usage-note {
-  margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border);
-  font-size: 11px; color: var(--text-muted); line-height: 1.4;
+  margin-top: 4px; font-size: 11px; color: var(--text-muted); line-height: 1.4;
 }
+.usage-section-title {
+  font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase;
+  color: var(--accent); margin: 4px 0 2px;
+}
+.usage-divider { height: 1px; background: var(--border); margin: 8px 0 4px; }
+.plan-meter { display: flex; flex-direction: column; gap: 4px; padding: 4px 0; }
+.plan-meter-head { display: flex; justify-content: space-between; align-items: baseline; font-size: 13px; }
+.plan-meter-label { color: var(--text); }
+.plan-meter-pct { color: var(--text); font-weight: 700; font-variant-numeric: tabular-nums; }
+.plan-bar { height: 8px; border-radius: 99px; background: var(--border); overflow: hidden; }
+.plan-bar-fill { height: 100%; border-radius: 99px; background: var(--accent); transition: width .4s ease; }
+.plan-bar-warn .plan-bar-fill { background: #f5b942; }
+.plan-bar-high .plan-bar-fill { background: var(--error-text); }
+.plan-meter-reset { font-size: 11px; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+#usage-btn { position: relative; }
+.usage-badge {
+  position: absolute; right: -4px; bottom: -3px; min-width: 22px; padding: 0 3px;
+  font-size: 9px; font-weight: 700; line-height: 13px; text-align: center;
+  border-radius: 99px; background: var(--accent-strong); color: #fff;
+  pointer-events: none; font-variant-numeric: tabular-nums;
+}
+.usage-badge-warn { background: #b7791f; }
+.usage-badge-high { background: #c53030; }

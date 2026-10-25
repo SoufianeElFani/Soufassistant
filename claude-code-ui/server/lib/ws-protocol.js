@@ -22,6 +22,7 @@ import * as notifier from './notify.js';
 import { taskState } from './tasks.js';
 import * as scheduler from './scheduler.js';
 import * as team from './team.js';
+import { planUsage, refreshPlanUsage } from './plan-usage.js';
 
 /** Everything a newly connected (or reconnected) tab needs to render the app. */
 function greet(ws) {
@@ -63,6 +64,11 @@ function greet(ws) {
   send(ws, { type: 'scheduled_tasks', tasks: scheduler.list() });
   send(ws, { type: 'team_members', members: team.list() });
 
+  // Plan limits (5-hour / weekly / extra usage): the last snapshot right away,
+  // then a refresh (rate-limited inside plan-usage.js) that broadcasts if newer.
+  if (planUsage.snapshot) send(ws, { type: 'plan_usage', usage: planUsage.snapshot });
+  refreshPlanUsage();
+
   // Replay a scheduled resume so a reconnecting tab shows the countdown, or —
   // when nothing is scheduled — the standing offer to turn one on.
   const pending = autoContinue.autoContinue.pending;
@@ -98,6 +104,11 @@ function broadcastSessions() {
 
 /** Everything the browser may send. One entry per message type. */
 const handlers = {
+  /** The Usage panel was opened — refresh plan limits (rate-limited; replies via broadcast). */
+  plan_usage_refresh(ws) {
+    refreshPlanUsage().then((snap) => { if (snap) send(ws, { type: 'plan_usage', usage: snap }); });
+  },
+
   auth_check(ws) {
     send(ws, { type: 'auth_status', authenticated: isAuthenticated() });
   },
