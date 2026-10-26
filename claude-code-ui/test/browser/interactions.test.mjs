@@ -381,8 +381,8 @@ describe('leaving a chat while Claude is still working', { skip }, () => {
     assert.equal(await page.$eval('#confirm-overlay', (el) => el.classList.contains('hidden')), true,
       'switching asked first, as if it still stopped the turn');
     assert.equal(spy.all('aborted').length, 0, 'the run in the other conversation was stopped');
-    assert.equal(await page.$eval('#send-btn', (el) => el.classList.contains('stop')), false,
-      'the conversation now on screen is idle');
+    // The spy socket can see the history before the page has applied it.
+    await page.waitForFunction(() => !document.getElementById('send-btn').classList.contains('stop'), { timeout: 5000 });
   });
 
   test('the other conversation is shown running, on the Sessions button and in the list', async () => {
