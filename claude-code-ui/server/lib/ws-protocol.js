@@ -16,7 +16,9 @@ import { listSessions, parseSession, deleteSession, saveActive } from './session
 import { pendingDialogs, answerDialog } from './dialogs.js';
 import { pendingPermissions, resolvePermission, resolvePromptsAllowedBy } from './permissions.js';
 import { saveAttachments, describeAttachments } from './uploads.js';
-import { runQuery, abortActive } from './run-query.js';
+import { runQuery, abortActive, abortRun } from './run-query.js';
+import { viewKey, viewedRun, runFor, runsSummary, broadcastRuns } from './runs.js';
+import { existsSync } from 'fs';
 import * as autoContinue from './auto-continue.js';
 import * as notifier from './notify.js';
 import { taskState } from './tasks.js';
@@ -48,19 +50,12 @@ function greet(ws) {
   send(ws, { type: 'slash_commands', commands: runtime.cachedSlashCommands });
   send(ws, { type: 'models', models: runtime.cachedModels });
   send(ws, { type: 'ha_links', entities: runtime.haLinks.entities, automations: runtime.haLinks.automations });
-  send(ws, { type: 'sessions', sessions: sessionTools.decoratedSessions(), activeId: runtime.activeSessionId });
-  send(ws, {
-    type: 'history',
-    items: parseSession(runtime.activeSessionId),
-    running: !!runtime.activeQuery,
-    // The foreground turn is done but a background task it spawned (a
-    // subagent, a backgrounded shell command) is still running — distinct from
-    // `running` so the UI can show "finishing up in the background" rather
-    // than either idle or the ordinary thinking indicator.
-    background: runtime.backgroundTasks.size > 0,
-  });
-  if (runtime.backgroundTasks.size) {
-    send(ws, { type: 'background_tasks', tasks: [...runtime.backgroundTasks.values()] });
+  send(ws, sessionsMessage());
+  send(ws, { type: 'runs', runs: runsSummary() });
+  send(ws, historyMessage());
+  const run = viewedRun();
+  if (run?.backgroundTasks.size) {
+    send(ws, { type: 'background_tasks', tasks: [...run.backgroundTasks.values()], sid: run.key });
   }
 
   // The task-list widget and the scheduled-tasks list are both independent of
@@ -94,7 +89,8 @@ function greet(ws) {
   // the socket that happened to be open — so it is still waiting, and this is
   // what shows it rather than leaving the turn silently paused.
   for (const [id, d] of pendingDialogs) {
-    send(ws, { type: 'user_dialog', id, dialogKind: 'askUserQuestion', payload: d.payload });
+    send(ws, { type: 'user_dialog', id, dialogKind: 'askUserQuestion', payload: d.payload,
+      ...(d.sid ? { sid: d.sid, conversation: d.conversation } : {}) });
   }
 
   // Likewise a permission prompt: it belongs to the run, not to whichever tab
@@ -107,8 +103,34 @@ function sendNotifyState(ws) {
     send(ws, { type: 'notify_state', ...notifier.notifySettings, services }));
 }
 
+/** The conversation list, and which one is on screen (`view` is its run key — a draft's too). */
+function sessionsMessage() {
+  return { type: 'sessions', sessions: sessionTools.decoratedSessions(), activeId: runtime.activeSessionId, view: viewKey() };
+}
+
 function broadcastSessions() {
-  broadcast({ type: 'sessions', sessions: sessionTools.decoratedSessions(), activeId: runtime.activeSessionId });
+  broadcast(sessionsMessage());
+}
+
+/** The conversation on screen: its transcript, whether it is running, and its artifacts. */
+function historyMessage() {
+  const run = viewedRun();
+  const id = runtime.activeSessionId;
+  return {
+    type: 'history',
+    view: viewKey(),
+    items: parseSession(id),
+    running: !!run,
+    // The foreground turn is done but a background task it spawned (a
+    // subagent, a backgrounded shell command) is still running — distinct from
+    // `running` so the UI can show "finishing up in the background" rather
+    // than either idle or the ordinary thinking indicator.
+    background: !!run && run.backgroundTasks.size > 0,
+    artifacts: id ? sessionTools.sessionArtifacts(id, (rel) => {
+      const abs = workspace.resolveInWorkspace(rel);
+      return !!abs && existsSync(abs);
+    }) : [],
+  };
 }
 
 /** Everything the browser may send. One entry per message type. */
@@ -180,7 +202,7 @@ const handlers = {
   async rewind(ws, msg) {
     const id = msg.id || runtime.activeSessionId;
     if (!id || typeof msg.uuid !== 'string') return;
-    if (runtime.activeQuery && id === runtime.activeSessionId) {
+    if (runFor(id)) {
       send(ws, { type: 'rewind_result', dryRun: !!msg.dryRun, canRewind: false, error: 'Stop the running turn first.' });
       return;
     }
@@ -262,39 +284,56 @@ const handlers = {
     runQuery(ws, msg);
   },
 
-  abort() {
-    abortActive();
+  /** Stop — the conversation on screen, or the one named (from the running list). */
+  abort(_ws, msg) {
+    if (typeof msg.key === 'string' && msg.key) abortRun(msg.key);
+    else abortActive();
   },
 
+  // Neither a new chat nor a switch stops anything any more: a conversation that
+  // is running carries on out of sight (runs.js), and is there to come back to.
   new_session() {
-    abortActive();
-    autoContinue.cancel('new-session');
     autoContinue.clearLimitOffer('new-session');
     runtime.activeSessionId = null;
+    runtime.draftKey = null;
     saveActive();
     broadcast({ type: 'cleared' });
     broadcastSessions();
   },
 
   sessions_list(ws) {
-    send(ws, { type: 'sessions', sessions: sessionTools.decoratedSessions(), activeId: runtime.activeSessionId });
+    send(ws, sessionsMessage());
   },
 
   session_switch(_ws, msg) {
-    abortActive();
-    autoContinue.cancel('session-switch');
     autoContinue.clearLimitOffer('session-switch');
-    runtime.activeSessionId = msg.id || null;
+    const key = typeof msg.id === 'string' ? msg.id : null;
+    // A new conversation still running under its draft key (no id yet) can be
+    // switched back to by that key.
+    if (key && key.startsWith('draft:')) {
+      if (!runFor(key)) return;
+      runtime.activeSessionId = null;
+      runtime.draftKey = key;
+    } else {
+      runtime.activeSessionId = key;
+      runtime.draftKey = null;
+    }
     saveActive();
-    broadcast({ type: 'history', items: parseSession(runtime.activeSessionId), running: false });
+    broadcast(historyMessage());
+    const run = viewedRun();
+    if (run?.backgroundTasks.size) {
+      broadcast({ type: 'background_tasks', tasks: [...run.backgroundTasks.values()], sid: run.key });
+    }
     broadcastSessions();
   },
 
   session_delete(_ws, msg) {
+    if (runFor(msg.id)) abortRun(msg.id);
     deleteSession(msg.id);
     sessionTools.forgetSession(msg.id);
     if (msg.id === runtime.activeSessionId) {
       runtime.activeSessionId = null;
+      runtime.draftKey = null;
       saveActive();
       broadcast({ type: 'cleared' });
     }
@@ -321,7 +360,9 @@ const handlers = {
     // canUseTool. A run started in 'auto' keeps the SDK classifier for its
     // duration.
     runtime.activePermMode = msg.mode;
-    resolvePromptsAllowedBy(msg.mode);
+    const run = viewedRun();
+    if (run) run.permissionMode = msg.mode;
+    resolvePromptsAllowedBy(msg.mode, run ? run.key : undefined);
   },
 
   set_auto_continue(_ws, msg) {

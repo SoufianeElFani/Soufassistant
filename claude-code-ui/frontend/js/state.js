@@ -34,12 +34,20 @@ export const S = {
   /** The Workspace panel's state: { root, defaultRoot, activeProject, projects, sync }. */
   workspaceState: null,
 
-  /** When the current turn was sent — artifacts newer than this are "from this reply". */
-  runStartedAt: 0,
-
   /** Multi-session state, sourced from Claude Code's on-disk store via the server. */
   sessions: [],
   activeSessionId: null,
+  /** The conversation on screen as the server keys its run: the session id, or
+   *  a draft key for a new conversation that has not reported its id yet. */
+  viewKey: null,
+
+  /** Conversations running right now, on screen or not (server: runs.js):
+   *  [{ key, sessionId, phase, mode, project, title, startedAt }]. */
+  runs: [],
+
+  /** The workspace files this conversation's replies produced, oldest first
+   *  ([{ path, ext, size, mtime, ts }]) — the Artifacts menu. */
+  artifacts: [],
 
   /** Home Assistant link targets, refreshed by the server after every run. */
   haEntities: new Set(),

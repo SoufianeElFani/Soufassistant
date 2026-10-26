@@ -58,6 +58,8 @@ loads the persisted state, and listens. Everything with behaviour lives in
 | `skills.js`, `zip.js` | the Skills panel: discovery, on/off, local CRUD, .zip export |
 | `session-tools.js` | conversation titles/pins, search, export, duplicate, per-turn changes and rewind |
 | `previews.js` | the /preview/<port>/ proxy for apps running in a Cowork project |
+| `runs.js` | several conversations running at once: the run per conversation key (session id, or a draft key until `init`), the shared view, `emit()` to the tabs showing a run |
+| `doc-preview.js` | PDF / Office files as page images for the viewer (LibreOffice → PDF → `pdftoppm`), cached under `/data/cache/previews` |
 | `plan-usage.js` | claude.ai plan limits for the Usage panel |
 | `scheduler.js` | persisted cron-like prompts, ticked and fired as their own unattended SDK calls |
 | `cron.js` | the pure 5-field cron matcher `scheduler.js` is built on |
@@ -548,7 +550,9 @@ The `all_app_configs` map in `config.yaml` mounts every other app's config folde
 
 ## Conversation Persistence
 
-There is one persistent conversation (single-user app). `server/index.js` keeps a global `conversation = { sessionId, transcript }` saved to `/data/conversation.json` (debounced), so the chat survives browser reconnects and app / HA restarts until the user hits **New chat** (`new_session` → `clearConversation` + broadcast `cleared`). On connect the server replays `{ type: 'history', items, running }`; the client rebuilds the DOM via `renderHistory`. Queries run on a module-level `activeQuery` AbortController — **not** tied to a connection — so navigating away mid-response doesn't cancel it (the run keeps recording, and `ws.close` no longer aborts). `sessionId` is used for SDK `resume`; a stale id is dropped on error so the next prompt starts fresh while keeping the visual transcript.
+Conversations are Claude Code's own transcripts (`sessions.js`); the app keeps a pointer to the one on screen (`runtime.activeSessionId`, saved to `/data/active-session.json`), shared by every tab. On connect the server replays `{ type: 'history', view, items, running, background, artifacts }`; the client rebuilds the DOM via `renderHistory` (artifact cards included, placed after the reply that wrote them).
+
+**Several conversations run at once (0.5.0, `runs.js`).** `runtime.runs` maps a conversation key to its run — the session id, or a `draft:<uuid>` key for a new conversation until its `init` arrives (then `rekey()` moves the run, and the view if it was on screen, to the real id). A run is **not** tied to a connection, nor to the view: `session_switch` and `new_session` no longer abort anything; `abort` stops the conversation on screen, or `{ key }` from the running list; deleting a conversation stops its run. Transcript events go through `emit(run, msg)`, which broadcasts only while that run is the view (tagged `sid`); the `runs` list (every tab) and `run_finished` (when it ends out of sight) say the rest. Permission prompts and questions are broadcast regardless, tagged with `sid` + `conversation`, so a tab can say whose they are. Each reply's workspace files (`turn_artifacts`) are recorded per conversation in `session-meta.json` (`recordArtifacts`) — what its file tools wrote, plus anything new in the workspace that another run's file tools did not write. `sessionId` is used for SDK `resume`; a stale id is dropped on error so the next prompt starts fresh while keeping the visual transcript.
 
 ## Permission Modes
 
@@ -582,11 +586,11 @@ until nothing is left running fixes it for every mode (ask/acceptEdits/plan/
 bypass go through `canUseTool`; `auto` goes through the PreToolUse hook — both
 need the same open channel).
 
-- **Run phase.** `runtime.activeRun = {channel, q, phase, …}`: `phase` is
+- **Run phase.** Each run in `runtime.runs` is `{channel, q, phase, …}`: `phase` is
   `'turn'` while the model is actively responding, `'background'` once that
   turn's own `result` has arrived but a task it spawned is still live. The
   channel only closes (`maybeEndRun()` in `run-query.js`) once `resultSeen` **and**
-  `runtime.backgroundTasks` is empty — a single streamed query can legitimately
+  the run's `backgroundTasks` is empty — a single streamed query can legitimately
   emit more than one `result`, one per follow-up turn, which is expected and not
   treated as a fresh prompt.
 - **Task tracking.** `system/background_tasks_changed` is the authoritative
@@ -598,8 +602,8 @@ need the same open channel).
 - **A prompt arriving while `phase === 'background'`** is pushed into the same
   still-open channel (`runQuery` in `run-query.js`) rather than aborting it —
   aborting would kill the background task, which is the bug this exists to
-  avoid. `abortActive()` (Stop, new chat, session switch) still ends it, closing
-  the channel and clearing `runtime.backgroundTasks`.
+  avoid. `abortRun()` (Stop, or deleting the conversation) still ends it, closing
+  the channel and clearing its `backgroundTasks`.
 - **The stall watchdog is exempt in the background phase** — that silence is
   expected, not a stall — and logs an occasional heartbeat (~5 min) instead.
   `STALL_WARN_MS`/`STALL_CHECK_MS` (`config.js`) are overridable so a test can
@@ -838,7 +842,7 @@ chatting about right now — or `abortActive()`-ing a run already in progress �
 would be exactly wrong. A firing instead calls the SDK's `query()` directly,
 as its own run with its own (resumable) session id, and never touches
 `runtime.activeSessionId` or broadcasts into the visible transcript — only
-`runtime.activeQuery` is checked, and only to skip a tick while something
+`anyRunning()` (runs.js) is checked, and only to skip a tick while something
 else is running (a manual "run now" instead reports `scheduled_run_busy`).
 It resumes the *same* session id on every firing (`entry.lastSessionId`), so
 a daily check-in genuinely continues yesterday's rather than starting cold.

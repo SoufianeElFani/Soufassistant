@@ -9,7 +9,8 @@
  */
 import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync } from 'node:fs';
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import path from 'node:path';
 import puppeteer from 'puppeteer-core';
 import { startServer, userLine, assistantLine } from '../helpers/server-harness.mjs';
 import { startFakeHa, TOKEN } from '../helpers/fake-ha.mjs';
@@ -371,71 +372,45 @@ describe('leaving a chat while Claude is still working', { skip }, () => {
     await new Promise((r) => setTimeout(r, 250));
   };
 
-  test('clicking another chat asks first, and sends nothing yet', async () => {
+  test('clicking another chat switches straight away — the running one is not stopped', async () => {
     const before = spy.all('history').length;
     await openPanel();
-    await page.click('.session-item');
-    await page.waitForSelector('#confirm-overlay:not(.hidden)', { timeout: 5000 });
-
-    assert.match(await page.$eval('#confirm-title', (el) => el.textContent), /still working/i);
-    await new Promise((r) => setTimeout(r, 200));
-    assert.equal(spy.all('history').length, before,
-      'the switch was sent before the user had answered');
-  });
-
-  test('staying here leaves the panel open and the turn running', async () => {
-    await page.click('#confirm-no');
-    await page.waitForSelector('#confirm-overlay.hidden', { timeout: 5000 });
-
-    assert.equal(await page.$eval('#sessions-panel', (el) => el.classList.contains('hidden')), false,
-      'cancelling closed the panel, so the user cannot pick a different chat');
-    assert.equal(await page.$eval('#send-btn', (el) => el.classList.contains('stop')), true,
-      'the turn stopped anyway');
-  });
-
-  test('Escape and a click on the backdrop both mean stay', async () => {
-    const before = spy.all('history').length;
-
-    await page.click('.session-item');
-    await page.waitForSelector('#confirm-overlay:not(.hidden)', { timeout: 5000 });
-    await page.keyboard.press('Escape');
-    await page.waitForSelector('#confirm-overlay.hidden', { timeout: 5000 });
-
-    await page.click('.session-item');
-    await page.waitForSelector('#confirm-overlay:not(.hidden)', { timeout: 5000 });
-    // The backdrop is the overlay itself; click a corner well clear of the card.
-    await page.mouse.click(8, 8);
-    await page.waitForSelector('#confirm-overlay.hidden', { timeout: 5000 });
-
-    assert.equal(spy.all('history').length, before,
-      'dismissing the warning switched chats anyway');
-  });
-
-  test('the new-chat button asks too, and /new cannot get round it', async () => {
-    await page.click('#new-session-btn');
-    await page.waitForSelector('#confirm-overlay:not(.hidden)', { timeout: 5000 });
-    assert.match(await page.$eval('#confirm-yes', (el) => el.textContent), /new chat/i);
-    await page.click('#confirm-no');
-    await page.waitForSelector('#confirm-overlay.hidden', { timeout: 5000 });
-
-    const before = spy.all('cleared').length;
-    await page.type('#prompt-input', '/new');
-    await page.keyboard.press('Enter');
-    await page.waitForSelector('#confirm-overlay:not(.hidden)', { timeout: 5000 });
-    await page.click('#confirm-no');
-    await page.waitForSelector('#confirm-overlay.hidden', { timeout: 5000 });
-    assert.equal(spy.all('cleared').length, before, '/new started a new chat without asking');
-  });
-
-  test('going ahead switches, and the panel closes', async () => {
-    const before = spy.all('history').length;
-    await openPanel();
-    await page.click('.session-item');
-    await page.waitForSelector('#confirm-overlay:not(.hidden)', { timeout: 5000 });
-    await page.click('#confirm-yes');
-
+    await page.click('.session-item:not(.running)');
     await spy.waitFor((m) => m.type === 'history' && spy.all('history').length > before);
     await page.waitForSelector('#sessions-panel.hidden', { timeout: 5000 });
+    assert.equal(await page.$eval('#confirm-overlay', (el) => el.classList.contains('hidden')), true,
+      'switching asked first, as if it still stopped the turn');
+    assert.equal(spy.all('aborted').length, 0, 'the run in the other conversation was stopped');
+    assert.equal(await page.$eval('#send-btn', (el) => el.classList.contains('stop')), false,
+      'the conversation now on screen is idle');
+  });
+
+  test('the other conversation is shown running, on the Sessions button and in the list', async () => {
+    await page.waitForSelector('#sessions-btn.has-runs', { timeout: 5000 });
+    await openPanel();
+    await page.waitForSelector('.session-item.running .run-badge', { timeout: 5000 });
+    assert.ok(await page.$('.session-item.running .session-stop'), 'a running conversation can be stopped from the list');
+    // Every row says which mode it was in.
+    const badges = await page.$$eval('.session-item .mode-badge', (els) => els.length);
+    assert.ok(badges >= 2, `expected a mode badge per row, saw ${badges}`);
+  });
+
+  test('going back to it shows it still running', async () => {
+    const before = spy.all('history').length;
+    await page.click('.session-item.running');
+    await spy.waitFor((m) => m.type === 'history' && spy.all('history').length > before);
+    assert.equal(spy.all('history').at(-1).running, true);
+    await page.waitForFunction(
+      () => document.getElementById('send-btn').classList.contains('stop'), { timeout: 5000 });
+  });
+
+  test('a new chat starts without asking, and the turn carries on', async () => {
+    const before = spy.all('cleared').length;
+    await page.click('#new-session-btn');
+    await spy.waitFor((m) => m.type === 'cleared' && spy.all('cleared').length > before);
+    assert.equal(await page.$eval('#confirm-overlay', (el) => el.classList.contains('hidden')), true);
+    assert.equal(spy.all('aborted').length, 0);
+    await page.waitForSelector('#sessions-btn.has-runs', { timeout: 5000 });
   });
 
   test('with a clean console', () => assert.deepEqual(errors, []));
@@ -611,6 +586,67 @@ describe('two permission prompts pending at once', { skip }, () => {
 
     await page.click('#perm-allow');
     await page.waitForSelector('#permission-overlay.hidden', { timeout: 5000 });
+  });
+
+  test('with a clean console', () => assert.deepEqual(errors, []));
+});
+
+describe("a conversation's artifacts", { skip }, () => {
+  let h, browser, page, errors;
+  const t1 = Date.parse('2026-10-20T10:00:30Z');
+  const t2 = Date.parse('2026-10-20T10:05:30Z');
+  before(async () => {
+    h = await startServer({
+      sessions: {
+        'dddddddd-0000-0000-0000-000000000004': [
+          userLine('make a page', { timestamp: '2026-10-20T10:00:00Z' }),
+          assistantLine([{ type: 'text', text: 'here is the page' }], { timestamp: '2026-10-20T10:00:20Z' }),
+          userLine('and a summary', { timestamp: '2026-10-20T10:05:00Z' }),
+          assistantLine([{ type: 'text', text: 'here is the summary' }], { timestamp: '2026-10-20T10:05:20Z' }),
+        ],
+      },
+      data: {
+        'active-session.json': { sessionId: 'dddddddd-0000-0000-0000-000000000004' },
+        'session-meta.json': { titles: {}, pinned: [], artifacts: { 'dddddddd-0000-0000-0000-000000000004': [
+          { path: 'P/page.html', ext: 'html', size: 20, mtime: t1, ts: t1 },
+          { path: 'P/summary.md', ext: 'md', size: 9, mtime: t2, ts: t2 },
+          { path: 'P/gone.txt', ext: 'txt', size: 1, mtime: t2, ts: t2 },
+        ] } },
+      },
+    });
+    mkdirSync(path.join(h.dataDir, 'workspace', 'P'), { recursive: true });
+    writeFileSync(path.join(h.dataDir, 'workspace', 'P', 'page.html'), '<h1>Page</h1>');
+    writeFileSync(path.join(h.dataDir, 'workspace', 'P', 'summary.md'), '# Summary');
+    ({ browser, page, errors } = await launch(h));
+  });
+  after(async () => { if (browser) await browser.close(); if (h) await h.stop(); });
+
+  test('come back after a reload, each card after the reply that wrote it', async () => {
+    await page.waitForSelector('.artifact-card', { timeout: 5000 });
+    const order = await page.$$eval('#messages > *', (els) => els.map((e) =>
+      e.classList.contains('artifact-card') ? `card:${e.textContent.includes('page.html') ? 'page' : 'summary'}`
+        : (e.textContent.includes('and a summary') ? 'prompt2' : null)).filter(Boolean));
+    assert.deepEqual(order, ['card:page', 'prompt2', 'card:summary']);
+    assert.equal(await page.$$eval('.artifact-chip', (els) => els.some((e) => e.textContent.includes('gone.txt'))), false,
+      'a deleted file is not offered');
+  });
+
+  test('are listed in the Artifacts menu, newest first', async () => {
+    assert.equal(await page.$eval('#artifacts-btn', (el) => el.dataset.count), '2');
+    await page.click('#artifacts-btn');
+    await page.waitForSelector('#artifacts-menu:not(.hidden) .workspace-item', { timeout: 5000 });
+    const names = await page.$$eval('#artifacts-menu .workspace-item .session-title', (els) => els.map((e) => e.textContent));
+    assert.deepEqual(names.slice(0, 2), ['summary.md', 'page.html']);
+  });
+
+  test('open in the viewer, which can hop between them', async () => {
+    await page.click('#artifacts-menu .workspace-item');
+    await page.waitForSelector('#artifact-pane:not(.hidden)', { timeout: 5000 });
+    await page.waitForSelector('#artifact-switch:not(.hidden)', { timeout: 5000 });
+    assert.equal(await page.$eval('#artifact-switch', (el) => el.value), 'P/summary.md');
+    await page.select('#artifact-switch', 'P/page.html');
+    await page.waitForSelector('#artifact-body iframe.artifact-frame', { timeout: 5000 });
+    assert.equal(await page.$eval('#artifact-switch', (el) => el.value), 'P/page.html');
   });
 
   test('with a clean console', () => assert.deepEqual(errors, []));

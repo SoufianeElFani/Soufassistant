@@ -45,8 +45,9 @@ import { loadActive } from './lib/sessions.js';
 import { sanitizeMcpState } from './lib/mcp.js';
 import { ensureUploadDir, cleanupUploads } from './lib/uploads.js';
 import {
-  ensureWorkspaceDir, listWorkspaceEntries, loadWorkspaceConfig, workspaceRoot,
+  ensureWorkspaceDir, listWorkspaceEntries, loadWorkspaceConfig, workspaceRoot, resolveInWorkspace,
 } from './lib/workspace.js';
+import { previewDocument, renderedFile, previewCapabilities } from './lib/doc-preview.js';
 import { loadSkillsConfig, skillDirFor } from './lib/skills.js';
 import { loadSessionModes } from './lib/modes.js';
 import { zipDirectory } from './lib/zip.js';
@@ -89,6 +90,23 @@ app.use('/workspace', (req, res, next) => {
   wsStatic.handler(req, res, next);
 });
 app.get('/api/workspace', (_req, res) => res.json({ root: workspaceRoot(), entries: listWorkspaceEntries() }));
+
+// Document previews (doc-preview.js): a PDF or Office file in the workspace as
+// page images for the artifact viewer. The first call renders (can take a
+// while for a big deck); later ones are served from the cache.
+app.get('/api/preview/capabilities', (_req, res) => res.json(previewCapabilities()));
+app.get('/api/preview', async (req, res) => {
+  const abs = resolveInWorkspace(String(req.query.path || ''));
+  if (!abs || abs === workspaceRoot()) return res.status(400).json({ ok: false, error: 'Bad path.' });
+  res.json(await previewDocument(abs));
+});
+app.get('/api/preview/:key/:name', (req, res) => {
+  const file = renderedFile(req.params.key, req.params.name);
+  if (!file) return res.status(404).end();
+  res.setHeader('Cache-Control', 'private, max-age=86400');
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.sendFile(file);
+});
 
 // Live previews of an app running in a Cowork project (previews.js): only the
 // preview port range, only to localhost.

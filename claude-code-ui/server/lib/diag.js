@@ -178,6 +178,7 @@ export function registerDiagRoutes(app) {
     if (req.query.clear) {
       abortActive();
       runtime.activeSessionId = null;
+      runtime.draftKey = null;
       saveActive();
       broadcast({ type: 'cleared' });
     }

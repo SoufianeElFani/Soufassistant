@@ -9,25 +9,31 @@
  *                     app, its cookies or its WebSocket)
  *   md / markdown     rendered with marked into a script-less sandboxed iframe
  *   png jpg gif webp svg   <img> (an SVG in <img> cannot run script)
- *   pdf               the browser's own viewer
+ *   pdf               the browser's own viewer where there is one, else page
+ *                     images rendered by the server (doc-preview.js)
+ *   pptx docx xlsx …  page images: LibreOffice → PDF → PNG on the server
  *   csv / tsv         a table (first 500 rows)
  *   text-like         <pre>
  *   anything else     "no preview" + download
  *
- * After every reply the server pushes the workspace listing ('workspace');
- * files written since the prompt was sent get an "Artifacts" card in the
- * transcript, and the newest previewable one opens automatically.
+ * After every reply the server says which workspace files it produced
+ * ('turn_artifacts'): they get an "Artifacts" card in the transcript, the
+ * newest previewable one opens automatically, and they join the conversation's
+ * Artifacts menu. The server remembers them per conversation, so the cards and
+ * the menu come back with the history ('history'.artifacts) after a reload.
  */
 import { S } from './state.js';
 import {
   wsBase, messagesEl, artifactPane, artifactTitle, artifactBody, artifactOpen,
   artifactDownload, artifactReload, artifactClose, artifactEdit, artifactSave, artifactCancel, artifactDelete,
+  artifactSwitch, artifactsBtn, artifactsMenu, artifactsMenuList,
 } from './dom.js';
 import { confirmAction } from './confirm.js';
 
 const IMAGE = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp', 'ico']);
 const TEXT = new Set(['txt', 'json', 'yaml', 'yml', 'log', 'js', 'mjs', 'cjs', 'ts', 'py', 'sh', 'css',
   'xml', 'ini', 'conf', 'toml', 'sql', 'java', 'c', 'cpp', 'h', 'go', 'rs', 'rb', 'php', 'vue', 'jsx', 'tsx']);
+const OFFICE = new Set(['pptx', 'ppt', 'pps', 'ppsx', 'odp', 'docx', 'doc', 'odt', 'rtf', 'xlsx', 'xls', 'ods']);
 const MAX_TEXT = 512 * 1024;
 
 export function kindOf(ext) {
@@ -36,6 +42,7 @@ export function kindOf(ext) {
   if (e === 'md' || e === 'markdown') return 'markdown';
   if (IMAGE.has(e)) return 'image';
   if (e === 'pdf') return 'pdf';
+  if (OFFICE.has(e)) return 'document';
   if (e === 'csv' || e === 'tsv') return 'table';
   if (TEXT.has(e)) return 'text';
   return 'other';
@@ -70,6 +77,11 @@ export function parseDelimited(text, delim = ',') {
 
 let current = null;   // { path, ext } for a workspace file, or { preview: port }
 let editing = null;   // { text, mtime } while the editor is open
+let renderSeq = 0;    // a slow document render must not land in a pane showing another file
+let pdfAsPages = false;   // the PDF viewer's "Pages" toggle
+
+/** The browser renders PDFs itself (desktop browsers; not Android's WebView). */
+const nativePdf = () => navigator.pdfViewerEnabled === true;
 
 /** Text formats the editor may change (mirrors server EDITABLE_EXT). */
 const EDITABLE = new Set(['txt', 'md', 'markdown', 'html', 'htm', 'css', 'js', 'mjs', 'cjs', 'ts', 'tsx', 'jsx',
@@ -113,9 +125,74 @@ function note(text) {
   return d;
 }
 
+/**
+ * A PDF or Office file as page images, rendered by the server. The first time
+ * can take a while (LibreOffice on a small box), so say so meanwhile.
+ */
+async function renderPages(path, ext, seq) {
+  const kind = kindOf(ext);
+  const wait = note(kind === 'pdf' ? 'Rendering the pages…' : 'Converting the document… (the first time can take up to a minute)');
+  wait.classList.add('artifact-loading');
+  artifactBody.appendChild(wait);
+  let r;
+  try {
+    const res = await fetch(`${wsBase}/api/preview?path=${encodeURIComponent(path)}`, { cache: 'no-store' });
+    r = await res.json();
+  } catch (e) { r = { ok: false, error: e.message }; }
+  if (seq !== renderSeq) return;
+  wait.remove();
+  if (!r.ok) {
+    if (kind === 'pdf') {
+      artifactBody.appendChild(sandboxFrame({ src: `${fileUrl(path)}?t=${Date.now()}`, title: path }));
+      return;
+    }
+    artifactBody.appendChild(note(`${r.unavailable ? 'Document previews are not available here' : 'Could not preview this document'}`
+      + `${r.error ? ` (${r.error})` : ''} — use ⇩ to download it.`));
+    return;
+  }
+  const wrap = document.createElement('div');
+  wrap.className = 'artifact-pages';
+  r.pages.forEach((name, i) => {
+    const fig = document.createElement('figure');
+    fig.className = 'artifact-page';
+    const img = document.createElement('img');
+    img.loading = i < 2 ? 'eager' : 'lazy';
+    img.alt = `${path} — page ${i + 1}`;
+    img.src = `${wsBase}/api/preview/${r.key}/${name}`;
+    img.onclick = () => window.open(img.src, '_blank', 'noopener');
+    const cap = document.createElement('figcaption');
+    cap.textContent = `${i + 1} / ${r.total}`;
+    fig.append(img, cap);
+    wrap.appendChild(fig);
+  });
+  artifactBody.appendChild(wrap);
+  if (r.total > r.pages.length) artifactBody.appendChild(note(`Showing the first ${r.pages.length} of ${r.total} pages.`));
+  if (r.pdf) {
+    const a = document.createElement('a');
+    a.className = 'artifact-note artifact-pdf-link';
+    a.href = `${wsBase}/api/preview/${r.key}/document.pdf`;
+    a.target = '_blank';
+    a.rel = 'noopener';
+    a.textContent = 'Open as PDF ↗';
+    artifactBody.appendChild(a);
+  }
+}
+
+function pdfToggle(asPages) {
+  const b = document.createElement('button');
+  b.type = 'button';
+  b.className = 'artifact-mini-btn';
+  b.textContent = asPages ? 'Browser viewer' : 'Pages';
+  b.title = asPages ? "Show it in the browser's PDF viewer" : 'Show the pages as images';
+  b.onclick = () => { pdfAsPages = !asPages; render(); };
+  return b;
+}
+
 async function render() {
   if (!current) return;
+  const seq = ++renderSeq;
   setToolbar();
+  renderSwitch();
   if (current.preview) {
     const url = `${wsBase}/preview/${current.preview}/`;
     artifactTitle.textContent = `Live preview · port ${current.preview}`;
@@ -149,7 +226,15 @@ async function render() {
       img.src = bust;
       artifactBody.appendChild(img);
     } else if (kind === 'pdf') {
-      artifactBody.appendChild(sandboxFrame({ src: bust, title: path }));
+      if (nativePdf() && !pdfAsPages) {
+        artifactBody.appendChild(pdfToggle(false));
+        artifactBody.appendChild(sandboxFrame({ src: bust, title: path }));
+      } else {
+        if (nativePdf()) artifactBody.appendChild(pdfToggle(true));
+        await renderPages(path, ext, seq);
+      }
+    } else if (kind === 'document') {
+      await renderPages(path, ext, seq);
     } else if (kind === 'markdown') {
       const md = await fetchText(bust);
       const html = window.marked ? window.marked.parse(md) : `<pre>${md.replace(/[&<]/g, (c) => (c === '&' ? '&amp;' : '&lt;'))}</pre>`;
@@ -215,6 +300,7 @@ export function closeArtifact() {
   if (editing && !confirmLeaveEdit()) return;
   editing = null;
   current = null;
+  renderSeq++;
   artifactPane.classList.add('hidden');
   document.body.classList.remove('artifact-open');
   artifactBody.innerHTML = '';
@@ -246,6 +332,7 @@ async function startEdit() {
   });
   artifactBody.appendChild(ta);
   setToolbar();
+  renderSwitch();
   ta.focus();
 }
 
@@ -308,10 +395,22 @@ document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape' && current && !editing && !document.querySelector('.permission-overlay:not(.hidden)')) closeArtifact();
 });
 
-// ── "Artifacts from this reply" ────────────────────────────────────────────
-const announced = new Set();   // `${path}@${mtime}` already shown in a card
+// ── Artifacts: per reply, and per conversation ─────────────────────────────
+function openFile(f) {
+  if (isPreviewable(f.ext)) openArtifact(f.path, f.ext);
+  else window.open(fileUrl(f.path), '_blank', 'noopener');
+}
 
-function artifactCard(files) {
+const ICONS = { html: '🌐', markdown: '📝', image: '🖼', pdf: '📕', document: '📽', table: '📊', text: '🗒' };
+export function iconFor(ext) {
+  const e = String(ext || '').toLowerCase();
+  if (e === 'docx' || e === 'doc' || e === 'odt' || e === 'rtf') return '📄';
+  if (e === 'xlsx' || e === 'xls' || e === 'ods') return '📊';
+  return ICONS[kindOf(e)] || '📎';
+}
+
+/** The "Artifacts" card a reply's files get in the transcript. */
+export function artifactCard(files) {
   const card = document.createElement('div');
   card.className = 'artifact-card';
   const head = document.createElement('div');
@@ -323,27 +422,140 @@ function artifactCard(files) {
     b.type = 'button';
     b.className = 'artifact-chip';
     b.title = `Open ${f.path}`;
-    b.textContent = `${isPreviewable(f.ext) ? '▶' : '⇩'} ${f.path}`;
-    b.onclick = () => (isPreviewable(f.ext) ? openArtifact(f.path, f.ext) : window.open(fileUrl(f.path), '_blank', 'noopener'));
+    b.textContent = `${isPreviewable(f.ext) ? iconFor(f.ext) : '⇩'} ${f.path}`;
+    b.onclick = () => openFile(f);
     card.appendChild(b);
   }
   return card;
 }
 
-/** Called with every fresh workspace listing; surfaces what the last reply wrote. */
-export function noteWorkspaceEntries(entries) {
-  if (!S.runStartedAt || !Array.isArray(entries)) return;
-  const since = S.runStartedAt - 1500;
-  const fresh = entries
-    .filter((e) => e.mtime >= since && !announced.has(`${e.path}@${e.mtime}`))
-    .filter((e) => !/\.conflict\d*/i.test(e.name))
-    .slice(0, 12);
-  if (!fresh.length) return;
-  for (const f of fresh) announced.add(`${f.path}@${f.mtime}`);
-  messagesEl.appendChild(artifactCard(fresh));
-  messagesEl.scrollTop = messagesEl.scrollHeight;
+/** The conversation on screen changed (history replay): its artifacts. */
+export function setConversationArtifacts(list) {
+  S.artifacts = Array.isArray(list) ? list : [];
+  renderArtifactsButton();
+  if (!artifactsMenu.classList.contains('hidden')) renderArtifactsMenu();
+  renderSwitch();
+}
+
+/** A reply just finished and wrote these files ('turn_artifacts'). */
+export function applyTurnArtifacts(files) {
+  if (!Array.isArray(files) || !files.length) return;
+  const paths = new Set(files.map((f) => f.path));
+  S.artifacts = S.artifacts.filter((f) => !paths.has(f.path)).concat(files);
+  messagesEl.appendChild(artifactCard(files));
+  if (S.stickToBottom) messagesEl.scrollTop = messagesEl.scrollHeight;
+  renderArtifactsButton();
+  if (!artifactsMenu.classList.contains('hidden')) renderArtifactsMenu();
+  renderSwitch();
   if (localStorage.getItem('autoOpenArtifacts') !== 'off') {
-    const first = fresh.find((f) => isPreviewable(f.ext));
+    const first = files.find((f) => isPreviewable(f.ext));
     if (first) openArtifact(first.path, first.ext);
   }
 }
+
+function renderArtifactsButton() {
+  const n = S.artifacts.length;
+  artifactsBtn.dataset.count = n ? String(n) : '';
+  artifactsBtn.classList.toggle('has-count', n > 0);
+  artifactsBtn.title = n ? `Artifacts of this conversation (${n})` : 'Artifacts';
+}
+
+/** The pane's own switcher: hop between this conversation's artifacts. */
+function renderSwitch() {
+  const list = S.artifacts.filter((f) => isPreviewable(f.ext));
+  const show = !!current?.path && list.length > 1 && !editing;
+  artifactSwitch.classList.toggle('hidden', !show);
+  artifactTitle.classList.toggle('hidden', show);
+  if (!show) return;
+  artifactSwitch.innerHTML = '';
+  const newest = list.slice().reverse();
+  if (!newest.some((f) => f.path === current.path)) {
+    artifactSwitch.add(new Option(current.path.split('/').pop(), current.path));
+  }
+  for (const f of newest) {
+    const o = new Option(`${iconFor(f.ext)} ${f.path.split('/').pop()}`, f.path);
+    o.title = f.path;
+    artifactSwitch.add(o);
+  }
+  artifactSwitch.value = current.path;
+}
+artifactSwitch.addEventListener('change', () => {
+  const f = S.artifacts.find((x) => x.path === artifactSwitch.value);
+  if (f) openArtifact(f.path, f.ext);
+});
+
+function menuRow(f, sub) {
+  const row = document.createElement('div');
+  row.className = `session-item workspace-item${current?.path === f.path ? ' active' : ''}`;
+  row.title = f.path;
+  const icon = document.createElement('span');
+  icon.className = 'task-icon';
+  icon.textContent = iconFor(f.ext);
+  const main = document.createElement('div');
+  main.className = 'session-main';
+  const t = document.createElement('div');
+  t.className = 'session-title';
+  t.textContent = f.path.split('/').pop();
+  const d = document.createElement('div');
+  d.className = 'session-time';
+  d.textContent = sub;
+  main.append(t, d);
+  row.append(icon, main);
+  row.onclick = () => { closeArtifactsMenu(); openFile(f); };
+  return row;
+}
+
+function menuSection(title) {
+  const h = document.createElement('div');
+  h.className = 'usage-section-title artifacts-menu-section';
+  h.textContent = title;
+  return h;
+}
+
+function when(ms) {
+  const d = new Date(ms);
+  const today = new Date();
+  return d.toDateString() === today.toDateString()
+    ? d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    : d.toLocaleDateString([], { day: 'numeric', month: 'short' });
+}
+
+export function renderArtifactsMenu() {
+  artifactsMenuList.innerHTML = '';
+  const mine = S.artifacts.slice().reverse();
+  artifactsMenuList.appendChild(menuSection('This conversation'));
+  if (!mine.length) {
+    const e = document.createElement('div');
+    e.className = 'sessions-empty';
+    e.textContent = 'No files from this conversation yet.';
+    artifactsMenuList.appendChild(e);
+  }
+  for (const f of mine) artifactsMenuList.appendChild(menuRow(f, `${f.path} · ${when(f.ts || f.mtime)}`));
+  const seen = new Set(mine.map((f) => f.path));
+  const recent = (S.workspace || []).filter((f) => !seen.has(f.path) && !/\.conflict\d*/i.test(f.name)).slice(0, 8);
+  if (recent.length) {
+    artifactsMenuList.appendChild(menuSection('Recent in the workspace'));
+    for (const f of recent) artifactsMenuList.appendChild(menuRow(f, `${f.path} · ${when(f.mtime)}`));
+  }
+}
+
+export function openArtifactsMenu() {
+  renderArtifactsMenu();
+  artifactsMenu.classList.remove('hidden');
+  artifactsBtn.classList.add('active');
+}
+export function closeArtifactsMenu() {
+  artifactsMenu.classList.add('hidden');
+  artifactsBtn.classList.remove('active');
+}
+artifactsBtn.onclick = (e) => {
+  e.stopPropagation();
+  if (artifactsMenu.classList.contains('hidden')) openArtifactsMenu();
+  else closeArtifactsMenu();
+};
+document.addEventListener('click', (e) => {
+  if (!e.target.isConnected || artifactsMenu.classList.contains('hidden')) return;
+  if (artifactsMenu.contains(e.target) || artifactsBtn.contains(e.target)) return;
+  closeArtifactsMenu();
+});
+renderArtifactsButton();

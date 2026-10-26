@@ -18,7 +18,7 @@ import {
   workspaceRootForm, workspaceRootInput, workspaceRootError, workspaceRootDefault, workspaceRootCancel,
   workspaceProjectsEl, workspaceNewProject, workspaceNewFile, workspacePreviews,
 } from './dom.js';
-import { openArtifact, openPreview, createFile, isPreviewable, fileUrl, noteWorkspaceEntries } from './artifacts.js';
+import { openArtifact, openPreview, createFile, isPreviewable, fileUrl, iconFor } from './artifacts.js';
 import { renderProjectSelect } from './modes.js';
 
 const ICONS_BY_EXT = {
@@ -142,7 +142,7 @@ export function renderWorkspace() {
     row.title = isPreviewable(f.ext) ? 'Open in the viewer' : 'Open';
     row.onclick = () => (isPreviewable(f.ext) ? openArtifact(f.path, f.ext) : window.open(fileUrl(f.path), '_blank', 'noopener'));
 
-    const icon = el('span', 'task-icon', ICONS_BY_EXT[f.ext] || '📄');
+    const icon = el('span', 'task-icon', ICONS_BY_EXT[f.ext] || iconFor(f.ext));
     const main = el('div', 'session-main');
     main.append(el('div', 'session-title', f.path), el('div', 'session-time', `${formatSize(f.size)} · ${relTime(f.mtime)}`));
     const ext = el('a', 'workspace-ext', '↗');
@@ -182,7 +182,6 @@ export function closeWorkspace() {
 /** Called from connection.js whenever the server pushes a fresh listing. */
 export function applyWorkspaceEntries(entries) {
   S.workspace = Array.isArray(entries) ? entries : [];
-  noteWorkspaceEntries(S.workspace);
   if (!workspacePanel.classList.contains('hidden')) renderWorkspace();
 }
 

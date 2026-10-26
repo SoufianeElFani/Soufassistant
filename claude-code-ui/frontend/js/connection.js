@@ -11,13 +11,14 @@ import { autoContinueToggle, loginBtn, loginCodeForm, loginCodeInput, loginDesc,
 import { relinkRenderedBubbles } from './links.js';
 import { announcePresence, applyNotifyState, attentionCue, showNotifyTestResult } from './notify.js';
 import { applyModelCatalog, ensureModelOption, updateCtxHint } from './model.js';
-import { renderSessions } from './sessions.js';
+import { renderSessions, applyRuns, switchTo } from './sessions.js';
+import { showToast } from './toast.js';
 import { setAutoContinueSupported } from './settings.js';
 import { hideThinking, showThinking } from './thinking.js';
 import { appendAgentReport, appendAssistantText, appendCompactedDivider, appendErrorBubble, appendInfoLine, appendResultLine, appendTaskNotice, appendToolResult, appendToolUse, appendUserBubble, endToolGroup, renderHistory } from './transcript.js';
 import { renderTasks, updateTasksVisibility } from './tasks.js';
 import { applyWorkspaceEntries, applyWorkspaceState, applyWorkspaceResult, applyPreviews } from './workspace.js';
-import { applyWorkspaceStat, applyWriteResult, applyDeleteResult } from './artifacts.js';
+import { applyWorkspaceStat, applyWriteResult, applyDeleteResult, applyTurnArtifacts, setConversationArtifacts } from './artifacts.js';
 import { applySearchResults, applySessionActionResult } from './sessions.js';
 import { applyTurns, applyRewindResult } from './changes.js';
 import { applySessionMode, applySessionModes } from './modes.js';
@@ -27,6 +28,8 @@ import { renderTeam } from './team.js';
 import { renderUsage } from './usage-panel.js';
 
 // ── WebSocket ─────────────────────────────────────────────────────────────
+
+let modesLoaded = false;   // see 'session_modes'
 
 export function connect() {
   S.ws = new WebSocket(wsUrl);
@@ -150,15 +153,41 @@ export function handleServerMessage(msg) {
       const prevActive = S.activeSessionId;
       S.sessions = Array.isArray(msg.sessions) ? msg.sessions : [];
       S.activeSessionId = msg.activeId || null;
+      if (msg.view !== undefined) S.viewKey = msg.view || null;
       // Opening another conversation restores the mode it was last used in.
       if (S.activeSessionId && S.activeSessionId !== prevActive) applySessionMode(S.activeSessionId);
+      applyRuns(S.runs);   // the "running elsewhere" badge depends on which one is on screen
       if (!sessionsPanel.classList.contains('hidden')) renderSessions();
       break;
     }
 
-    case 'session_modes':
-      applySessionModes(msg.modes);
+    case 'runs':
+      applyRuns(msg.runs);
       break;
+
+    case 'run_finished': {
+      // Another conversation finished out of sight — say so, with a way there.
+      const title = msg.title || 'A conversation';
+      const target = msg.sessionId || msg.key;
+      const text = msg.aborted ? `■ Stopped: ${title}` : msg.ok ? `✓ Done: ${title}` : `⚠ Stopped with an error: ${title}`;
+      showToast(text, { kind: msg.ok ? 'ok' : 'warn', action: target ? { label: 'Open', fn: () => switchTo(target) } : undefined });
+      if (msg.ok) attentionCue('Claude finished', title);
+      break;
+    }
+
+    case 'turn_artifacts':
+      applyTurnArtifacts(msg.files);
+      break;
+
+    case 'session_modes': {
+      // On load the map lands after the conversation itself, so restore its mode
+      // now — once; later broadcasts must not undo a switch the user just made.
+      const first = !modesLoaded;
+      modesLoaded = true;
+      applySessionModes(msg.modes);
+      if (first && S.activeSessionId) applySessionMode(S.activeSessionId);
+      break;
+    }
 
     case 'workspace_state':
       applyWorkspaceState(msg.state);
@@ -207,7 +236,11 @@ export function handleServerMessage(msg) {
       break;
 
     case 'history':
-      renderHistory(msg.items || []);
+      if (msg.view !== undefined) S.viewKey = msg.view || null;
+      S.artifacts = Array.isArray(msg.artifacts) ? msg.artifacts : [];
+      renderHistory(msg.items || [], S.artifacts);
+      setConversationArtifacts(S.artifacts);
+      applyRuns(S.runs);
       S.isRunning = !!msg.running;
       if (S.isRunning) showThinking();
       // The task list itself follows right behind, in the same greeting burst
@@ -266,6 +299,9 @@ export function handleServerMessage(msg) {
 
     case 'cleared':
       clearScreen();
+      S.viewKey = null;
+      setConversationArtifacts([]);
+      applyRuns(S.runs);
       S.isRunning = false;
       S.backgroundTasks = [];
       refreshBgTasksStrip();
@@ -416,6 +452,13 @@ export function handleServerMessage(msg) {
 
     case 'auto_continue_resuming':
       hideAcBanner();
+      // Resuming a conversation that is not the one on screen: it runs out of sight.
+      if (msg.sid && msg.sid !== S.viewKey) {
+        showToast('⏳ Usage limit reset — a conversation is continuing in the background.', {
+          action: { label: 'Open', fn: () => switchTo(msg.sid) },
+        });
+        break;
+      }
       appendInfoLine('⏳ Usage limit reset — continuing automatically…');
       S.isRunning = true;
       updateSendBtn();

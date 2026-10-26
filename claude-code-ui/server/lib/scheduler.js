@@ -30,6 +30,7 @@ import {
 import { log } from './log.js';
 import { broadcast } from './broadcast.js';
 import { runtime } from './state.js';
+import { anyRunning } from './runs.js';
 import { ADDON_CONFIGS_HOOKS } from './permissions.js';
 import { MCP_FREE_SETTINGS } from './mcp.js';
 import { notify } from './notify.js';
@@ -115,7 +116,7 @@ function scheduledCanUseTool(toolName, input) {
 }
 
 async function fireEntry(entry, { manual = false } = {}) {
-  if (runtime.activeQuery) {
+  if (anyRunning()) {
     if (manual) broadcast({ type: 'scheduled_run_busy', id: entry.id });
     else log('INFO', `scheduled task "${entry.name}" skipped this tick — a run is already in progress`);
     return false;

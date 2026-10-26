@@ -8,6 +8,7 @@ import { messagesEl } from './dom.js';
 import { addCopyButton, renderMarkdown } from './links.js';
 import { scrollBottom } from './scroll.js';
 import { renderUsage } from './usage-panel.js';
+import { artifactCard } from './artifacts.js';
 
 // ── Message rendering ──────────────────────────────────────────────────────
 
@@ -412,13 +413,35 @@ export function appendAgentReport({ from, text, ts }) {
 // every re-appended bubble then calls scrollBottom() and the view jumps back
 // to the bottom while the user is reading. So: suppress the per-item
 // auto-scroll, rebuild, then restore where they were in one silent move.
-export function renderHistory(items) {
+/** Group a conversation's artifacts by the reply that wrote them (same `ts`), oldest first. */
+export function artifactGroups(artifacts) {
+  const byTs = new Map();
+  for (const f of artifacts || []) {
+    const k = f.ts || 0;
+    if (!byTs.has(k)) byTs.set(k, []);
+    byTs.get(k).push(f);
+  }
+  return [...byTs.entries()].sort((x, y) => x[0] - y[0]).map(([ts, files]) => ({ ts, files }));
+}
+
+export function renderHistory(items, artifacts = []) {
   const wasPinned = S.stickToBottom;
   const prevTop   = messagesEl.scrollTop;
   S.suppressAutoScroll = true;
   clearScreen();
+  // Each reply's artifact card goes back where it was: after that reply,
+  // before the next prompt typed after it was written.
+  const groups = artifactGroups(artifacts);
+  const flushCards = (beforeTs) => {
+    while (groups.length && (beforeTs == null || groups[0].ts < beforeTs)) {
+      S.lastAssistantBubble = null;
+      endToolGroup();
+      messagesEl.appendChild(artifactCard(groups.shift().files));
+    }
+  };
   try {
     for (const it of items) {
+      if (it.kind === 'user' && it.ts && groups.length) flushCards(it.ts);
       switch (it.kind) {
         case 'user':        S.usage.messages++; appendUserBubble(it.text, it.ts); break;
         case 'text':        appendAssistantText(it.text, it.ts); break;
@@ -439,6 +462,7 @@ export function renderHistory(items) {
     }
     S.lastAssistantBubble = null;
     endToolGroup();   // finalise (and collapse) any trailing tool-call group
+    flushCards(null);
     renderUsage();    // keep the Usage panel in sync with the just-rebuilt totals
   } finally {
     S.suppressAutoScroll = false;

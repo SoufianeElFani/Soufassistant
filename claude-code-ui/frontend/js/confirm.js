@@ -4,9 +4,8 @@
  *
  * Distinct from the permission card and the question dialog it shares markup
  * with: those relay something Claude asked and send an answer back over the
- * socket. This one has no protocol behind it. It exists because `session_switch`
- * and `new_session` both abort the running turn on the server, and doing that
- * without saying so is indistinguishable from the app losing the reply.
+ * socket. This one has no protocol behind it: it guards actions that throw
+ * work away (deleting a conversation or a file, restoring files).
  *
  * A native confirm() would do the job, but it renders as a system alert inside
  * the Home Assistant companion app's WebView, where it reads as coming from

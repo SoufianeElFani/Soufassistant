@@ -50,6 +50,13 @@
             <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/>
           </svg>
         </button>
+        <button id="artifacts-btn" class="icon-btn count-btn" title="Artifacts" aria-label="Artifacts of this conversation">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 2 2 7l10 5 10-5-10-5z"/>
+            <path d="m2 17 10 5 10-5"/>
+            <path d="m2 12 10 5 10-5"/>
+          </svg>
+        </button>
         <button id="workspace-btn" class="icon-btn" title="Workspace" aria-label="Workspace">
           <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
@@ -115,6 +122,7 @@
       <div class="sessions-search-row">
         <input id="sessions-search" class="scheduled-form-input sessions-search" type="search" placeholder="Search all conversations…" autocomplete="off" spellcheck="false">
       </div>
+      <div id="sessions-filter" class="sessions-filter" role="toolbar" aria-label="Filter by mode"></div>
       <div id="sessions-list" class="sessions-list"></div>
     </div>
 
@@ -125,6 +133,11 @@
       </div>
       <div class="workspace-info"><div class="usage-note">Files Claude changed with its file tools, message by message. “Restore” puts them back as they were just before that message (changes made by shell commands are not tracked).</div></div>
       <div id="changes-list" class="sessions-list"></div>
+    </div>
+
+    <div id="artifacts-menu" class="sessions-panel artifacts-menu hidden">
+      <div class="sessions-head">Artifacts</div>
+      <div id="artifacts-menu-list" class="sessions-list"></div>
     </div>
 
     <div id="tasks-panel" class="sessions-panel hidden">
@@ -331,11 +344,12 @@
     </div>
 
     <!-- Artifact viewer: a workspace file (HTML page, image, SVG, Markdown, PDF,
-         CSV, text) previewed next to the chat. HTML runs in a sandboxed iframe
+         PowerPoint / Word / Excel as page images, CSV, text) previewed next to the chat. HTML runs in a sandboxed iframe
          with an opaque origin, so a page cannot reach the app or its socket. -->
     <aside id="artifact-pane" class="artifact-pane hidden" aria-label="Artifact viewer">
       <div class="artifact-head">
         <span id="artifact-title" class="artifact-title"></span>
+        <select id="artifact-switch" class="perm-mode-select artifact-switch hidden" title="This conversation's artifacts" aria-label="Switch artifact"></select>
         <div class="artifact-actions">
           <button id="artifact-edit" type="button" class="find-nav hidden" title="Edit" aria-label="Edit">&#9998;</button>
           <button id="artifact-save" type="button" class="find-nav artifact-save hidden" title="Save (Ctrl+S)" aria-label="Save">Save</button>
