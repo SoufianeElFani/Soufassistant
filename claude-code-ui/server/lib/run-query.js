@@ -53,6 +53,9 @@ import path from 'path';
 // actively in flight. A run waiting on a background task is expected to be
 // quiet for a long time, so the watchdog is exempt in that phase (see
 // runPhase below) and instead logs an occasional heartbeat.
+// After the last background task ends: how long to wait for the CLI's
+// follow-up turn to start before treating the run as over.
+const FOLLOW_UP_GRACE_MS = Number(process.env.FOLLOW_UP_GRACE_MS) || 20000;
 const BACKGROUND_HEARTBEAT_TICKS = Math.max(1, Math.round(300000 / STALL_CHECK_MS)); // ~5 min
 
 /** Stop one conversation's run (the conversation on screen by default). */
@@ -351,9 +354,31 @@ export async function runQuery(ws, { text, permissionMode, model, effort, mode, 
       }
       return;
     }
-    if (runPhase === 'background') log('INFO', 'background task(s) finished; ending run');
+    if (runPhase === 'background') {
+      // The last background task just ended, after the turn's `result`. The CLI
+      // now hands its notification back to the model for a follow-up turn (a
+      // queued prompt runs then too). Closing the channel here, as this used
+      // to, cut that turn off mid-flight: its first tool call came back as
+      // "The user doesn't want to take this action right now". So wait for the
+      // follow-up's own `result` — unless no turn starts at all, which the
+      // grace timer covers.
+      runPhase = 'turn';
+      run.phase = 'turn';
+      resultSeen = false;
+      broadcastRuns();
+      log('INFO', 'background task(s) finished; waiting for the follow-up turn');
+      followUpTimer = setTimeout(() => {
+        followUpTimer = null;
+        if (resultSeen || abortController.signal.aborted) return;
+        log('INFO', 'no follow-up turn after the background task(s); ending run');
+        resultSeen = true;
+        channel.close();
+      }, FOLLOW_UP_GRACE_MS);
+      return;
+    }
     channel.close();
   }
+  let followUpTimer = null;
 
   // Stall watchdog — the reported "chat hangs" symptom. If no SDK event arrives
   // for a while during an active TURN (long thinking, a slow tool, a retry, or
@@ -441,6 +466,9 @@ export async function runQuery(ws, { text, permissionMode, model, effort, mode, 
         }
 
       } else if (event.type === 'assistant') {
+        // The follow-up turn after a background task has started: from here it
+        // ends with its own `result`, however long its tools take.
+        if (followUpTimer) { clearTimeout(followUpTimer); followUpTimer = null; }
         for (const block of (event.message?.content || [])) {
           if (block.type === 'text' && block.text) {
             vlog(`text: ${block.text.length} chars`);
@@ -574,6 +602,7 @@ export async function runQuery(ws, { text, permissionMode, model, effort, mode, 
     }
   } finally {
     clearInterval(watchdog);
+    if (followUpTimer) clearTimeout(followUpTimer);
     channel.close();   // idempotent — tidy up on an error/abort path too
     const stillMine = runtime.runs.get(run.key) === run;
     if (stillMine) runtime.runs.delete(run.key);

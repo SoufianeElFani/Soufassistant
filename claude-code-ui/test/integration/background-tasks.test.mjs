@@ -71,6 +71,7 @@ describe('a background task outliving the foreground turn', () => {
     assert.equal(notice.status, 'completed');
     assert.equal(notice.summary, 'Background agent finished');
 
+    await c.waitFor(() => c.all('result').length >= 2, { timeout: 5000 });
     const results = c.all('result');
     assert.equal(results.length, 2, 'one streamed query legitimately emits a result per turn');
     assert.equal(results.at(-1).background, false);
@@ -242,6 +243,69 @@ describe('the stall watchdog', () => {
       await c.waitFor((m) => m.type === 'background_tasks' && m.tasks.length === 1);
       await c.waitFor((m) => m.type === 'background_tasks' && m.tasks.length === 0);
       assert.ok(!h.stdout.includes('query quiet'), 'the background phase must stay exempt from the stall watchdog');
+    } finally { await h.stop(); }
+  });
+});
+
+describe('the turn that follows a background task finishing', () => {
+  // The last background task ends after the turn's `result`; the CLI then runs
+  // a short follow-up turn for its notification. Closing the input channel at
+  // that moment (as the server used to) cut that turn off: its first tool call
+  // came back "The user doesn't want to take this action right now".
+  function steps({ followUp }) {
+    return [
+      { emit: { type: 'system', subtype: 'background_tasks_changed',
+        tasks: [{ task_id: 'bg9', task_type: 'local_bash', description: 'Watch CI' }] } },
+      { text: 'watching' },
+      { emit: { type: 'result', subtype: 'success', total_cost_usd: 0.01, num_turns: 1, usage } },
+      { sleep: 50 },
+      { emit: { type: 'system', subtype: 'background_tasks_changed', tasks: [] } },
+      { emit: { type: 'system', subtype: 'task_notification', task_id: 'bg9', status: 'completed', summary: 'CI done' } },
+      ...(followUp ? [
+        { sleep: 300 },
+        { tool: { name: 'Read', input: { file_path: '/tmp/ci.output' }, id: 'fu1', output: 'success' } },
+        { text: 'CI is green' },
+        { emit: { type: 'result', subtype: 'success', total_cost_usd: 0.01, num_turns: 1, usage } },
+      ] : []),
+    ];
+  }
+
+  test('is waited for: the run ends with its result, not before', async () => {
+    const h = await startServer({ scenario: { runs: [{ steps: steps({ followUp: true }), noResult: true }] } });
+    try {
+      const c = await h.connect();
+      await c.waitFor('history');
+      c.send({ type: 'prompt', text: 'watch it', permissionMode: 'bypass' });
+      await c.waitFor((m) => m.type === 'background_tasks' && m.tasks.length === 0);
+      const decision = await h.waitForRecord((r) => r.kind === 'tool_decision' && r.tool === 'Read');
+      assert.equal(decision.outcome.behavior, 'allow');
+      await c.waitFor((m) => m.type === 'text' && /CI is green/.test(m.text));
+      await c.waitFor(() => c.all('result').length === 2, { timeout: 5000 });
+      assert.equal(c.all('result').length, 2);
+      assert.ok(h.stdout.includes('waiting for the follow-up turn'));
+      assert.ok(!h.stdout.includes('no follow-up turn'), 'the grace timer must not end a turn that started');
+    } finally { await h.stop(); }
+  });
+
+  test('when none comes, the run still ends after the grace period', async () => {
+    const h = await startServer({
+      env: { FOLLOW_UP_GRACE_MS: '400' },
+      scenario: { runs: [{ steps: steps({ followUp: false }), noResult: true }] },
+    });
+    try {
+      const c = await h.connect();
+      await c.waitFor('history');
+      c.send({ type: 'prompt', text: 'watch it', permissionMode: 'bypass' });
+      await c.waitFor((m) => m.type === 'background_tasks' && m.tasks.length === 0);
+      // (the greeting's own empty `runs` was already received — poll the log instead)
+      const t0 = Date.now();
+      while (!h.stdout.includes('no follow-up turn after the background task(s); ending run') && Date.now() - t0 < 8000) {
+        await new Promise((r) => setTimeout(r, 100));
+      }
+      assert.ok(h.stdout.includes('no follow-up turn after the background task(s); ending run'));
+      const t1 = Date.now();
+      while (c.last('runs')?.runs.length !== 0 && Date.now() - t1 < 5000) await new Promise((r) => setTimeout(r, 100));
+      assert.equal(c.last('runs').runs.length, 0, 'the run is over');
     } finally { await h.stop(); }
   });
 });

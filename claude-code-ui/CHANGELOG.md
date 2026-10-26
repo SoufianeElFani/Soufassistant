@@ -1,3 +1,6 @@
+## 0.5.3
+- **Fixed: Claude's follow-up after a background task was cut short.** When something Claude had left running in the background (watching a build, a long command) finished, the app considered the conversation over at that very moment — just as Claude was starting to read the result — so its first action was refused with "The user doesn't want to take this action right now", and nothing more happened. The app now waits for that short follow-up to finish.
+
 ## 0.5.2
 - **Your phone's dictionary works in the message box.** The box used to tell the keyboard to switch off suggestions, autocorrect and spell-checking, so on a phone you typed without word suggestions or your own dictionary. They are now on, in whatever language you type (on a computer, misspelt words are underlined in your browser's languages).
 
