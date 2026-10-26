@@ -814,6 +814,14 @@ re-renders the panel detaches its own target — handlers return early on
 `!e.target.isConnected` (that bug closed the Workspace panel on a project-chip
 click in 0.3.0).
 
+**The message box keeps the keyboard's dictionary.** `#prompt-input` is
+`spellcheck="true" autocorrect="on"`, no `autocomplete="off"`, and `lang=""`
+(unknown, so the browser spell-checks in the user's own languages rather than
+the page's `en`). `spellcheck="false"` makes Chrome on Android flag the field
+"no suggestions" to the IME, and `autocorrect="off"` does the same on iOS — that
+is how the phone keyboard lost its suggestions and dictionary. Asserted in
+`interactions.test.mjs`.
+
 **Header panels as one family (`frontend/js/panels.js`).** Each panel module
 calls `registerPanel(panelEl, closeFn)`; a MutationObserver on the panel's
 `hidden` class notices it opening, so no open function changed. Rules: one

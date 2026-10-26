@@ -1,3 +1,6 @@
+## 0.5.2
+- **Your phone's dictionary works in the message box.** The box used to tell the keyboard to switch off suggestions, autocorrect and spell-checking, so on a phone you typed without word suggestions or your own dictionary. They are now on, in whatever language you type (on a computer, misspelt words are underlined in your browser's languages).
+
 ## 0.5.1
 - **The header panels behave as one.** Opening a panel closes the one already open, so they never pile up; **Esc** closes it; and opening a document — from the Workspace panel, the Artifacts menu or a card in the chat — closes any open panel. Before, the panel stayed on top of the document, and since the viewer moves the header (or covers it on a narrower window or a phone), the button that would have closed it was no longer there. A click inside the document closes the panel too.
 - **The Artifacts menu is no longer empty.** It now lists the files of older replies as well — conversations from before 0.5.0, and files written by a shell command (a copy, a converted deck), which were never recorded — and "Recent in the workspace" is filled as soon as the app opens, instead of only after a reply or once the Workspace panel had been opened.
