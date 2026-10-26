@@ -145,3 +145,8 @@ export const LIMIT_OFFER_GRACE_MS = 30 * 60 * 1000;
 // a test can see the watchdog actually fire without a real 20s wait.
 export const STALL_WARN_MS = parseInt(process.env.STALL_WARN_MS || '20000', 10);
 export const STALL_CHECK_MS = parseInt(process.env.STALL_CHECK_MS || '15000', 10);
+
+// The app's own in-process MCP tool (image-gen.js): its server name, and the
+// tool's full name as the model and canUseTool see it.
+export const IMAGE_SERVER = 'soufassistant';
+export const IMAGE_TOOL = `mcp__${IMAGE_SERVER}__generate_image`;

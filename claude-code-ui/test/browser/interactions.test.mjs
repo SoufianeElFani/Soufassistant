@@ -704,3 +704,32 @@ describe('the header panels', { skip }, () => {
 
   test('with a clean console', () => assert.deepEqual(errors, []));
 });
+
+describe('adding to what Claude is doing', { skip }, () => {
+  let h, browser, page, errors;
+  before(async () => {
+    h = await startServer({ scenario: { runs: [{ steps: [{ text: 'working on it' }, { sleep: 20000 }] }] } });
+    ({ browser, page, errors } = await launch(h));
+  });
+  after(async () => { if (browser) await browser.close(); if (h) await h.stop(); });
+
+  test('while a turn runs, the button is Stop with an empty box and Send with a draft', async () => {
+    await page.type('#prompt-input', 'build the report');
+    await page.click('#send-btn');
+    await page.waitForFunction(() => /working on it/.test(document.getElementById('messages').textContent), { timeout: 8000 });
+    assert.equal(await page.$eval('#send-btn', (b) => b.getAttribute('aria-label')), 'Stop');
+    await page.type('#prompt-input', 'also a summary');
+    assert.equal(await page.$eval('#send-btn', (b) => b.getAttribute('aria-label')), 'Add to what Claude is doing');
+  });
+
+  test('sending it adds a marked message and keeps the turn running', async () => {
+    await page.click('#send-btn');
+    await page.waitForFunction(() => /Added while Claude was working/.test(document.getElementById('messages').textContent), { timeout: 5000 });
+    const input = await h.waitForRecord((r) => r.kind === 'query');
+    assert.ok(input);
+    assert.equal(h.records().filter((r) => r.kind === 'query').length, 1, 'the turn was not restarted');
+    assert.equal(await page.$eval('#send-btn', (b) => b.getAttribute('aria-label')), 'Stop');
+  });
+
+  test('with a clean console', () => assert.deepEqual(errors, []));
+});

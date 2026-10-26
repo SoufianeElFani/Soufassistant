@@ -15,8 +15,13 @@ import { appendErrorBubble, appendUserBubble } from './transcript.js';
 
 // ── Input form ─────────────────────────────────────────────────────────────
 
+// While a turn is working the button is Stop when the box is empty, and sends
+// (adding to the working turn, without stopping it) when there is something
+// typed — see updateSendBtn and the server's `steer` path in run-query.js.
+const hasDraft = () => !!promptInput.value.trim() || attachments.length > 0;
+
 sendBtn.onclick = (e) => {
-  if (S.isRunning) {
+  if (S.isRunning && !hasDraft()) {
     e.preventDefault();
     S.isRunning = false;
     hideThinking();
@@ -43,7 +48,8 @@ inputForm.onsubmit = async (e) => {
     return;
   }
 
-  if (S.isRunning) return;
+  // Sent while Claude is working: added to the turn in progress, not a restart.
+  const steer = S.isRunning;
 
   // Read the attachments to base64 for upload + the message bubble thumbnails.
   const pending = attachments.slice();
@@ -64,7 +70,7 @@ inputForm.onsubmit = async (e) => {
   if (readFailed) appendErrorBubble(`${readFailed} attachment${readFailed > 1 ? 's' : ''} could not be read and ${readFailed > 1 ? 'were' : 'was'} skipped.`);
   if (!payload.length && !text) { updateSendBtn(); return; }   // nothing usable to send
 
-  appendUserBubble(text, undefined, bubbleAtts);
+  appendUserBubble(text, undefined, bubbleAtts, { steer });
   scrollBottom(true);   // sending a prompt re-pins to the bottom
   promptInput.value = '';
   localStorage.removeItem('draft');
@@ -73,7 +79,7 @@ inputForm.onsubmit = async (e) => {
   S.isRunning = true;
   S.usage.messages++;
   updateSendBtn();
-  showThinking();
+  if (!steer) showThinking();
 
   // Only send a model override if the user explicitly picked one; otherwise let
   // the SDK use its default (which it reports back via the 'model' event).
@@ -85,6 +91,7 @@ inputForm.onsubmit = async (e) => {
     model: localStorage.getItem('model') || undefined,
     effort: localStorage.getItem('effort') || undefined,
     ...currentModeFields(),
+    ...(steer ? { steer: true } : {}),
   }));
 };
 
@@ -119,13 +126,28 @@ export function resizeTextarea() {
   promptInput.style.height = Math.min(promptInput.scrollHeight, 200) + 'px';
 }
 
+const IDLE_PLACEHOLDER = promptInput.placeholder;
+const RUNNING_PLACEHOLDER = 'Add something for Claude — it keeps working…';
+
 export function updateSendBtn() {
-  if (S.isRunning) {
+  promptInput.placeholder = S.isRunning ? RUNNING_PLACEHOLDER : IDLE_PLACEHOLDER;
+  if (S.isRunning && hasDraft() && S.isConnected) {
+    sendBtn.disabled = false;
+    sendBtn.innerHTML = SEND_ICON;
+    sendBtn.setAttribute('aria-label', 'Add to what Claude is doing');
+    sendBtn.title = 'Add to what Claude is doing (it keeps working) — empty the box to get the Stop button';
+    sendBtn.classList.remove('stop');
+    sendBtn.classList.add('steer');
+  } else if (S.isRunning) {
     sendBtn.disabled = false;
     sendBtn.innerHTML = STOP_ICON;
     sendBtn.setAttribute('aria-label', 'Stop');
+    sendBtn.title = 'Stop';
     sendBtn.classList.add('stop');
+    sendBtn.classList.remove('steer');
   } else {
+    sendBtn.classList.remove('steer');
+    sendBtn.title = '';
     sendBtn.disabled = (!promptInput.value.trim() && !attachments.length) || !S.isConnected;
     sendBtn.innerHTML = SEND_ICON;
     sendBtn.setAttribute('aria-label', 'Send');

@@ -815,6 +815,39 @@ re-renders the panel detaches its own target — handlers return early on
 `!e.target.isConnected` (that bug closed the Workspace panel on a project-chip
 click in 0.3.0).
 
+**Adding to a working turn (`steer`).** While a turn runs, the composer's
+button is Stop with an empty box and Send with a draft; a send then carries
+`steer: true`, and `runQuery` pushes the text into the run's input channel
+(the same path a prompt takes into a backgrounded run) instead of aborting it —
+without `steer`, a prompt still replaces the working turn. The CLI takes it in
+at its next step. `run.queuedInputs` counts such messages: while it is non-zero
+the run is not closed on a `result`, but on `session_state_changed: idle` (or,
+if no turn ever starts, the `FOLLOW_UP_GRACE_MS` timer) — closing on the first
+`result` would cut off the answer to the added message. The same timer covers
+the follow-up turn the CLI runs when the last background task ends (0.5.3).
+Tested in `integration/steer.test.mjs` and `interactions.test.mjs`.
+
+**Clarifying questions.** `CLARIFY_PROMPT` (modes.js) is appended in every
+mode: ask with AskUserQuestion before starting only when the ambiguity changes
+the result, 1–3 questions of 2–3 options, no "Other" (the dialog adds a free
+text box to every question). Chat mode's tool list includes AskUserQuestion —
+verified against the real SDK: it is only exposed when canUseTool is set,
+which the app always does except in `auto` (where the PreToolUse hook answers).
+
+**Image generation (`server/lib/image-gen.js`).** An in-process MCP server
+(`createSdkMcpServer`, server `soufassistant`, tool `generate_image`) added to
+every run's `opts.mcpServers` — MCP tools are exposed even when `opts.tools`
+restricts the built-ins (verified with the real SDK), so Chat mode has it too.
+It fetches from Pollinations (free, no key; `IMAGE_GEN_URL` overrides the base,
+which the unit test points at a local fake), saves into `<workspace>/Images/`
+or the Cowork project's `Images/`, and adds the file to `run.writtenPaths`, so
+the reply's artifact card lists it; `artifactCard()` shows image thumbnails
+inline (tap opens the viewer). Auto-approved: `IMAGE_TOOL` in `allowedTools`
+and in canUseTool (it only ever adds a new file). The constant lives in
+config.js so permissions.js does not pull the SDK in. `zod` (v4, the SDK's
+peer) is a server dependency for the tool schema; the stub SDK exports `tool`
+and `createSdkMcpServer` as plain definitions.
+
 **The message box keeps the keyboard's dictionary.** `#prompt-input` is
 `spellcheck="true" autocorrect="on"`, no `autocomplete="off"`, and `lang=""`
 (unknown, so the browser spell-checks in the user's own languages rather than
