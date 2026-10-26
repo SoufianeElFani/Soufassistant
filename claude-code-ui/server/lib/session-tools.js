@@ -84,6 +84,45 @@ export function sessionArtifacts(id, exists = null) {
   return exists ? list.filter((f) => exists(f.path)) : list.slice();
 }
 
+/*
+ * Files a conversation produced before artifacts were recorded (conversations
+ * older than 0.5.0), or that a reply wrote in a way no file tool saw — a shell
+ * `cp` or a converter writing the deck. Read back from the transcript's own
+ * clock: a workspace file whose mtime falls inside one reply's window (its
+ * prompt to its last message, plus a little slack for a final copy) belongs to
+ * that reply. The same heuristic run-query.js applies live (`runArtifacts`).
+ * Pure given its inputs — unit-tested.
+ */
+const INFER_SLACK_BEFORE_MS = 1500;
+const INFER_SLACK_AFTER_MS = 120000;
+
+export function inferArtifacts(items, entries, { limit = MAX_ARTIFACTS_PER_SESSION } = {}) {
+  const windows = [];
+  let cur = null;
+  for (const it of items || []) {
+    if (!it || typeof it.ts !== 'number') continue;
+    if (it.kind === 'user') { cur = { start: it.ts, end: it.ts }; windows.push(cur); }
+    else if (cur && it.ts > cur.end) cur.end = it.ts;
+  }
+  if (!windows.length) return [];
+  const out = [];
+  for (const e of entries || []) {
+    if (!e || typeof e.mtime !== 'number' || /\.conflict\d*/i.test(e.name || e.path || '')) continue;
+    const w = windows.find((x) => e.mtime >= x.start - INFER_SLACK_BEFORE_MS && e.mtime <= x.end + INFER_SLACK_AFTER_MS);
+    if (!w) continue;
+    out.push({ path: e.path, ext: e.ext || '', size: e.size || 0, mtime: e.mtime, ts: w.end });
+  }
+  out.sort((x, y) => (x.ts - y.ts) || (x.mtime - y.mtime));
+  return out.slice(-limit);
+}
+
+/** Recorded artifacts plus the inferred ones they do not already cover, oldest first. */
+export function mergeArtifacts(recorded, inferred) {
+  const seen = new Set((recorded || []).map((f) => f.path));
+  return (recorded || []).concat((inferred || []).filter((f) => !seen.has(f.path)))
+    .sort((x, y) => (x.ts || x.mtime || 0) - (y.ts || y.mtime || 0));
+}
+
 /** listSessions() with custom titles applied, pins first. */
 export function decoratedSessions(list = listSessions()) {
   const out = list.map((s) => ({

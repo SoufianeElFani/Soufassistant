@@ -7,7 +7,7 @@ import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 
 register(new URL('../helpers/sdk-hooks.mjs', import.meta.url));
-const { turnsFromLines, humanPromptText, sessionToMarkdown } = await import('../../server/lib/session-tools.js');
+const { turnsFromLines, humanPromptText, sessionToMarkdown, inferArtifacts, mergeArtifacts } = await import('../../server/lib/session-tools.js');
 const { parseProcNetTcp, inPreviewRange } = await import('../../server/lib/previews.js');
 
 const user = (text, uuid, extra = {}) => ({ type: 'user', uuid, timestamp: '2026-10-25T10:00:00Z', message: { content: text }, ...extra });
@@ -62,5 +62,31 @@ describe('previews', () => {
   test('only the preview port range is proxied', () => {
     assert.ok(inPreviewRange(8100) && inPreviewRange('8150') && inPreviewRange(8199));
     for (const p of [80, 8099, 8200, 7681, 'x', 8100.5]) assert.ok(!inPreviewRange(p), String(p));
+  });
+});
+
+describe('inferArtifacts (conversations older than recorded artifacts, shell copies)', () => {
+  const items = [
+    { kind: 'user', text: 'build a deck', ts: 1000_000 },
+    { kind: 'tool_use', name: 'Bash', input: { command: 'cp out.pptx deck.pptx' }, ts: 1010_000 },
+    { kind: 'text', text: 'done', ts: 1020_000 },
+    { kind: 'user', text: 'thanks', ts: 5000_000 },
+    { kind: 'text', text: 'you are welcome', ts: 5001_000 },
+  ];
+  const e = (p, mtime) => ({ path: p, name: p.split('/').pop(), ext: p.split('.').pop(), size: 1, mtime });
+  test('a file written inside a reply belongs to it, stamped with the reply end', () => {
+    const got = inferArtifacts(items, [e('P/deck.pptx', 1015_000), e('P/old.md', 10), e('P/later.md', 3000_000)]);
+    assert.deepEqual(got.map((f) => [f.path, f.ts]), [['P/deck.pptx', 1020_000]]);
+  });
+  test('a final copy shortly after the last message still counts; conflict copies never do', () => {
+    const got = inferArtifacts(items, [e('P/a.pdf', 1020_000 + 60_000), e('P/a.conflict1.pdf', 1015_000)]);
+    assert.deepEqual(got.map((f) => f.path), ['P/a.pdf']);
+  });
+  test('no timestamps, no inference', () => {
+    assert.deepEqual(inferArtifacts([{ kind: 'user', text: 'x' }], [e('a.md', 1)]), []);
+  });
+  test('merge keeps the recorded entry and adds the rest, oldest first', () => {
+    const merged = mergeArtifacts([{ path: 'a.md', ts: 20 }], [{ path: 'a.md', ts: 5 }, { path: 'b.md', ts: 10 }]);
+    assert.deepEqual(merged.map((f) => f.path), ['b.md', 'a.md']);
   });
 });

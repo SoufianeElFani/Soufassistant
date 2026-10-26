@@ -814,6 +814,26 @@ re-renders the panel detaches its own target — handlers return early on
 `!e.target.isConnected` (that bug closed the Workspace panel on a project-chip
 click in 0.3.0).
 
+**Header panels as one family (`frontend/js/panels.js`).** Each panel module
+calls `registerPanel(panelEl, closeFn)`; a MutationObserver on the panel's
+`hidden` class notices it opening, so no open function changed. Rules: one
+panel at a time (opening one closes the others), Escape closes it (unless a
+confirm/permission/question overlay is up), `openArtifact`/`openPreview` call
+`closeAllPanels()` — under 1000px the viewer covers the whole frame, header
+included, so a panel left open floated over the document with its button out
+of reach — and a click into the viewer's iframe (seen as the window losing
+focus to an IFRAME, since iframe clicks never reach this document) closes them
+too. A new panel must register, or it will stack with the others.
+
+**Artifacts of older replies.** `history.artifacts` is the recorded list
+(`recordArtifacts`, from 0.5.0) merged with `inferArtifacts(items, entries)`:
+workspace files whose mtime falls in one reply's window (its prompt's `ts` to
+its last item's, −1.5 s/+120 s) — the same heuristic as the live
+`runArtifacts`, applied to the transcript. It covers conversations from before
+0.5.0 and files a reply wrote through the shell (a `cp`, a converter). The
+greeting now also sends the `workspace` listing, which the Artifacts menu's
+"Recent in the workspace" reads.
+
 **Skills panel (`server/lib/skills.js`, `server/lib/zip.js`, `frontend/js/skills.js`).**
 Discovers SKILL.md files from three sources: **account** (`~/.claude/skills/
 synced/<bucket>/` — claude.ai-enabled skills the CLI syncs down; last sync from

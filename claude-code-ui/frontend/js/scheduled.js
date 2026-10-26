@@ -5,6 +5,7 @@
  * last-run summary, and a small add/edit form — nothing here talks to the
  * transcript.
  */
+import { registerPanel } from './panels.js';
 import { S } from './state.js';
 import { confirmAction } from './confirm.js';
 import {
@@ -149,3 +150,5 @@ document.addEventListener('click', (e) => {
   if (scheduledPanel.contains(e.target) || scheduledBtn.contains(e.target)) return;
   closeScheduled();
 });
+
+registerPanel(scheduledPanel, closeScheduled);

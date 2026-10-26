@@ -38,6 +38,7 @@
  *   skills.js       the skills panel
  *   changes.js      per-message file changes and restore (rewind)
  *   toast.js        short notices, e.g. another conversation finishing
+ *   panels.js       the header panels as one family: one at a time, Esc, closed by the viewer
  */
 import { promptInput } from './js/dom.js';
 import { connect } from './js/connection.js';

@@ -5,6 +5,7 @@
  * about a conversation — this panel is where the person edits things by
  * hand and sees the result either way, same pattern as scheduled.js.
  */
+import { registerPanel } from './panels.js';
 import { S } from './state.js';
 import { confirmAction } from './confirm.js';
 import {
@@ -152,3 +153,5 @@ document.addEventListener('click', (e) => {
   if (teamPanel.contains(e.target) || teamBtn.contains(e.target)) return;
   closeTeam();
 });
+
+registerPanel(teamPanel, closeTeam);

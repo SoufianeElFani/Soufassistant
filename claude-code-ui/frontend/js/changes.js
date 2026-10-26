@@ -7,6 +7,7 @@
  * would change, then a confirmation runs the real rewind (SDK file
  * checkpoints). Changes made through shell commands are not tracked.
  */
+import { registerPanel } from './panels.js';
 import { S } from './state.js';
 import { changesPanel, changesTitle, changesList, changesClose, changesOpenBtn, sessionsPanel, sessionsBtn } from './dom.js';
 import { confirmAction } from './confirm.js';
@@ -148,3 +149,5 @@ document.addEventListener('click', (e) => {
   if (document.querySelector('#confirm-overlay:not(.hidden)')) return;
   closeChanges();
 });
+
+registerPanel(changesPanel, closeChanges);

@@ -22,6 +22,7 @@
  * Artifacts menu. The server remembers them per conversation, so the cards and
  * the menu come back with the history ('history'.artifacts) after a reload.
  */
+import { registerPanel, closeAllPanels } from './panels.js';
 import { S } from './state.js';
 import {
   wsBase, messagesEl, artifactPane, artifactTitle, artifactBody, artifactOpen,
@@ -275,6 +276,7 @@ async function render() {
 
 export function openArtifact(path, ext, { edit = false } = {}) {
   if (editing && !confirmLeaveEdit()) return;
+  closeAllPanels();
   editing = null;
   current = { path, ext: ext || path.split('.').pop() };
   artifactPane.classList.remove('hidden');
@@ -285,6 +287,7 @@ export function openArtifact(path, ext, { edit = false } = {}) {
 /** A web app running in a Cowork project, through /preview/<port>/ (previews.js). */
 export function openPreview(port) {
   if (editing && !confirmLeaveEdit()) return;
+  closeAllPanels();
   editing = null;
   current = { preview: port };
   artifactPane.classList.remove('hidden');
@@ -559,3 +562,5 @@ document.addEventListener('click', (e) => {
   closeArtifactsMenu();
 });
 renderArtifactsButton();
+
+registerPanel(artifactsMenu, closeArtifactsMenu);

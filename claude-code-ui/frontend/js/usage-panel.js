@@ -11,6 +11,7 @@
  *   2. This conversation (S.usage, accumulated from 'result' events): token
  *      and cost totals, resetting on New chat — the same data /usage prints.
  */
+import { registerPanel } from './panels.js';
 import { S } from './state.js';
 import { usageBtn, usagePanel, usageBodyEl } from './dom.js';
 
@@ -160,3 +161,5 @@ document.addEventListener('click', (e) => {
 
 // The badge tooltip's countdown drifts too; refresh it once a minute.
 setInterval(renderUsageBadge, 60000);
+
+registerPanel(usagePanel, closeUsage);

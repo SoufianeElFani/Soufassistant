@@ -651,3 +651,48 @@ describe("a conversation's artifacts", { skip }, () => {
 
   test('with a clean console', () => assert.deepEqual(errors, []));
 });
+
+describe('the header panels', { skip }, () => {
+  let h, browser, page, errors;
+  const hidden = (sel) => page.$eval(sel, (el) => el.classList.contains('hidden'));
+  before(async () => {
+    h = await startServer({});
+    mkdirSync(path.join(h.dataDir, 'workspace', 'Proj'), { recursive: true });
+    writeFileSync(path.join(h.dataDir, 'workspace', 'Proj', 'notes.md'), '# Notes');
+    ({ browser, page, errors } = await launch(h));
+  });
+  after(async () => { if (browser) await browser.close(); if (h) await h.stop(); });
+
+  test('opening one panel closes the other', async () => {
+    await page.click('#workspace-btn');
+    await page.waitForFunction(() => !document.getElementById('workspace-panel').classList.contains('hidden'));
+    await page.click('#sessions-btn');
+    await page.waitForFunction(() => document.getElementById('workspace-panel').classList.contains('hidden'), { timeout: 3000 });
+    assert.equal(await hidden('#sessions-panel'), false);
+    assert.equal(await page.$eval('#workspace-btn', (el) => el.classList.contains('active')), false);
+  });
+
+  test('Escape closes the open panel', async () => {
+    await page.keyboard.press('Escape');
+    await page.waitForFunction(() => document.getElementById('sessions-panel').classList.contains('hidden'), { timeout: 3000 });
+  });
+
+  test('the Artifacts menu lists recent workspace files without a reply first', async () => {
+    await page.click('#artifacts-btn');
+    await page.waitForFunction(
+      () => /notes\.md/.test(document.getElementById('artifacts-menu').textContent), { timeout: 5000 });
+    await page.keyboard.press('Escape');
+  });
+
+  test('opening a file from the Workspace panel closes the panel', async () => {
+    await page.click('#workspace-btn');
+    await page.waitForFunction(
+      () => /notes\.md/.test(document.getElementById('workspace-panel').textContent), { timeout: 5000 });
+    await page.evaluate(() => [...document.querySelectorAll('#workspace-panel .workspace-item')]
+      .find((r) => /notes\.md/.test(r.textContent)).click());
+    await page.waitForFunction(() => !document.getElementById('artifact-pane').classList.contains('hidden'), { timeout: 5000 });
+    assert.equal(await hidden('#workspace-panel'), true);
+  });
+
+  test('with a clean console', () => assert.deepEqual(errors, []));
+});
