@@ -6,6 +6,7 @@
   "description": "Development/test manifest for the Soufassistant app. NOT shipped in the image — server/package.json is the runtime manifest.",
   "scripts": {
     "test": "NODE_PATH= node --test test/unit/ test/integration/ test/cli/",
+    "test:changed": "node test/run-changed.mjs",
     "test:unit": "NODE_PATH= node --test test/unit/",
     "test:server": "NODE_PATH= node --test test/integration/",
     "test:cli": "NODE_PATH= node --test test/cli/",

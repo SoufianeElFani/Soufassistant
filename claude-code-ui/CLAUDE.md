@@ -117,6 +117,7 @@ rebuild fails with `AppRebuildImageBasedError`).
 ```bash
 cd claude-code-ui
 npm install                # dev-only; server/package.json is the runtime manifest
+npm run test:changed       # fast local check: only the tiers the changed files can break (see test/run-changed.mjs)
 npm test                   # unit + server integration + CLI
 npm run test:browser       # the real UI in headless Chrome (needs Chrome; CHROME_PATH to point it)
 npm run test:live          # smoke test against the deployed app on the real HA box
