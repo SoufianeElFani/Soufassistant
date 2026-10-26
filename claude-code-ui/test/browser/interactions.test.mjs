@@ -325,6 +325,14 @@ describe('a draft left in the box', { skip }, () => {
   });
   after(async () => { if (browser) await browser.close(); if (h) await h.stop(); });
 
+  test('the message box lets the phone keyboard suggest and correct (its dictionary)', async () => {
+    const attrs = await page.$eval('#prompt-input', (el) => ({
+      spellcheck: el.spellcheck, autocorrect: el.getAttribute('autocorrect'), autocomplete: el.getAttribute('autocomplete') }));
+    assert.equal(attrs.spellcheck, true);
+    assert.equal(attrs.autocorrect, 'on');
+    assert.notEqual(attrs.autocomplete, 'off');
+  });
+
   test('survives navigating away and back', async () => {
     await page.type('#prompt-input', 'half a thought about the boiler');
     await page.waitForFunction(
