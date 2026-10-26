@@ -2,6 +2,7 @@
  * The task-list widget (server/lib/tasks.js), driven by the claude-tasks CLI.
  * Independent of the transcript — a small checklist panel, like Sessions.
  */
+import { registerPanel } from './panels.js';
 import { S } from './state.js';
 import { tasksBtn, tasksPanel, tasksListEl } from './dom.js';
 
@@ -64,3 +65,5 @@ document.addEventListener('click', (e) => {
   if (tasksPanel.contains(e.target) || tasksBtn.contains(e.target)) return;
   closeTasks();
 });
+
+registerPanel(tasksPanel, closeTasks);

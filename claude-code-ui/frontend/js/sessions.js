@@ -12,6 +12,7 @@
  * now — several can, side by side — are marked, can be stopped from here, and a
  * new one still waiting for its id is listed at the top.
  */
+import { registerPanel } from './panels.js';
 import { S } from './state.js';
 import { sessionsBtn, sessionsListEl, sessionsPanel, sessionsSearch, sessionsFilterEl } from './dom.js';
 import { confirmAction } from './confirm.js';
@@ -276,3 +277,5 @@ export function closeSessions() {
   sessionsBtn.classList.remove('active');
   openMenuId = null;
 }
+
+registerPanel(sessionsPanel, closeSessions);

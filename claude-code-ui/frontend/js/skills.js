@@ -7,6 +7,7 @@
  * of its SKILL.md, a .zip export (to upload to claude.ai), and a form to
  * create / edit / delete local skills.
  */
+import { registerPanel } from './panels.js';
 import { S } from './state.js';
 import {
   wsBase, skillsBtn, skillsPanel, skillsInfoEl, skillsListEl, skillsNewBtn, skillForm,
@@ -182,3 +183,5 @@ document.addEventListener('click', (e) => {
   if (skillsPanel.contains(e.target) || skillsBtn.contains(e.target) || settingsSkillsBtn.contains(e.target)) return;
   closeSkills();
 });
+
+registerPanel(skillsPanel, closeSkills);

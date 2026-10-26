@@ -66,6 +66,9 @@ function greet(ws) {
 
   // Workspace (root, projects, sync status) and each conversation's last mode.
   send(ws, { type: 'workspace_state', state: workspace.workspaceState() });
+  // The listing too: the Artifacts menu's "Recent in the workspace" and the
+  // panel read it, and it used to arrive only after a reply or on opening the panel.
+  send(ws, { type: 'workspace', entries: workspace.listWorkspaceEntries() });
   send(ws, { type: 'session_modes', modes: sessionModeMap() });
 
   // Plan limits (5-hour / weekly / extra usage): the last snapshot right away,
@@ -112,24 +115,37 @@ function broadcastSessions() {
   broadcast(sessionsMessage());
 }
 
+/**
+ * A conversation's artifacts: the ones recorded reply by reply, plus any its
+ * transcript's timing attributes to it (older conversations, shell copies).
+ * Files deleted since are left out.
+ */
+function conversationArtifacts(id, items) {
+  const recorded = sessionTools.sessionArtifacts(id, (rel) => {
+    const abs = workspace.resolveInWorkspace(rel);
+    return !!abs && existsSync(abs);
+  });
+  let inferred = [];
+  try { inferred = sessionTools.inferArtifacts(items, workspace.listWorkspaceEntries()); } catch { /* best effort */ }
+  return sessionTools.mergeArtifacts(recorded, inferred);
+}
+
 /** The conversation on screen: its transcript, whether it is running, and its artifacts. */
 function historyMessage() {
   const run = viewedRun();
   const id = runtime.activeSessionId;
+  const items = parseSession(id);
   return {
     type: 'history',
     view: viewKey(),
-    items: parseSession(id),
+    items,
     running: !!run,
     // The foreground turn is done but a background task it spawned (a
     // subagent, a backgrounded shell command) is still running — distinct from
     // `running` so the UI can show "finishing up in the background" rather
     // than either idle or the ordinary thinking indicator.
     background: !!run && run.backgroundTasks.size > 0,
-    artifacts: id ? sessionTools.sessionArtifacts(id, (rel) => {
-      const abs = workspace.resolveInWorkspace(rel);
-      return !!abs && existsSync(abs);
-    }) : [],
+    artifacts: id ? conversationArtifacts(id, items) : [],
   };
 }
 

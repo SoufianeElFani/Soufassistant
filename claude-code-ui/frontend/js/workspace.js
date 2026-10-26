@@ -12,13 +12,14 @@
  * reply ('workspace'); the folder/projects/sync state comes over the socket
  * ('workspace_state').
  */
+import { registerPanel } from './panels.js';
 import { S } from './state.js';
 import {
   workspaceBtn, workspacePanel, workspaceListEl, wsBase, workspaceInfoEl, workspaceFolderBtn,
   workspaceRootForm, workspaceRootInput, workspaceRootError, workspaceRootDefault, workspaceRootCancel,
   workspaceProjectsEl, workspaceNewProject, workspaceNewFile, workspacePreviews,
 } from './dom.js';
-import { openArtifact, openPreview, createFile, isPreviewable, fileUrl, iconFor } from './artifacts.js';
+import { openArtifact, openPreview, createFile, isPreviewable, fileUrl, iconFor, renderArtifactsMenu } from './artifacts.js';
 import { renderProjectSelect } from './modes.js';
 
 const ICONS_BY_EXT = {
@@ -183,6 +184,7 @@ export function closeWorkspace() {
 export function applyWorkspaceEntries(entries) {
   S.workspace = Array.isArray(entries) ? entries : [];
   if (!workspacePanel.classList.contains('hidden')) renderWorkspace();
+  if (!document.getElementById('artifacts-menu')?.classList.contains('hidden')) renderArtifactsMenu();
 }
 
 export function applyWorkspaceState(state) {
@@ -242,3 +244,5 @@ document.addEventListener('click', (e) => {
   if (workspacePanel.contains(e.target) || workspaceBtn.contains(e.target)) return;
   closeWorkspace();
 });
+
+registerPanel(workspacePanel, closeWorkspace);

@@ -2,6 +2,7 @@
  * The usage-limit banner. A limit stops a chat mid-thought, and the only thing
  * worth knowing afterwards is whether anything is going to pick it up.
  */
+import { registerPanel } from './panels.js';
 import { S } from './state.js';
 import { completeFromMenu, hideCmdMenu, isMenuOpen, menuIndex, moveMenu, updateCmdMenu } from './commands.js';
 import { resizeTextarea, updateSendBtn } from './composer.js';
@@ -162,3 +163,5 @@ promptInput.onkeydown = (e) => {
     inputForm.dispatchEvent(new Event('submit'));
   }
 };
+
+registerPanel(settingsPanel, () => { settingsPanel.classList.add('hidden'); settingsBtn.classList.remove('active'); });
