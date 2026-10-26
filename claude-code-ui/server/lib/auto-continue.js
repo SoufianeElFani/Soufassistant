@@ -20,6 +20,7 @@ import { log, vlog } from './log.js';
 import { broadcast } from './broadcast.js';
 import { runtime } from './state.js';
 import { isSubscriptionAuth } from './auth.js';
+import { runFor } from './runs.js';
 
 /**
  * `enabled` is the user toggle; `pending` is a scheduled resume; `offer` is the
@@ -109,14 +110,16 @@ function fire() {
   if (!pending) return;
   if (!autoContinue.enabled) return cancel('disabled');
   if (!isSubscriptionAuth()) return cancel('not-subscription');
-  if (!runtime.activeSessionId) return cancel('no-active-session');
-  // A run is somehow already active — wait and retry rather than overlap it.
-  if (runtime.activeQuery) { timer = setTimeout(fire, 30000); return; }
+  // The conversation the limit stopped — not necessarily the one on screen now.
+  const sessionId = pending.sessionId || runtime.activeSessionId;
+  if (!sessionId) return cancel('no-active-session');
+  // That conversation is somehow already running — wait and retry rather than overlap it.
+  if (runFor(sessionId)) { timer = setTimeout(fire, 30000); return; }
 
   autoContinue.pending = null;
   save();
-  log('INFO', `auto-continue: resuming session ${runtime.activeSessionId} (attempt ${pending.attempts})`);
-  broadcast({ type: 'auto_continue_resuming', attempts: pending.attempts });
+  log('INFO', `auto-continue: resuming session ${sessionId} (attempt ${pending.attempts})`);
+  broadcast({ type: 'auto_continue_resuming', attempts: pending.attempts, sid: sessionId });
 
   // Headless run: a fake never-open socket, so send() no-ops and it is not in
   // `connections`. Its user message still broadcasts to real tabs, and any
@@ -128,6 +131,7 @@ function fire() {
     model: pending.model,
     effort: pending.effort,
     autoAttempts: pending.attempts,
+    sessionKey: sessionId,
   });
 }
 
@@ -143,7 +147,7 @@ export function setEnabled(enabled) {
   if (!autoContinue.enabled) return cancel('disabled');
 
   const offer = liveLimitOffer();
-  if (offer && isSubscriptionAuth() && !autoContinue.pending && !runtime.activeQuery) {
+  if (offer && isSubscriptionAuth() && !autoContinue.pending && !runFor(offer.sessionId || runtime.activeSessionId)) {
     autoContinue.offer = null;
     broadcast({ type: 'limit_offer_cleared' });
     schedule(offer);
@@ -156,7 +160,7 @@ export function setEnabled(enabled) {
  * enough to schedule one if the user turns the toggle on after reading the
  * notice.
  */
-export function handleLimitHit(limitHit, { model, effort, permissionMode, autoAttempts }) {
+export function handleLimitHit(limitHit, { model, effort, permissionMode, autoAttempts, sessionId = runtime.activeSessionId }) {
   const supported = isSubscriptionAuth();
   const willResume = autoContinue.enabled && supported && autoAttempts < AUTO_CONTINUE_MAX_ATTEMPTS;
 
@@ -184,6 +188,7 @@ export function handleLimitHit(limitHit, { model, effort, permissionMode, autoAt
         effort: effort || null,
         permissionMode,
         attempts,
+        sessionId: sessionId || null,
       });
     }
     return;
@@ -197,7 +202,7 @@ export function handleLimitHit(limitHit, { model, effort, permissionMode, autoAt
     effort: effort || null,
     permissionMode,
     attempts: autoAttempts + 1,
-    sessionId: runtime.activeSessionId,
+    sessionId: sessionId || null,
   };
   save();
   broadcast({ type: 'limit_offer', resetsAt: limitHit.resetsAt, rateLimitType: limitHit.rateLimitType, supported });
@@ -209,7 +214,7 @@ export function handleLimitHit(limitHit, { model, effort, permissionMode, autoAt
  */
 export function rearmOnBoot() {
   if (!autoContinue.pending) return;
-  if (autoContinue.enabled && isSubscriptionAuth() && runtime.activeSessionId &&
+  if (autoContinue.enabled && isSubscriptionAuth() && (autoContinue.pending.sessionId || runtime.activeSessionId) &&
       autoContinue.pending.attempts <= AUTO_CONTINUE_MAX_ATTEMPTS) {
     schedule(autoContinue.pending);
   } else {

@@ -65,9 +65,26 @@ export function showPermissionPrompt(req) {
   openNextPermission();
 }
 
+/**
+ * A prompt raised by a conversation other than the one on screen says whose it
+ * is — several conversations can be running at once.
+ */
+function setFrom(card, req) {
+  let from = card.querySelector('.card-from');
+  const elsewhere = req && req.sid && req.sid !== S.viewKey;
+  if (!elsewhere) { if (from) from.remove(); return; }
+  if (!from) {
+    from = document.createElement('div');
+    from.className = 'card-from';
+    card.insertBefore(from, card.firstChild);
+  }
+  from.textContent = `From another conversation: ${req.conversation || 'running in the background'}`;
+}
+
 export function openPermission() {
   const { toolName, input, title, canAlways, alwaysLabel } = pendingPerm || {};
   if (!pendingPerm) return;
+  setFrom(permOverlay.querySelector('.permission-card'), pendingPerm);
   permToolChip.textContent = toolName;
   permTitle.textContent = title || `Allow ${toolName}?`;
   const raw = JSON.stringify(input, null, 2);
@@ -134,13 +151,13 @@ permOverlay.onclick = (e) => { if (e.target === permOverlay) laterPermission(); 
 
 export let dialogBuild = null;   // { id, controls, pages, index } for the dialog on screen
 
-export function showUserDialog({ id, payload }) {
+export function showUserDialog({ id, payload, sid, conversation }) {
   const questions = Array.isArray(payload && payload.questions) ? payload.questions
     : (payload && Array.isArray(payload.options)) ? [payload] : [];
   // A shape we don't understand can't be rendered, and leaving the turn paused
   // on a dialog nobody can answer is worse than declining it.
   if (!questions.length) { S.ws.send(JSON.stringify({ type: 'user_dialog_response', id })); return; }
-  pendingDialogs.set(id, { questions });
+  pendingDialogs.set(id, { questions, sid, conversation });
   // Don't barge in over a question already on screen — finish that one first —
   // and don't reopen one that was deliberately set aside. (The server replays
   // pending questions on every connect, so this runs again after a reconnect.)
@@ -153,6 +170,7 @@ export function openDialog(id) {
   if (!entry) return;
   dismissedDialogs.delete(id);
   if (!dialogBuild || dialogBuild.id !== id) buildDialog(id, entry.questions);
+  setFrom(dialogOverlay.querySelector('.permission-card'), entry);
   dialogOverlay.classList.remove('hidden');
   refreshQuestionStrip();
 }

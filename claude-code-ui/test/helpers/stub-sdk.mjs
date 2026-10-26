@@ -229,7 +229,11 @@ export function query({ prompt, options = {} }) {
       if (signal?.aborted) return;
 
       if (step.sleep) {
-        await new Promise((r) => setTimeout(r, step.sleep));
+        // Cut short by an abort, as the real CLI process would be.
+        await new Promise((r) => {
+          const t = setTimeout(r, step.sleep);
+          signal?.addEventListener('abort', () => { clearTimeout(t); r(); }, { once: true });
+        });
 
       } else if (step.throw) {
         throw new Error(step.throw);

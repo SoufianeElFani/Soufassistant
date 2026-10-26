@@ -23,7 +23,7 @@
 import { query } from '@anthropic-ai/claude-agent-sdk';
 import { WORK_DIR } from './config.js';
 import { log, vlog } from './log.js';
-import { runtime } from './state.js';
+import { anyQuery, anyRunning } from './runs.js';
 import { connections, broadcast } from './broadcast.js';
 import { isSubscriptionAuth } from './auth.js';
 
@@ -135,7 +135,7 @@ export async function refreshPlanUsage({ q = null, force = false } = {}) {
   planUsage.lastAttempt = Date.now();
   planUsage.inFlight = (async () => {
     try {
-      const source = q || runtime.activeRun?.q || null;
+      const source = q || anyQuery();
       const raw = source
         ? await withTimeout(source[USAGE_METHOD]({ skip_behaviors: true }), PROBE_TIMEOUT_MS)
         : await probe();
@@ -159,7 +159,7 @@ let pollTimer = null;
 export function startPolling() {
   if (pollTimer) return;
   pollTimer = setInterval(() => {
-    if (!connections.size || runtime.activeQuery) return;
+    if (!connections.size || anyRunning()) return;
     refreshPlanUsage();
   }, POLL_INTERVAL_MS);
   pollTimer.unref?.();

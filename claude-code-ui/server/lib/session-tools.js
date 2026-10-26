@@ -22,13 +22,14 @@ import { log } from './log.js';
 export const FILE_TOOLS = new Set(['Write', 'Edit', 'MultiEdit', 'NotebookEdit']);
 
 // ── Titles and pins ──────────────────────────────────────────────────────────
-let meta = { titles: {}, pinned: [] };
+let meta = { titles: {}, pinned: [], artifacts: {} };
 
 export function loadSessionMeta() {
   try {
     const d = JSON.parse(readFileSync(SESSION_META_FILE, 'utf8'));
-    meta = { titles: d.titles && typeof d.titles === 'object' ? d.titles : {}, pinned: Array.isArray(d.pinned) ? d.pinned : [] };
-  } catch { meta = { titles: {}, pinned: [] }; }
+    const obj = (v) => (v && typeof v === 'object' && !Array.isArray(v) ? v : {});
+    meta = { titles: obj(d.titles), pinned: Array.isArray(d.pinned) ? d.pinned : [], artifacts: obj(d.artifacts) };
+  } catch { meta = { titles: {}, pinned: [], artifacts: {} }; }
 }
 function saveMeta() {
   try { writeFileAtomic(SESSION_META_FILE, JSON.stringify(meta, null, 2)); }
@@ -49,8 +50,38 @@ export function setPinned(id, pinned) {
 
 export function forgetSession(id) {
   delete meta.titles[id];
+  delete meta.artifacts[id];
   meta.pinned = meta.pinned.filter((x) => x !== id);
   saveMeta();
+}
+
+// ── Artifacts ────────────────────────────────────────────────────────────────
+/*
+ * The workspace files each reply produced, remembered per conversation. They
+ * used to exist only as a card appended to the live transcript, so anything
+ * that re-rendered the chat from the stored transcript — a reconnect (a phone
+ * waking up), switching away and back — made them vanish. Kept here, they come
+ * back with the history ('history'.artifacts) and fill the Artifacts menu.
+ */
+const MAX_ARTIFACTS_PER_SESSION = 200;
+
+/** Record what one reply wrote: [{ path, ext, size, mtime }], stamped `ts`. */
+export function recordArtifacts(id, files, ts = Date.now()) {
+  if (!id || !Array.isArray(files) || !files.length) return [];
+  const list = Array.isArray(meta.artifacts[id]) ? meta.artifacts[id] : [];
+  const added = files.map((f) => ({ path: f.path, ext: f.ext || '', size: f.size || 0, mtime: f.mtime || ts, ts }));
+  const paths = new Set(added.map((f) => f.path));
+  // A file rewritten by a later reply belongs to that reply now: one entry each.
+  const next = list.filter((f) => !paths.has(f.path)).concat(added);
+  meta.artifacts[id] = next.slice(-MAX_ARTIFACTS_PER_SESSION);
+  saveMeta();
+  return added;
+}
+
+/** The conversation's artifacts, oldest first, without files deleted since. */
+export function sessionArtifacts(id, exists = null) {
+  const list = (id && Array.isArray(meta.artifacts[id])) ? meta.artifacts[id] : [];
+  return exists ? list.filter((f) => exists(f.path)) : list.slice();
 }
 
 /** listSessions() with custom titles applied, pins first. */
@@ -190,6 +221,7 @@ export async function duplicateSession(id) {
   if (!newId) return { ok: false, error: 'The copy could not be created.' };
   const src = decoratedSessions().find((x) => x.id === id);
   if (src) renameSession(newId, `${src.title} (copy)`);
+  if (meta.artifacts[id]) { meta.artifacts[newId] = meta.artifacts[id].slice(); saveMeta(); }
   return { ok: true, id: newId };
 }
 

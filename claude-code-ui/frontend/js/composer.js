@@ -6,7 +6,6 @@ import { currentModeFields } from './modes.js';
 import { S } from './state.js';
 import { attachments, clearAttachments, fileToDataURL } from './attachments.js';
 import { SEND_ICON, STOP_ICON, UI_COMMANDS, clearScreen, hideCmdMenu, showHelp, showUsage } from './commands.js';
-import { confirmInterrupt } from './confirm.js';
 import { inputForm, permModeSelect, promptInput, sendBtn, statusDot } from './dom.js';
 import { openFind } from './find.js';
 import { scrollBottom } from './scroll.js';
@@ -75,7 +74,6 @@ inputForm.onsubmit = async (e) => {
   S.usage.messages++;
   updateSendBtn();
   showThinking();
-  S.runStartedAt = Date.now();
 
   // Only send a model override if the user explicitly picked one; otherwise let
   // the SDK use its default (which it reports back via the 'model' event).
@@ -98,19 +96,12 @@ export function doNewSession() {
 }
 
 /**
- * Start a new chat, warning first if that would abandon a turn in progress.
- * Every route to a new chat goes through here — the button, /new — so the guard
- * cannot be reached around.
+ * Start a new chat. A turn in progress is not stopped: that conversation keeps
+ * running out of sight (see the server's runs.js) and is in Sessions, marked
+ * as running, to come back to. Every route to a new chat goes through here —
+ * the button, /new.
  */
 export async function requestNewSession() {
-  if (S.isRunning) {
-    const ok = await confirmInterrupt({
-      body: 'Starting a new chat will stop what it is doing now. This conversation is '
-          + 'saved either way — you can come back to it from Sessions.',
-      confirm: 'Stop and start a new chat',
-    });
-    if (!ok) return;
-  }
   doNewSession();
 }
 

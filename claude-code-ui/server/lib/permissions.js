@@ -81,10 +81,13 @@ export const ADDON_CONFIGS_HOOKS = ADDON_CONFIGS_HOOK
  * (checking `tool_name !== 'AskUserQuestion'` and returning `{continue:true}`
  * unchanged), one more control-protocol message per call for nothing.
  */
-export function hooksFor(mode) {
+export function hooksFor(mode, run = null) {
   const pre = [];
   if (ADDON_CONFIGS_HOOK) pre.push({ hooks: [ADDON_CONFIGS_HOOK] });
-  if (mode === 'auto') pre.push({ matcher: 'AskUserQuestion', hooks: [askQuestionHook] });
+  if (mode === 'auto') {
+    const hook = run ? (input, id, opts) => askQuestionHook(input, id, opts, run) : askQuestionHook;
+    pre.push({ matcher: 'AskUserQuestion', hooks: [hook] });
+  }
   return pre.length ? { PreToolUse: pre } : undefined;
 }
 
@@ -122,12 +125,14 @@ function clearIfSettled() {
  * Switching to a more permissive mode mid-prompt should not leave a card on
  * screen that the new mode would now allow — across every tab.
  */
-export function resolvePromptsAllowedBy(mode) {
+export function resolvePromptsAllowedBy(mode, sid = undefined) {
   if (mode !== 'bypass' && mode !== 'acceptEdits') return;
   const permits = (toolName) => mode === 'bypass' || EDIT_TOOLS.has(toolName);
 
   for (const [id, entry] of pendingPermissions) {
     if (!permits(entry.toolName)) continue;
+    // The mode belongs to one conversation: another one's prompts stay put.
+    if (sid !== undefined && entry.req.sid !== undefined && entry.req.sid !== sid) continue;
     pendingPermissions.delete(id);
     entry.resolve('allow');
     broadcast({ type: 'permission_resolved', id });
@@ -138,19 +143,21 @@ export function resolvePromptsAllowedBy(mode) {
 /**
  * Build the canUseTool for one run.
  *
- * It reads `runtime.activePermMode` at call time rather than closing over the
- * mode it was built with, which is what makes switching modes mid-prompt take
- * effect immediately.
+ * It reads the run's `permissionMode` (or, with no run, `runtime.activePermMode`)
+ * at call time rather than closing over the mode it was built with, which is
+ * what makes switching modes mid-prompt take effect immediately. Every prompt
+ * carries the run's conversation (`sid`, `conversation`), so a tab showing
+ * another conversation can say whose question it is.
  */
-export function makeCanUseTool() {
+export function makeCanUseTool(run = null) {
   return (toolName, input, options) => {
     // A question is Claude asking the human something, not an action needing
     // approval — it never reaches the permission modes below.
     if (toolName === 'AskUserQuestion') {
-      return askQuestion(input, options.signal).then((answer) => formatQuestionDenial(input, answer));
+      return askQuestion(input, options.signal, run).then((answer) => formatQuestionDenial(input, answer));
     }
 
-    const mode = runtime.activePermMode;
+    const mode = run ? run.permissionMode : runtime.activePermMode;
     if (mode === 'bypass' || (mode === 'acceptEdits' && EDIT_TOOLS.has(toolName))) {
       return Promise.resolve({ behavior: 'allow', updatedInput: input });
     }
@@ -177,6 +184,7 @@ export function makeCanUseTool() {
         canAlways: suggestions.length > 0,
         alwaysLabel: describeSuggestions(suggestions),
       };
+      if (run) { req.sid = run.key; req.conversation = run.title || null; }
 
       // Broadcast, not just sent to the asking tab — the prompt belongs to the
       // run, not to whichever socket happened to be open when it was raised,

@@ -23,6 +23,23 @@ RUN apt-get update \
         tree \
     && rm -rf /var/lib/apt/lists/*
 
+# Document previews in the artifact viewer (server/lib/doc-preview.js):
+# LibreOffice turns PowerPoint / Word / Excel files into PDF, poppler turns a
+# PDF into page images. Also there for the agent itself (python-pptx decks are
+# checked by rendering them). Carlito/Liberation stand in for Calibri/Arial so
+# Office layouts keep their metrics.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        libreoffice-impress \
+        libreoffice-writer \
+        libreoffice-calc \
+        poppler-utils \
+        fonts-liberation \
+        fonts-crosextra-carlito \
+        fonts-crosextra-caladea \
+        fonts-dejavu-core \
+    && rm -rf /var/lib/apt/lists/*
+
 # uv — used to provision a standalone Python 3.12 for the optional ESPHome venv
 # (Debian bookworm ships 3.11, but ESPHome needs >=3.12) and by the debug
 # /diag/uvx endpoint. Debian has no `uv` apt package; install the wheel.
@@ -56,7 +73,7 @@ WORKDIR /config
 
 # Copy application files
 # (bump SCRIPTS_VER to force Docker layer re-copy on next build)
-ARG SCRIPTS_VER=31
+ARG SCRIPTS_VER=32
 COPY server/index.js /opt/server/index.js
 COPY server/lib/ /opt/server/lib/
 COPY frontend/ /opt/frontend/

@@ -50,11 +50,13 @@ export function formatQuestionDenial(toolInput, result) {
  * was the instant it was asked. The only things that end the wait are an answer,
  * Skip, or the run itself ending.
  */
-export function askQuestion(toolInput, signal) {
+export function askQuestion(toolInput, signal, run = null) {
   return new Promise((resolve) => {
     const id = randomUUID();
-    pendingDialogs.set(id, { payload: toolInput, resolve });
-    broadcast({ type: 'user_dialog', id, dialogKind: 'askUserQuestion', payload: toolInput });
+    // Which conversation is asking — a tab showing another one says so.
+    const from = run ? { sid: run.key, conversation: run.title || null } : {};
+    pendingDialogs.set(id, { payload: toolInput, resolve, ...from });
+    broadcast({ type: 'user_dialog', id, dialogKind: 'askUserQuestion', payload: toolInput, ...from });
     notify('question', {
       title: 'Claude has a question',
       message: toolInput?.questions?.[0]?.question || toolInput?.questions?.[0]?.header || 'Waiting for your answer',
@@ -87,10 +89,10 @@ export function answerDialog(id, result) {
  * interception happens as a PreToolUse hook — which runs in every mode and
  * short-circuits the tool before it executes.
  */
-export async function askQuestionHook(input, _toolUseID, options) {
+export async function askQuestionHook(input, _toolUseID, options, run = null) {
   if (input?.tool_name !== 'AskUserQuestion') return { continue: true };
   const toolInput = input.tool_input || {};
-  const answer = await askQuestion(toolInput, options?.signal);
+  const answer = await askQuestion(toolInput, options?.signal, run);
   const denial = formatQuestionDenial(toolInput, answer);
   return {
     continue: true,

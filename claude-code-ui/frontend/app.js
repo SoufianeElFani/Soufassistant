@@ -37,6 +37,7 @@
  *   artifacts.js    the artifact viewer next to the chat
  *   skills.js       the skills panel
  *   changes.js      per-message file changes and restore (rewind)
+ *   toast.js        short notices, e.g. another conversation finishing
  */
 import { promptInput } from './js/dom.js';
 import { connect } from './js/connection.js';
