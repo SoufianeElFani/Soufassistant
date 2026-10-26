@@ -334,4 +334,8 @@ export async function forkSession(sessionId, { dir } = {}) {
   return { sessionId: id };
 }
 
-export default { query, forkSession };
+/** In-process MCP helpers: the stub only keeps the definitions (image-gen.js). */
+export function tool(name, description, inputSchema, handler) { return { name, description, inputSchema, handler }; }
+export function createSdkMcpServer({ name, version, tools = [] }) { return { type: 'sdk', name, version, tools, instance: null }; }
+
+export default { query, forkSession, tool, createSdkMcpServer };

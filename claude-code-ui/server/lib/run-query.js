@@ -40,6 +40,7 @@ import * as autoContinue from './auto-continue.js';
 import { refreshPlanUsage } from './plan-usage.js';
 import { modeOptions, normalizeMode, coworkWriteGuard, rememberSessionMode, sessionModeMap } from './modes.js';
 import { workspaceRoot, activeProject, projectDir } from './workspace.js';
+import { imageMcpServer, IMAGE_TOOL } from './image-gen.js';
 import { disabledOverrides } from './skills.js';
 import { decoratedSessions, recordArtifacts, FILE_TOOLS } from './session-tools.js';
 import { listPreviews } from './previews.js';
@@ -121,7 +122,7 @@ function runArtifacts(run, entries) {
  * the usual case, a prompt typed in the UI — it is the conversation on screen,
  * and a new conversation on screen gets a draft key until its id arrives.
  */
-export async function runQuery(ws, { text, permissionMode, model, effort, mode, project, autoAttempts = 0, sessionKey }) {
+export async function runQuery(ws, { text, permissionMode, model, effort, mode, project, autoAttempts = 0, sessionKey, steer = false }) {
   let key = sessionKey || viewKey();
   const existing = runFor(key);
 
@@ -131,10 +132,20 @@ export async function runQuery(ws, { text, permissionMode, model, effort, mode, 
   // — aborting would kill the background work, which is the bug this exists to
   // avoid. (autoAttempts !== 0 is a headless auto-continue resume, which always
   // starts its own run.)
-  if (autoAttempts === 0 && existing?.phase === 'background') {
-    if (isViewed(existing)) for (const c of connections) if (c !== ws) send(c, { type: 'user', text, sid: existing.key });
+  //
+  // The same goes for a message sent *while a turn is working* when the user
+  // means to add to it rather than start over (`steer`, the composer's send
+  // button during a run): the CLI takes it in at its next step, without the
+  // turn being stopped. The run then stays open until the CLI is idle again —
+  // see `queuedInputs` in the run loop.
+  const steering = autoAttempts === 0 && existing?.channel && (existing.phase === 'background' || (steer && existing.phase === 'turn'));
+  if (steering) {
+    if (isViewed(existing)) for (const c of connections) if (c !== ws) send(c, { type: 'user', text, sid: existing.key, steer: existing.phase === 'turn' });
+    existing.queuedInputs = (existing.queuedInputs || 0) + 1;
     existing.channel.push(text);
-    log('INFO', `prompt queued into backgrounded run (waiting on ${existing.backgroundTasks.size} task(s)): promptLen=${text.length}`);
+    log('INFO', existing.phase === 'background'
+      ? `prompt queued into backgrounded run (waiting on ${existing.backgroundTasks.size} task(s)): promptLen=${text.length}`
+      : `message added to the working turn: promptLen=${text.length}`);
     if (model && model !== existing.model) {
       existing.model = model;
       existing.q.setModel(model).catch((e) => log('WARN', `setModel on backgrounded run failed: ${e?.message || e}`));
@@ -219,6 +230,17 @@ export async function runQuery(ws, { text, permissionMode, model, effort, mode, 
   // Changes panel (session-tools.js rewindTo). A chat turn writes no files.
   if (runMode !== 'chat') opts.enableFileCheckpointing = true;
   opts.systemPrompt = mo.systemPrompt ?? { type: 'preset', preset: 'claude_code', append: mo.append };
+  // Image generation (image-gen.js), in every mode: into the Cowork project's
+  // Images/ folder, else the workspace's, and counted as this run's artifact.
+  opts.mcpServers = {
+    ...(opts.mcpServers || {}),
+    soufassistant: imageMcpServer({
+      targetDir: () => path.join(mo.coworkDir || workspaceRoot(), 'Images'),
+      onSaved: (abs) => run.writtenPaths.add(path.normalize(abs)),
+      workspaceRoot,
+    }),
+  };
+  opts.allowedTools = [...(opts.allowedTools || []), IMAGE_TOOL];
   if (mo.coworkDir) {
     const pre = [...(opts.hooks?.PreToolUse || []), { hooks: [coworkWriteGuard(mo.coworkDir, WORK_DIR)] }];
     opts.hooks = { ...(opts.hooks || {}), PreToolUse: pre };
@@ -354,6 +376,13 @@ export async function runQuery(ws, { text, permissionMode, model, effort, mode, 
       }
       return;
     }
+    if (run.queuedInputs > 0 && runPhase !== 'background') {
+      // A message was added while this run was working: the CLI answers it
+      // (in the same turn or one of its own) and reports idle when nothing is
+      // left. Wait for that, not for the first `result` after it was sent.
+      armFollowUpTimer('message(s) added during the run');
+      return;
+    }
     if (runPhase === 'background') {
       // The last background task just ended, after the turn's `result`. The CLI
       // now hands its notification back to the model for a follow-up turn (a
@@ -367,18 +396,26 @@ export async function runQuery(ws, { text, permissionMode, model, effort, mode, 
       resultSeen = false;
       broadcastRuns();
       log('INFO', 'background task(s) finished; waiting for the follow-up turn');
-      followUpTimer = setTimeout(() => {
-        followUpTimer = null;
-        if (resultSeen || abortController.signal.aborted) return;
-        log('INFO', 'no follow-up turn after the background task(s); ending run');
-        resultSeen = true;
-        channel.close();
-      }, FOLLOW_UP_GRACE_MS);
+      armFollowUpTimer('the background task(s)');
       return;
     }
     channel.close();
   }
   let followUpTimer = null;
+  // Ends the run if the turn being waited for never starts (no `assistant`
+  // event within the grace period) — a safety net, never the normal path.
+  function armFollowUpTimer(what) {
+    if (followUpTimer) clearTimeout(followUpTimer);
+    followUpTimer = setTimeout(() => {
+      followUpTimer = null;
+      if (abortController.signal.aborted) return;
+      if (run.queuedInputs > 0) run.queuedInputs = 0;
+      else if (resultSeen) return;
+      log('INFO', `no follow-up turn after ${what}; ending run`);
+      resultSeen = true;
+      maybeEndRun();
+    }, FOLLOW_UP_GRACE_MS);
+  }
 
   // Stall watchdog — the reported "chat hangs" symptom. If no SDK event arrives
   // for a while during an active TURN (long thinking, a slow tool, a retry, or
@@ -449,6 +486,12 @@ export async function runQuery(ws, { text, permissionMode, model, effort, mode, 
         vlog(`session state: ${event.state}`);
         if (event.state === 'idle') {
           notify('reply', { title: 'Claude finished', message: replyMessage() });
+          // Nothing left queued: an added message has been answered.
+          if (run.queuedInputs > 0) {
+            run.queuedInputs = 0;
+            if (followUpTimer) { clearTimeout(followUpTimer); followUpTimer = null; }
+            maybeEndRun();
+          }
         }
 
       } else if (event.type === 'system' && event.subtype === 'background_tasks_changed') {
@@ -466,9 +509,11 @@ export async function runQuery(ws, { text, permissionMode, model, effort, mode, 
         }
 
       } else if (event.type === 'assistant') {
-        // The follow-up turn after a background task has started: from here it
-        // ends with its own `result`, however long its tools take.
+        // The follow-up turn after a background task (or for an added message)
+        // has started: from here it ends with its own `result`, however long
+        // its tools take.
         if (followUpTimer) { clearTimeout(followUpTimer); followUpTimer = null; }
+        if (run.queuedInputs > 0 && resultSeen && !event.parent_tool_use_id) resultSeen = false;
         for (const block of (event.message?.content || [])) {
           if (block.type === 'text' && block.text) {
             vlog(`text: ${block.text.length} chars`);

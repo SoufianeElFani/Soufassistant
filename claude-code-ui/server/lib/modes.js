@@ -34,7 +34,22 @@ export function normalizeMode(m) {
 }
 
 /** Tools a chat turn may use. Everything else is removed from the model's context. */
-export const CHAT_TOOLS = ['WebSearch', 'WebFetch'];
+export const CHAT_TOOLS = ['WebSearch', 'WebFetch', 'AskUserQuestion'];
+
+/**
+ * When to ask before answering — every mode. The app shows each question as a
+ * card with the options as choices and adds a free-text "Other" box itself.
+ */
+export const CLARIFY_PROMPT = [
+  'Clarifying questions: when a request is genuinely ambiguous in a way that would change what',
+  'you produce (the audience, the scope, which of several plausible readings, a choice only the',
+  'user can make), ask BEFORE starting the work, with the AskUserQuestion tool: one to three short',
+  'questions, each with two to three concrete options (put the one you recommend first). Do not',
+  'add an "Other" option — the app adds a free-text box to every question. Do not ask when the',
+  'request is clear, when a sensible default exists (state the assumption instead), or for',
+  'trivial choices; most requests need no question at all. The user may also add a message while',
+  'you are working: treat it as an addition to the current task, not a new one.',
+].join(' ');
 
 export const CHAT_PROMPT = [
   'You are in **Chat mode** in Soufassistant: a plain conversation, like claude.ai.',
@@ -43,6 +58,7 @@ export const CHAT_PROMPT = [
   'If the user asks for something that needs files, code execution or the house,',
   'tell them to switch to Code mode (Home Assistant / config work) or Cowork mode (building',
   'documents, pages or small apps in a workspace project).',
+  CLARIFY_PROMPT,
 ].join(' ');
 
 export function coworkPrompt(projectDirAbs, projectName) {
@@ -93,11 +109,11 @@ export function modeOptions(mode, ctx = {}) {
     return {
       mode: m,
       opts: { additionalDirectories: [ctx.projectDir] },
-      append: `${ws}\n\n${coworkPrompt(ctx.projectDir, ctx.project)}`,
+      append: `${ws}\n\n${coworkPrompt(ctx.projectDir, ctx.project)}\n\n${CLARIFY_PROMPT}`,
       coworkDir: ctx.projectDir,
     };
   }
-  return { mode: m, opts: {}, append: ws, coworkDir: null };
+  return { mode: m, opts: {}, append: `${ws}\n\n${CLARIFY_PROMPT}`, coworkDir: null };
 }
 
 /** True when `p` is `dir` itself or inside it (both absolute). */

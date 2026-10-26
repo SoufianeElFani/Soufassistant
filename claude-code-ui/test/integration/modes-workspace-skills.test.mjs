@@ -27,13 +27,13 @@ describe('modes', () => {
   });
   after(async () => { await h.stop(); });
 
-  test('chat runs with web tools only, no plugins or setting sources, and its own system prompt', async () => {
+  test('chat runs with web tools (and questions) only, no plugins or setting sources, and its own system prompt', async () => {
     const c = await h.connect();
     await c.waitFor('history');
     c.send({ type: 'prompt', text: 'hi', permissionMode: 'bypass', mode: 'chat' });
     await c.waitFor('result');
     const o = lastQuery(h);
-    assert.deepEqual(o.tools, ['WebSearch', 'WebFetch']);
+    assert.deepEqual(o.tools, ['WebSearch', 'WebFetch', 'AskUserQuestion']);
     assert.deepEqual(o.plugins, []);
     assert.deepEqual(o.settingSources, []);
     assert.equal(o.systemPrompt, 'custom');

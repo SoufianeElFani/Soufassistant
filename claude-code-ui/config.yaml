@@ -1,5 +1,5 @@
 name: "Soufassistant"
-version: "0.5.3"
+version: "0.6.0"
 slug: "soufassistant"
 # Prebuilt by CI (.github/workflows/build.yml) and public on GHCR, so Supervisor
 # pulls instead of building on the Green. CI publishes a version only when

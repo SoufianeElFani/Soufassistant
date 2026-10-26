@@ -10,7 +10,7 @@
  */
 import { randomUUID } from 'crypto';
 import {
-  ALLOW_ADDON_CONFIGS, ADDON_CONFIGS_PATH, ENABLE_ESPHOME, ESPHOME_CONFIG_DIR, EDIT_TOOLS,
+  ALLOW_ADDON_CONFIGS, ADDON_CONFIGS_PATH, ENABLE_ESPHOME, ESPHOME_CONFIG_DIR, EDIT_TOOLS, IMAGE_TOOL,
 } from './config.js';
 import { log } from './log.js';
 import { runtime } from './state.js';
@@ -156,6 +156,9 @@ export function makeCanUseTool(run = null) {
     if (toolName === 'AskUserQuestion') {
       return askQuestion(input, options.signal, run).then((answer) => formatQuestionDenial(input, answer));
     }
+
+    // The app's own image tool only ever adds a new image to the workspace.
+    if (toolName === IMAGE_TOOL) return Promise.resolve({ behavior: 'allow', updatedInput: input });
 
     const mode = run ? run.permissionMode : runtime.activePermMode;
     if (mode === 'bypass' || (mode === 'acceptEdits' && EDIT_TOOLS.has(toolName))) {

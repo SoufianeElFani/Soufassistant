@@ -310,7 +310,7 @@ export function handleServerMessage(msg) {
 
     case 'user':
       // A prompt sent from another connected client/tab
-      appendUserBubble(msg.text);
+      appendUserBubble(msg.text, undefined, undefined, { steer: !!msg.steer });
       break;
 
     case 'auth_url':

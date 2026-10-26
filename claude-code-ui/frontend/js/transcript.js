@@ -30,10 +30,18 @@ export function addTime(bubble, ts) {
   bubble.appendChild(t);
 }
 
-export function appendUserBubble(text, ts, atts) {
+export function appendUserBubble(text, ts, atts, { steer = false } = {}) {
   S.lastAssistantBubble = null;
   endToolGroup();
   const div = mkBubble('user');
+  // Added while Claude was working: it took it in without stopping.
+  if (steer) {
+    div.classList.add('bubble-steer');
+    const tag = document.createElement('div');
+    tag.className = 'bubble-steer-tag';
+    tag.textContent = 'Added while Claude was working';
+    div.querySelector('.bubble-content').before(tag);
+  }
   const content = div.querySelector('.bubble-content');
   // Attachment thumbnails/chips (live send only) above the text.
   if (atts && atts.length) {

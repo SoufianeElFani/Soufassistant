@@ -420,6 +420,24 @@ export function artifactCard(files) {
   head.className = 'artifact-card-head';
   head.textContent = files.length === 1 ? 'Artifact' : `Artifacts (${files.length})`;
   card.appendChild(head);
+  // Images show right in the chat (generated pictures above all — on a phone
+  // the viewer is a full-screen step away); a tap opens the viewer.
+  const images = files.filter((f) => kindOf(f.ext) === 'image');
+  if (images.length) {
+    const strip = document.createElement('div');
+    strip.className = 'artifact-thumbs';
+    for (const f of images.slice(0, 6)) {
+      const img = document.createElement('img');
+      img.className = 'artifact-thumb';
+      img.loading = 'lazy';
+      img.alt = f.path.split('/').pop();
+      img.title = `Open ${f.path}`;
+      img.src = `${fileUrl(f.path)}?v=${Math.round(f.mtime || f.ts || 0)}`;
+      img.onclick = () => openFile(f);
+      strip.appendChild(img);
+    }
+    card.appendChild(strip);
+  }
   for (const f of files) {
     const b = document.createElement('button');
     b.type = 'button';
