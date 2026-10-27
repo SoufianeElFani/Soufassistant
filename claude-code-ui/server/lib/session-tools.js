@@ -18,6 +18,7 @@ import path from 'path';
 import { SESSION_META_FILE, WORK_DIR } from './config.js';
 import { sessionFile, parseSession, isHarnessEcho, parseTaskNotification, NON_HUMAN_ORIGIN_KINDS, listSessions } from './sessions.js';
 import { log } from './log.js';
+import { resolveInWorkspace } from './workspace.js';
 
 export const FILE_TOOLS = new Set(['Write', 'Edit', 'MultiEdit', 'NotebookEdit']);
 
@@ -123,14 +124,46 @@ export function mergeArtifacts(recorded, inferred) {
     .sort((x, y) => (x.ts || x.mtime || 0) - (y.ts || y.mtime || 0));
 }
 
-/** listSessions() with custom titles applied, pins first. */
+/** How many of a conversation's artifacts the Sessions list carries per row. */
+export const LISTED_ARTIFACTS = 12;
+
+function fileExists(rel) {
+  const abs = resolveInWorkspace(rel);
+  return !!abs && existsSync(abs);
+}
+
+/**
+ * The Sessions list's view of a conversation's artifacts: the recorded ones
+ * still on disk, newest first — how many, and the latest few to open from the
+ * list. (The inferred ones need the transcript read; the conversation itself
+ * shows those once opened.)
+ */
+export function listedArtifacts(id, exists = fileExists) {
+  const live = sessionArtifacts(id, exists);
+  const seen = new Set();
+  const out = [];
+  for (let i = live.length - 1; i >= 0; i--) {
+    const f = live[i];
+    if (seen.has(f.path)) continue;
+    seen.add(f.path);
+    out.push({ path: f.path, ext: f.ext || '' });
+  }
+  return { count: out.length, files: out.slice(0, LISTED_ARTIFACTS) };
+}
+
+/** listSessions() with custom titles applied, pins first, and each one's artifacts. */
 export function decoratedSessions(list = listSessions()) {
-  const out = list.map((s) => ({
-    ...s,
-    title: meta.titles[s.id] || s.title,
-    autoTitle: s.title,
-    pinned: meta.pinned.includes(s.id),
-  }));
+  const out = list.map((s) => {
+    const a = meta.artifacts[s.id] ? listedArtifacts(s.id) : { count: 0, files: [] };
+    return {
+      ...s,
+      title: meta.titles[s.id] || s.title,
+      autoTitle: s.title,
+      pinned: meta.pinned.includes(s.id),
+      artifactCount: a.count,
+      artifacts: a.files,
+    };
+  });
   return out.sort((a, b) => (b.pinned - a.pinned) || (b.updatedAt - a.updatedAt));
 }
 

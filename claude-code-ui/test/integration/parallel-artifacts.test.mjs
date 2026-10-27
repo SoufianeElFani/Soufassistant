@@ -73,6 +73,12 @@ describe('two conversations running at once', () => {
     assert.equal(hist.view, 'two');
     assert.deepEqual(hist.artifacts.map((f) => f.path), ['Proj/report.md']);
     assert.ok(hist.artifacts[0].ts > 0, 'stamped with the reply that wrote it');
+
+    // The Sessions list knows which conversations have artifacts, and which.
+    const list = await d.waitFor('sessions');
+    const two = list.sessions.find((s) => s.id === 'two');
+    assert.equal(two.artifactCount, 1);
+    assert.deepEqual(two.artifacts, [{ path: 'Proj/report.md', ext: 'md' }]);
   });
 
   test('a conversation shows its own artifacts, not the other one’s', async () => {

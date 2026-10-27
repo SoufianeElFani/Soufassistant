@@ -3,6 +3,8 @@
  * keyboard shortcuts.
  */
 import { currentModeFields } from './modes.js';
+import { currentRoleIds } from './roles.js';
+import { voiceFields } from './voice.js';
 import { S } from './state.js';
 import { attachments, clearAttachments, fileToDataURL } from './attachments.js';
 import { SEND_ICON, STOP_ICON, UI_COMMANDS, clearScreen, hideCmdMenu, showHelp, showUsage } from './commands.js';
@@ -91,6 +93,8 @@ inputForm.onsubmit = async (e) => {
     model: localStorage.getItem('model') || undefined,
     effort: localStorage.getItem('effort') || undefined,
     ...currentModeFields(),
+    roles: currentRoleIds(),
+    ...voiceFields(),
     ...(steer ? { steer: true } : {}),
   }));
 };

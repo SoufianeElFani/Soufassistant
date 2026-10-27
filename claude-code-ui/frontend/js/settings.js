@@ -52,3 +52,10 @@ if (autoOpenArtifacts) {
   autoOpenArtifacts.checked = localStorage.getItem('autoOpenArtifacts') !== 'off';
   autoOpenArtifacts.onchange = () => localStorage.setItem('autoOpenArtifacts', autoOpenArtifacts.checked ? 'on' : 'off');
 }
+
+// Streaming: show a reply as it is written (transcript.js reads the same key).
+const streamReplies = document.getElementById('stream-replies');
+if (streamReplies) {
+  streamReplies.checked = localStorage.getItem('streamReplies') !== 'off';
+  streamReplies.onchange = () => localStorage.setItem('streamReplies', streamReplies.checked ? 'on' : 'off');
+}

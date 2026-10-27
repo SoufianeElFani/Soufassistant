@@ -200,6 +200,31 @@
       </div>
     </div>
 
+    <div id="roles-panel" class="sessions-panel roles-panel hidden">
+      <div class="sessions-head sessions-head-row">
+        <span>Roles</span>
+        <button id="roles-new-btn" type="button" class="scheduled-new-btn" title="New role">+ New</button>
+      </div>
+      <div class="workspace-info"><div class="usage-note">The hats you write a prompt in. Pick one or more under the message box: their context is given to Claude with every message of that conversation. Stored on this Home Assistant — keep anything confidential out.</div></div>
+      <div id="roles-list" class="sessions-list"></div>
+      <form id="role-form" class="scheduled-form hidden">
+        <label class="scheduled-form-label">Name
+          <input id="role-name-input" class="scheduled-form-input" type="text" placeholder="Chef de projet — Digital Solutions" maxlength="80" autocomplete="off">
+        </label>
+        <label class="scheduled-form-label">Short label (badge)
+          <input id="role-short-input" class="scheduled-form-input" type="text" placeholder="Digital Solutions" maxlength="24" autocomplete="off">
+        </label>
+        <label class="scheduled-form-label">Context for Claude — role, scope, people, tone, usual deliverables
+          <textarea id="role-context-input" class="scheduled-form-textarea" rows="6" maxlength="3000" placeholder="Je travaille comme… Interlocuteurs : … Ton : … Livrables types : …"></textarea>
+        </label>
+        <p id="role-form-error" class="scheduled-form-error hidden"></p>
+        <div class="scheduled-form-actions">
+          <button id="role-form-cancel" type="button" class="btn btn-deny">Cancel</button>
+          <button type="submit" class="btn btn-allow">Save</button>
+        </div>
+      </form>
+    </div>
+
     <div id="scheduled-panel" class="sessions-panel hidden">
       <div class="sessions-head sessions-head-row">
         <span>Scheduled tasks</span>
@@ -286,6 +311,21 @@
         <input type="checkbox" id="auto-open-artifacts" class="settings-toggle" checked>
       </div>
       <p class="settings-hint">Show files a reply creates in the viewer next to the chat.</p>
+      <div class="settings-row settings-row-toggle">
+        <label for="stream-replies">Show replies as they are written</label>
+        <input type="checkbox" id="stream-replies" class="settings-toggle" checked>
+      </div>
+      <p class="settings-hint">Off: each part of a reply appears once it is complete.</p>
+      <div class="settings-row">
+        <label for="voice-lang">Voice language</label>
+        <select id="voice-lang" class="settings-select" title="For dictation and the spoken conversation">
+          <option value="fr-FR">Français</option>
+          <option value="fr-BE">Français (Belgique)</option>
+          <option value="nl-BE">Nederlands (België)</option>
+          <option value="en-GB">English (UK)</option>
+          <option value="en-US">English (US)</option>
+        </select>
+      </div>
       <div class="settings-row">
         <label for="notify-service">Notify</label>
         <select id="notify-service" class="settings-select"><option value="">Off</option></select>
@@ -304,6 +344,10 @@
       <div class="settings-row">
         <label>Skills</label>
         <button type="button" id="settings-skills-btn" class="settings-btn">Manage skills…</button>
+      </div>
+      <div class="settings-row">
+        <label>Roles</label>
+        <button type="button" id="settings-roles-btn" class="settings-btn">Manage roles…</button>
       </div>
       <p class="settings-hint" id="notify-hint">
         Sent through Home Assistant (e.g. the companion app) while no tab is open and visible.
@@ -451,7 +495,18 @@
       <div id="cmd-menu" class="cmd-menu hidden"></div>
       <input type="file" id="attach-input" class="hidden-file" multiple
         accept="image/*,application/pdf,text/*,.yaml,.yml,.json,.log,.csv,.md,.py,.js,.ts,.sh,.conf,.ini">
+      <div id="roles-menu" class="cmd-menu roles-menu hidden" role="menu" aria-label="Write as"></div>
+      <!-- A spoken conversation (voice.js): listening, thinking, speaking. -->
+      <div id="voice-bar" class="voice-bar hidden" data-state="idle" aria-live="polite">
+        <button id="voice-orb" type="button" class="voice-orb" title="Speak / interrupt" aria-label="Speak or interrupt"><span></span></button>
+        <div class="voice-text">
+          <div id="voice-status" class="voice-status"></div>
+          <div id="voice-heard" class="voice-heard"></div>
+        </div>
+        <button id="voice-end" type="button" class="find-nav" title="End the spoken conversation" aria-label="End the spoken conversation">&#10005;</button>
+      </div>
       <div class="composer">
+        <div id="roles-chips" class="roles-chips hidden" aria-label="Roles for this conversation"></div>
         <div id="attach-preview" class="attach-preview hidden"></div>
         <div id="ctx-tokens" class="ctx-tokens hidden"></div>
         <textarea
@@ -469,6 +524,28 @@
           <button type="button" id="attach-btn" class="attach-btn" title="Attach files or photos" aria-label="Attach">
             <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/>
+            </svg>
+          </button>
+          <button type="button" id="roles-btn" class="attach-btn roles-btn" title="Write as… (roles)" aria-label="Roles" aria-haspopup="menu">
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M3 17h18"/>
+              <path d="M5 17c0-5 3-9 7-9s7 4 7 9"/>
+              <path d="M12 8V5"/>
+            </svg>
+            <span id="roles-count" class="roles-count hidden"></span>
+          </button>
+          <button type="button" id="mic-btn" class="attach-btn mic-btn hidden" title="Dictate" aria-label="Dictate">
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="9" y="2" width="6" height="12" rx="3"/>
+              <path d="M5 10a7 7 0 0 0 14 0"/>
+              <path d="M12 17v4"/>
+            </svg>
+          </button>
+          <button type="button" id="talk-btn" class="attach-btn talk-btn hidden" title="Talk with Claude (spoken conversation)" aria-label="Talk with Claude">
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M3 14v-2a9 9 0 0 1 18 0v2"/>
+              <path d="M21 15a2 2 0 0 1-2 2h-1v-6h1a2 2 0 0 1 2 2z"/>
+              <path d="M3 15a2 2 0 0 0 2 2h1v-6H5a2 2 0 0 0-2 2z"/>
             </svg>
           </button>
           <!-- Phone-width stand-ins for the header's mode switch and project picker

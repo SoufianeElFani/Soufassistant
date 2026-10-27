@@ -7,8 +7,11 @@
  * duplicates (a copy to try another direction), exports to Markdown in the
  * workspace or shows the file changes (changes.js); ✕ deletes it.
  *
- * Each row carries its mode (Chat / Code / Cowork, plus the Cowork project), and
- * the chips above the list narrow it to one mode. Conversations running right
+ * Each row carries its mode (Chat / Code / Cowork, plus the Cowork project) and
+ * the roles it was written in, and the chips above the list narrow it to one
+ * mode. A conversation that produced files shows 📎 and how many: clicking it
+ * lists them (newest first) to open in the viewer, and the 📎 chip keeps only
+ * those conversations. Conversations running right
  * now — several can, side by side — are marked, can be stopped from here, and a
  * new one still waiting for its id is listed at the top.
  */
@@ -16,6 +19,8 @@ import { registerPanel } from './panels.js';
 import { S } from './state.js';
 import { sessionsBtn, sessionsListEl, sessionsPanel, sessionsSearch, sessionsFilterEl } from './dom.js';
 import { confirmAction } from './confirm.js';
+import { rolesOf, roleLabel } from './roles.js';
+import { iconFor, openArtifact } from './artifacts.js';
 
 export const MODE_LABELS = { chat: 'Chat', code: 'Code', cowork: 'Cowork' };
 
@@ -31,6 +36,8 @@ export function runOf(id) {
 }
 
 let modeFilter = localStorage.getItem('sessionsModeFilter') || 'all';
+let artifactsOnly = localStorage.getItem('sessionsArtifactsOnly') === 'on';
+let openFilesId = null;   // the row whose artifacts are unfolded
 
 // ── Sessions ─────────────────────────────────────────────────────────────────
 export function relTime(ms) {
@@ -117,6 +124,51 @@ function menu(s) {
   return m;
 }
 
+const baseName = (p) => String(p || '').split('/').pop();
+
+/** The 📎 n button on a row with artifacts: unfolds the list of them. */
+function artifactsButton(s) {
+  const n = s.artifactCount || 0;
+  const b = el('button', `session-files${openFilesId === s.id ? ' open' : ''}`, `📎 ${n}`);
+  b.type = 'button';
+  const names = (s.artifacts || []).map((f) => baseName(f.path));
+  b.title = `${n} artifact${n > 1 ? 's' : ''}: ${names.join(', ')}${n > names.length ? ', …' : ''}`;
+  b.setAttribute('aria-label', `${n} artifact${n > 1 ? 's' : ''} — show them`);
+  b.setAttribute('aria-expanded', openFilesId === s.id ? 'true' : 'false');
+  b.onclick = (e) => {
+    e.stopPropagation();
+    openFilesId = openFilesId === s.id ? null : s.id;
+    openMenuId = null;
+    renderSessions();
+  };
+  return b;
+}
+
+function artifactsList(s) {
+  const box = el('div', 'session-files-list');
+  for (const f of s.artifacts || []) {
+    const item = el('button', 'session-file');
+    item.type = 'button';
+    item.title = f.path;
+    item.append(el('span', 'session-file-icon', iconFor(f.ext)), el('span', 'session-file-name', baseName(f.path)),
+      el('span', 'session-file-ext', (f.ext || '').toUpperCase()));
+    item.onclick = (e) => {
+      e.stopPropagation();
+      closeSessions();
+      openArtifact(f.path, f.ext);
+    };
+    box.appendChild(item);
+  }
+  const more = (s.artifactCount || 0) - (s.artifacts || []).length;
+  if (more > 0) {
+    const open = el('button', 'session-file session-file-more', `+ ${more} more — open the conversation`);
+    open.type = 'button';
+    open.onclick = (e) => { e.stopPropagation(); switchTo(s.id); };
+    box.appendChild(open);
+  }
+  return box;
+}
+
 function row(s, { snippet } = {}) {
   const wrap = el('div', 'session-wrap');
   const run = runOf(s.id);
@@ -128,6 +180,11 @@ function row(s, { snippet } = {}) {
   title.appendChild(document.createTextNode(`${s.pinned ? '★ ' : ''}${s.title}`));
   const time = el('div', 'session-time');
   time.appendChild(modeBadge(s.id));
+  for (const r of rolesOf(s.id)) {
+    const rb = el('span', 'role-badge', roleLabel(r));
+    rb.title = `Written as ${r.name}`;
+    time.append(' ', rb);
+  }
   const sub = snippet || `${mode === 'cowork' && project ? `${project} · ` : ''}${run ? 'running…' : relTime(s.updatedAt)}`;
   time.appendChild(document.createTextNode(` ${sub}`));
   main.append(title, time);
@@ -138,6 +195,7 @@ function row(s, { snippet } = {}) {
   more.onclick = (e) => {
     e.stopPropagation();
     openMenuId = openMenuId === s.id ? null : s.id;
+    openFilesId = null;
     renderSessions();
   };
   const del = el('button', 'session-del', '✕');
@@ -155,10 +213,12 @@ function row(s, { snippet } = {}) {
   };
   item.onclick = () => switchTo(s.id);
   item.append(main);
+  if (s.artifactCount > 0) item.append(artifactsButton(s));
   if (run) item.append(stopButton(run));
   item.append(more, del);
   wrap.appendChild(item);
   if (openMenuId === s.id) wrap.appendChild(menu(s));
+  if (openFilesId === s.id && s.artifactCount > 0) wrap.appendChild(artifactsList(s));
   return wrap;
 }
 
@@ -198,11 +258,24 @@ function renderFilter() {
     };
     sessionsFilterEl.appendChild(chip);
   }
+  const withFiles = S.sessions.filter((s) => s.artifactCount > 0).length;
+  const files = el('button', `ws-chip mode-chip files-chip${artifactsOnly ? ' active' : ''}`, `📎 ${withFiles}`);
+  files.type = 'button';
+  files.title = artifactsOnly ? 'Showing only conversations with artifacts — click to show all' : 'Only conversations with artifacts';
+  files.setAttribute('aria-pressed', artifactsOnly ? 'true' : 'false');
+  files.onclick = (e) => {
+    e.stopPropagation();
+    artifactsOnly = !artifactsOnly;
+    localStorage.setItem('sessionsArtifactsOnly', artifactsOnly ? 'on' : 'off');
+    renderSessions();
+  };
+  sessionsFilterEl.appendChild(files);
   const running = S.runs.length;
   if (running) sessionsFilterEl.appendChild(el('span', 'sessions-running-count', `${running} running`));
 }
 
-const passes = (id) => modeFilter === 'all' || modeOf(id).mode === modeFilter;
+const hasFiles = (id) => (S.sessions.find((x) => x.id === id)?.artifactCount || 0) > 0;
+const passes = (id) => (modeFilter === 'all' || modeOf(id).mode === modeFilter) && (!artifactsOnly || hasFiles(id));
 
 export function renderSessions() {
   renderFilter();
@@ -218,13 +291,15 @@ export function renderSessions() {
     }
     return;
   }
-  const drafts = S.runs.filter((r) => !r.sessionId || !S.sessions.some((s) => s.id === r.sessionId))
+  const drafts = artifactsOnly ? [] : S.runs.filter((r) => !r.sessionId || !S.sessions.some((s) => s.id === r.sessionId))
     .filter((r) => modeFilter === 'all' || (r.mode || 'code') === modeFilter);
   for (const r of drafts) sessionsListEl.appendChild(draftRow(r));
   const list = S.sessions.filter((s) => passes(s.id));
   if (!list.length && !drafts.length) {
     sessionsListEl.appendChild(el('div', 'sessions-empty',
-      S.sessions.length ? `No ${MODE_LABELS[modeFilter] || ''} conversation yet.` : 'No saved sessions yet.'));
+      !S.sessions.length ? 'No saved sessions yet.'
+        : artifactsOnly ? `No ${MODE_LABELS[modeFilter] ? `${MODE_LABELS[modeFilter]} ` : ''}conversation with artifacts yet.`
+          : `No ${MODE_LABELS[modeFilter] || ''} conversation yet.`));
     return;
   }
   for (const s of list) sessionsListEl.appendChild(row(s));
@@ -268,6 +343,7 @@ sessionsSearch.addEventListener('keydown', (e) => e.stopPropagation());
 export function openSessions() {
   send({ type: 'sessions_list' });
   openMenuId = null;
+  openFilesId = null;
   renderSessions();
   sessionsPanel.classList.remove('hidden');
   sessionsBtn.classList.add('active');
