@@ -15,7 +15,7 @@ import { renderSessions, applyRuns, switchTo } from './sessions.js';
 import { showToast } from './toast.js';
 import { setAutoContinueSupported } from './settings.js';
 import { hideThinking, showThinking } from './thinking.js';
-import { appendAgentReport, appendAssistantText, appendCompactedDivider, appendErrorBubble, appendInfoLine, appendResultLine, appendTaskNotice, appendToolResult, appendToolUse, appendUserBubble, endToolGroup, renderHistory } from './transcript.js';
+import { appendAgentReport, appendAssistantText, appendTextDelta, finishStream, appendCompactedDivider, appendErrorBubble, appendInfoLine, appendResultLine, appendTaskNotice, appendToolResult, appendToolUse, appendUserBubble, endToolGroup, renderHistory } from './transcript.js';
 import { renderTasks, updateTasksVisibility } from './tasks.js';
 import { applyWorkspaceEntries, applyWorkspaceState, applyWorkspaceResult, applyPreviews } from './workspace.js';
 import { applyWorkspaceStat, applyWriteResult, applyDeleteResult, applyTurnArtifacts, setConversationArtifacts } from './artifacts.js';
@@ -23,6 +23,8 @@ import { applySearchResults, applySessionActionResult } from './sessions.js';
 import { applyTurns, applyRewindResult } from './changes.js';
 import { applySessionMode, applySessionModes } from './modes.js';
 import { applySkills, applySkillDetail, applySkillResult } from './skills.js';
+import { voiceOnText, voiceOnTurnEnd } from './voice.js';
+import { applyRoles, applyRoleResult, applySessionRoles, resetRolesForNewConversation } from './roles.js';
 import { renderScheduled, showScheduledError } from './scheduled.js';
 import { renderTeam } from './team.js';
 import { renderUsage } from './usage-panel.js';
@@ -155,7 +157,10 @@ export function handleServerMessage(msg) {
       S.activeSessionId = msg.activeId || null;
       if (msg.view !== undefined) S.viewKey = msg.view || null;
       // Opening another conversation restores the mode it was last used in.
-      if (S.activeSessionId && S.activeSessionId !== prevActive) applySessionMode(S.activeSessionId);
+      if (S.activeSessionId && S.activeSessionId !== prevActive) {
+        applySessionMode(S.activeSessionId);
+        applySessionRoles(S.activeSessionId);
+      }
       applyRuns(S.runs);   // the "running elsewhere" badge depends on which one is on screen
       if (!sessionsPanel.classList.contains('hidden')) renderSessions();
       break;
@@ -199,6 +204,15 @@ export function handleServerMessage(msg) {
 
     case 'skills':
       applySkills(msg);
+      break;
+
+    case 'roles':
+      applyRoles(msg);
+      if (!sessionsPanel.classList.contains('hidden')) renderSessions();
+      break;
+
+    case 'role_result':
+      applyRoleResult(msg);
       break;
 
     case 'previews':
@@ -299,6 +313,7 @@ export function handleServerMessage(msg) {
 
     case 'cleared':
       clearScreen();
+      resetRolesForNewConversation();
       S.viewKey = null;
       setConversationArtifacts([]);
       applyRuns(S.runs);
@@ -326,13 +341,20 @@ export function handleServerMessage(msg) {
       loginCodeInput.focus();
       break;
 
+    case 'text_delta':
+      hideThinking();
+      appendTextDelta(msg.text);
+      break;
+
     case 'text':
       hideThinking();
       appendAssistantText(msg.text);
+      voiceOnText(msg.text);
       break;
 
     case 'tool_use':
       hideThinking();
+      finishStream();
       S.lastAssistantBubble = null;
       appendToolUse(msg.id, msg.name, msg.input);
       break;
@@ -361,6 +383,7 @@ export function handleServerMessage(msg) {
 
     case 'result':
       hideThinking();
+      finishStream();
       S.lastAssistantBubble = null;
       appendResultLine(msg);
       S.usage.turns       += msg.turns       || 0;
@@ -373,6 +396,7 @@ export function handleServerMessage(msg) {
       S.isRunning = false;
       updateSendBtn();
       if (!msg.background) attentionCue('Claude finished', 'Your reply is ready.');
+      voiceOnTurnEnd();
       break;
 
     case 'context_usage':
@@ -403,6 +427,8 @@ export function handleServerMessage(msg) {
 
     case 'error':
       hideThinking();
+      finishStream();
+      voiceOnTurnEnd();
       S.lastAssistantBubble = null;
       appendErrorBubble(msg.message);
       S.isRunning = false;
@@ -411,6 +437,8 @@ export function handleServerMessage(msg) {
 
     case 'aborted':
       hideThinking();
+      finishStream();
+      voiceOnTurnEnd();
       S.lastAssistantBubble = null;
       endToolGroup();
       S.isRunning = false;

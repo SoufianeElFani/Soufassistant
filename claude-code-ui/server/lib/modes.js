@@ -51,6 +51,18 @@ export const CLARIFY_PROMPT = [
   'you are working: treat it as an addition to the current task, not a new one.',
 ].join(' ');
 
+/** Added to a turn sent from a spoken conversation (the UI's 🎧): the reply is read aloud. */
+export const VOICE_PROMPT = [
+  '## Spoken conversation',
+  'The user is talking to you out loud and your reply will be read aloud by a speech synthesizer.',
+  'Answer like a person in a conversation: short (a few sentences unless more is asked for), plain',
+  'spoken sentences in the language the user speaks — no markdown, headings, tables, bullet lists,',
+  'code blocks, URLs or emoji. Say numbers and units the way they are spoken. If a full answer',
+  'needs a document or code, do the work as usual, then say in a sentence or two what you did and',
+  'where it is. Ask at most one short question back when you need to. The user\'s words come from',
+  'speech recognition: read past small transcription errors.',
+].join(' ');
+
 export const CHAT_PROMPT = [
   'You are in **Chat mode** in Soufassistant: a plain conversation, like claude.ai.',
   'You have no access to files, the shell, Home Assistant or the workspace in this mode —',

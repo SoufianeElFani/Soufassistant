@@ -39,6 +39,8 @@
  *   changes.js      per-message file changes and restore (rewind)
  *   toast.js        short notices, e.g. another conversation finishing
  *   panels.js       the header panels as one family: one at a time, Esc, closed by the viewer
+ *   roles.js        the roles (hats) a prompt is written in, and their panel
+ *   voice.js        dictation and the spoken conversation (Web Speech API)
  */
 import { promptInput } from './js/dom.js';
 import { connect } from './js/connection.js';
@@ -65,6 +67,8 @@ import './js/usage-panel.js';
 import './js/modes.js';
 import './js/artifacts.js';
 import './js/skills.js';
+import './js/roles.js';
+import './js/voice.js';
 import './js/changes.js';
 
 // Before anything renders: everything below is laid out inside the frame this

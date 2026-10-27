@@ -99,6 +99,9 @@ export const WORKSPACE_SYNC_LOG = process.env.WORKSPACE_SYNC_LOG || path.join(DA
 /** Which skills the Skills panel turned off. */
 export const SKILLS_CONFIG_FILE = path.join(DATA_DIR, 'skills-config.json');
 
+/** The roles the user can write a prompt as, and which ones each conversation uses. */
+export const ROLES_FILE = path.join(DATA_DIR, 'roles.json');
+
 /** Custom titles and pins for conversations (the Sessions panel). */
 export const SESSION_META_FILE = path.join(DATA_DIR, 'session-meta.json');
 

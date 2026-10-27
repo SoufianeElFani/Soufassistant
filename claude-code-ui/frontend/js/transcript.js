@@ -71,6 +71,8 @@ export function appendUserBubble(text, ts, atts, { steer = false } = {}) {
 }
 
 export function appendAssistantText(text, ts) {
+  // The finished block replaces whatever was streamed of it.
+  dropStream();
   if (!S.lastAssistantBubble) {
     endToolGroup();
     S.lastAssistantBubble = mkBubble('assistant');
@@ -81,6 +83,112 @@ export function appendAssistantText(text, ts) {
   content._rawMd = (content._rawMd || '') + text;
   renderMarkdown(content, content._rawMd);
   scrollBottom();
+}
+
+// ── Streaming: the reply shown as it is written ──────────────────────────────
+// The server sends the reply's text as `text_delta`s (batched, ~60 ms) ahead of
+// the finished block, which arrives as the usual `text` and replaces it. Two
+// things keep this from slowing a long reply down: the screen is redrawn at
+// most once per frame — and less often still when a redraw turns out to be
+// slow (a phone): the wait between redraws is a few times what the last one
+// cost — and only the paragraph being written is re-rendered: everything up to
+// the last blank line outside a code block is rendered once and then left alone.
+let live = null;   // { content, el, tail, buf, frozen, pending, last, cost }
+
+export function streamingEnabled() {
+  return localStorage.getItem('streamReplies') !== 'off';
+}
+
+export function appendTextDelta(text) {
+  if (!text || !streamingEnabled()) return;
+  if (live && !live.el.isConnected) live = null;   // the screen was rebuilt under it
+  if (!live) {
+    if (!S.lastAssistantBubble) {
+      endToolGroup();
+      S.lastAssistantBubble = mkBubble('assistant');
+      addTime(S.lastAssistantBubble);
+      messagesEl.appendChild(S.lastAssistantBubble);
+    }
+    const content = S.lastAssistantBubble.querySelector('.bubble-content');
+    const el = document.createElement('div');
+    el.className = 'stream-live';
+    const tail = document.createElement('div');
+    tail.className = 'stream-tail';
+    el.appendChild(tail);
+    content.appendChild(el);
+    S.lastAssistantBubble.classList.add('streaming');
+    live = { content, el, tail, buf: '', frozen: 0, pending: false, last: 0, cost: 0 };
+  }
+  live.buf += text;
+  scheduleStreamRender();
+}
+
+function scheduleStreamRender() {
+  if (!live || live.pending) return;
+  live.pending = true;
+  const gap = Math.min(1000, Math.max(0, live.cost * 4));
+  const wait = Math.max(0, live.last + gap - performance.now());
+  const go = () => requestAnimationFrame(renderStream);
+  if (wait > 0) setTimeout(go, wait); else go();
+}
+
+/** Where the settled part of a streamed text ends: just after the last blank
+ *  line that is not inside a code block (fences tracked from `from`, which is
+ *  itself always outside one). */
+export function settledEnd(text, from = 0) {
+  let inFence = false;
+  let cut = from;
+  let i = from;
+  while (i < text.length) {
+    const nl = text.indexOf('\n', i);
+    const end = nl < 0 ? text.length : nl;
+    const line = text.slice(i, end);
+    if (/^\s{0,3}(```|~~~)/.test(line)) inFence = !inFence;
+    else if (!inFence && nl >= 0 && line.trim() === '' && end > from) cut = end + 1;
+    if (nl < 0) break;
+    i = nl + 1;
+  }
+  return cut;
+}
+
+function renderStream() {
+  if (!live) return;
+  live.pending = false;
+  if (!live.el.isConnected) { live = null; return; }
+  const t0 = performance.now();
+  const cut = settledEnd(live.buf, live.frozen);
+  if (cut > live.frozen) {
+    const seg = document.createElement('div');
+    seg.className = 'stream-seg';
+    renderMarkdown(seg, live.buf.slice(live.frozen, cut));
+    live.el.insertBefore(seg, live.tail);
+    live.frozen = cut;
+  }
+  renderMarkdown(live.tail, live.buf.slice(live.frozen));
+  live.last = performance.now();
+  live.cost = live.last - t0;
+  scrollBottom();
+}
+
+/** Throw away what was streamed (its finished text is about to be rendered). */
+function dropStream() {
+  if (!live) return;
+  live.el.remove();
+  live.content.closest('.bubble')?.classList.remove('streaming');
+  live = null;
+}
+
+/**
+ * The turn moved on (a tool call, its end, a stop) without the finished block
+ * arriving: keep what was streamed as the bubble's text.
+ */
+export function finishStream() {
+  if (!live) return;
+  const { content, buf, el } = live;
+  dropStream();
+  if (!el.isConnected || !buf) return;
+  content._rawMd = (content._rawMd || '') + buf;
+  renderMarkdown(content, content._rawMd);
 }
 
 export function appendToolUse(id, name, input) {

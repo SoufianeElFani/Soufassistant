@@ -85,6 +85,9 @@ function describeOptions(options = {}) {
     additionalDirectories: options.additionalDirectories ?? null,
     systemPrompt: typeof options.systemPrompt === 'string' ? 'custom'
       : (options.systemPrompt?.type === 'preset' ? `preset+${options.systemPrompt.append ? 'append' : 'none'}` : null),
+    // The words the system prompt adds (a custom prompt, or the preset's append).
+    systemPromptText: typeof options.systemPrompt === 'string' ? options.systemPrompt : (options.systemPrompt?.append ?? null),
+    includePartialMessages: !!options.includePartialMessages,
   };
 }
 
@@ -240,6 +243,18 @@ export function query({ prompt, options = {} }) {
 
       } else if (step.contextUsage) {
         contextUsage = { ...contextUsage, ...step.contextUsage };
+
+      } else if (step.stream) {
+        // A reply streamed the way the CLI does with includePartialMessages:
+        // its text in delta events (one per `chunks` piece), then the block.
+        const chunks = step.stream.chunks || [step.stream.text];
+        for (const piece of chunks) {
+          yield { type: 'stream_event', parent_tool_use_id: step.stream.parent || null,
+            event: { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: piece } } };
+          if (step.stream.gap) await new Promise((r) => setTimeout(r, step.stream.gap));
+        }
+        yield { type: 'assistant', parent_tool_use_id: step.stream.parent || null,
+          message: { content: [{ type: 'text', text: chunks.join('') }] } };
 
       } else if (step.text != null) {
         yield { type: 'assistant', message: { content: [{ type: 'text', text: step.text }] } };

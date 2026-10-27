@@ -30,6 +30,7 @@ import * as skills from './skills.js';
 import { sessionModeMap } from './modes.js';
 import * as sessionTools from './session-tools.js';
 import * as previews from './previews.js';
+import * as roles from './roles.js';
 
 /** Everything a newly connected (or reconnected) tab needs to render the app. */
 function greet(ws) {
@@ -70,6 +71,7 @@ function greet(ws) {
   // panel read it, and it used to arrive only after a reply or on opening the panel.
   send(ws, { type: 'workspace', entries: workspace.listWorkspaceEntries() });
   send(ws, { type: 'session_modes', modes: sessionModeMap() });
+  send(ws, roles.rolesMessage());
 
   // Plan limits (5-hour / weekly / extra usage): the last snapshot right away,
   // then a refresh (rate-limited inside plan-usage.js) that broadcasts if newer.
@@ -203,11 +205,30 @@ const handlers = {
   async session_duplicate(ws, msg) {
     try {
       const r = await sessionTools.duplicateSession(msg.id);
+      if (r.ok) roles.copySessionRoles(msg.id, r.id);
       send(ws, { type: 'session_duplicate_result', ...r });
       if (r.ok) broadcastSessions();
     } catch (e) {
       send(ws, { type: 'session_duplicate_result', ok: false, error: e?.message || String(e) });
     }
+  },
+
+  // ── Roles (the hats a prompt is written in) ──
+  roles_list(ws) { send(ws, roles.rolesMessage()); },
+  role_save(ws, msg) {
+    const r = roles.saveRole({ id: msg.id || null, name: msg.name, short: msg.short, context: msg.context });
+    send(ws, { type: 'role_result', action: 'save', ...r });
+    if (r.ok) broadcast(roles.rolesMessage());
+  },
+  role_delete(ws, msg) {
+    const r = roles.deleteRole(msg.id);
+    send(ws, { type: 'role_result', action: 'delete', ...r });
+    if (r.ok) broadcast(roles.rolesMessage());
+  },
+  /** Picked in the composer of a conversation that already exists. */
+  session_roles(_ws, msg) {
+    if (typeof msg.id !== 'string' || msg.id.startsWith('draft:')) return;
+    if (roles.setSessionRoles(msg.id, msg.roles)) broadcast(roles.rolesMessage());
   },
 
   // ── Changes / rewind ──
@@ -347,6 +368,7 @@ const handlers = {
     if (runFor(msg.id)) abortRun(msg.id);
     deleteSession(msg.id);
     sessionTools.forgetSession(msg.id);
+    roles.forgetSession(msg.id);
     if (msg.id === runtime.activeSessionId) {
       runtime.activeSessionId = null;
       runtime.draftKey = null;

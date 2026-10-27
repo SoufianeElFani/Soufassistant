@@ -38,12 +38,13 @@ import { makeInputChannel } from './input-channel.js';
 import { notify } from './notify.js';
 import * as autoContinue from './auto-continue.js';
 import { refreshPlanUsage } from './plan-usage.js';
-import { modeOptions, normalizeMode, coworkWriteGuard, rememberSessionMode, sessionModeMap } from './modes.js';
+import { modeOptions, normalizeMode, coworkWriteGuard, rememberSessionMode, sessionModeMap, VOICE_PROMPT } from './modes.js';
 import { workspaceRoot, activeProject, projectDir } from './workspace.js';
 import { imageMcpServer, IMAGE_TOOL } from './image-gen.js';
 import { disabledOverrides } from './skills.js';
 import { decoratedSessions, recordArtifacts, FILE_TOOLS } from './session-tools.js';
 import { listPreviews } from './previews.js';
+import { rolePrompt, rolesFor, setSessionRoles, normalizeRoleIds, rolesMessage } from './roles.js';
 import {
   viewKey, newDraftKey, runFor, emit, isViewed, broadcastRuns, rekey,
 } from './runs.js';
@@ -57,6 +58,8 @@ import path from 'path';
 // After the last background task ends: how long to wait for the CLI's
 // follow-up turn to start before treating the run as over.
 const FOLLOW_UP_GRACE_MS = Number(process.env.FOLLOW_UP_GRACE_MS) || 20000;
+// How often streamed reply text is sent on, at most (see flushStream).
+const STREAM_FLUSH_MS = 60;
 const BACKGROUND_HEARTBEAT_TICKS = Math.max(1, Math.round(300000 / STALL_CHECK_MS)); // ~5 min
 
 /** Stop one conversation's run (the conversation on screen by default). */
@@ -122,7 +125,7 @@ function runArtifacts(run, entries) {
  * the usual case, a prompt typed in the UI — it is the conversation on screen,
  * and a new conversation on screen gets a draft key until its id arrives.
  */
-export async function runQuery(ws, { text, permissionMode, model, effort, mode, project, autoAttempts = 0, sessionKey, steer = false }) {
+export async function runQuery(ws, { text, permissionMode, model, effort, mode, project, roles, voice = false, autoAttempts = 0, sessionKey, steer = false }) {
   let key = sessionKey || viewKey();
   const existing = runFor(key);
 
@@ -229,7 +232,17 @@ export async function runQuery(ws, { text, permissionMode, model, effort, mode, 
   // File checkpoints, so a turn's file changes can be restored later from the
   // Changes panel (session-tools.js rewindTo). A chat turn writes no files.
   if (runMode !== 'chat') opts.enableFileCheckpointing = true;
-  opts.systemPrompt = mo.systemPrompt ?? { type: 'preset', preset: 'claude_code', append: mo.append };
+  // The roles the user writes this conversation as (roles.js): sent with the
+  // prompt by the UI, else — an auto-continue resume, a scheduled run — the
+  // ones this conversation last used.
+  const runRoles = Array.isArray(roles) ? normalizeRoleIds(roles) : rolesFor(run.sessionId);
+  const roleText = [rolePrompt(runRoles), voice ? VOICE_PROMPT : ''].filter(Boolean).join('\n\n');
+  opts.systemPrompt = mo.systemPrompt != null
+    ? (roleText ? `${mo.systemPrompt}\n\n${roleText}` : mo.systemPrompt)
+    : { type: 'preset', preset: 'claude_code', append: roleText ? `${mo.append}\n\n${roleText}` : mo.append };
+  if (run.sessionId && Array.isArray(roles) && setSessionRoles(run.sessionId, runRoles)) broadcast(rolesMessage());
+  // The reply is shown as it is written (stream_event text deltas, below).
+  opts.includePartialMessages = true;
   // Image generation (image-gen.js), in every mode: into the Cowork project's
   // Images/ folder, else the workspace's, and counted as this run's artifact.
   opts.mcpServers = {
@@ -316,6 +329,7 @@ export async function runQuery(ws, { text, permissionMode, model, effort, mode, 
   };
 
   log('INFO', `query start: ${runMode}${runProject ? `(${runProject})` : ''} perm=${run.permissionMode} effort=${opts.effort || 'default'} ` +
+    `${runRoles.length ? `roles=${runRoles.join(',')} ` : ''}${voice ? 'voice ' : ''}` +
     `model=${model || 'default'} resume=${resuming} promptLen=${text.length} running=${runtime.runs.size}`);
 
   // Streamed input — see the file header. Kept open until every background
@@ -439,6 +453,21 @@ export async function runQuery(ws, { text, permissionMode, model, effort, mode, 
     }
   }, STALL_CHECK_MS);
 
+  // Live text: the reply's text deltas, batched (one wire message per
+  // STREAM_FLUSH_MS at most, however small the model's chunks) so streaming
+  // never costs the turn anything. The finished block still arrives as the
+  // usual `text` event, which replaces whatever was streamed for it.
+  let streamBuf = '';
+  let streamTimer = null;
+  const flushStream = () => {
+    if (streamTimer) { clearTimeout(streamTimer); streamTimer = null; }
+    if (streamBuf) { emit(run, { type: 'text_delta', text: streamBuf }); streamBuf = ''; }
+  };
+  const dropStream = () => {
+    if (streamTimer) { clearTimeout(streamTimer); streamTimer = null; }
+    streamBuf = '';
+  };
+
   let q;
   try {
     q = query({ prompt: channel.iterable, options: opts });
@@ -447,11 +476,22 @@ export async function runQuery(ws, { text, permissionMode, model, effort, mode, 
       lastEventAt = Date.now();
       lastEventKind = event.type === 'system' ? `system/${event.subtype}` : event.type;
 
+      if (event.type === 'stream_event') {
+        // Only the conversation's own reply — a subagent's text is not streamed.
+        const ev = event.event;
+        if (!event.parent_tool_use_id && ev?.type === 'content_block_delta' && ev.delta?.type === 'text_delta' && ev.delta.text) {
+          streamBuf += ev.delta.text;
+          if (!streamTimer) streamTimer = setTimeout(flushStream, STREAM_FLUSH_MS);
+        }
+        continue;
+      }
+
       if (event.type === 'system' && event.subtype === 'init') {
         const wasDraft = !run.sessionId;
         // A new conversation is filed under its real id from here on — and if it
         // is the one on screen, the view moves with it.
         if (rekey(run, event.session_id)) saveActive();
+        if (wasDraft && runRoles.length && setSessionRoles(event.session_id, runRoles)) broadcast(rolesMessage());
         if (rememberSessionMode(event.session_id, runMode, runProject)) {
           broadcast({ type: 'session_modes', modes: sessionModeMap() });
         }
@@ -517,6 +557,7 @@ export async function runQuery(ws, { text, permissionMode, model, effort, mode, 
         for (const block of (event.message?.content || [])) {
           if (block.type === 'text' && block.text) {
             vlog(`text: ${block.text.length} chars`);
+            if (!event.parent_tool_use_id) dropStream();
             emit(run, { type: 'text', text: block.text });
           } else if (block.type === 'tool_use') {
             vlog(`tool_use: ${block.name}`);
@@ -646,6 +687,7 @@ export async function runQuery(ws, { text, permissionMode, model, effort, mode, 
       }
     }
   } finally {
+    dropStream();
     clearInterval(watchdog);
     if (followUpTimer) clearTimeout(followUpTimer);
     channel.close();   // idempotent — tidy up on an error/abort path too

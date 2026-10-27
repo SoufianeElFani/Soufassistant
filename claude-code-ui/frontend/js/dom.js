@@ -189,3 +189,19 @@ export const artifactEdit       = document.getElementById('artifact-edit');
 export const artifactSave       = document.getElementById('artifact-save');
 export const artifactCancel     = document.getElementById('artifact-cancel');
 export const artifactDelete     = document.getElementById('artifact-delete');
+
+// Roles: the picker under the message box and the panel that manages them.
+export const rolesBtn          = document.getElementById('roles-btn');
+export const rolesCount        = document.getElementById('roles-count');
+export const rolesMenu         = document.getElementById('roles-menu');
+export const rolesChips        = document.getElementById('roles-chips');
+export const rolesPanel        = document.getElementById('roles-panel');
+export const rolesListEl       = document.getElementById('roles-list');
+export const rolesNewBtn       = document.getElementById('roles-new-btn');
+export const roleForm          = document.getElementById('role-form');
+export const roleNameInput     = document.getElementById('role-name-input');
+export const roleShortInput    = document.getElementById('role-short-input');
+export const roleContextInput  = document.getElementById('role-context-input');
+export const roleFormError     = document.getElementById('role-form-error');
+export const roleFormCancel    = document.getElementById('role-form-cancel');
+export const settingsRolesBtn  = document.getElementById('settings-roles-btn');
