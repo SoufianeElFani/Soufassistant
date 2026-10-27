@@ -23,7 +23,7 @@ import { applySearchResults, applySessionActionResult } from './sessions.js';
 import { applyTurns, applyRewindResult } from './changes.js';
 import { applySessionMode, applySessionModes } from './modes.js';
 import { applySkills, applySkillDetail, applySkillResult } from './skills.js';
-import { voiceOnText, voiceOnTurnEnd } from './voice.js';
+import { voiceOnDelta, voiceOnText, voiceOnTurnEnd } from './voice.js';
 import { applyRoles, applyRoleResult, applySessionRoles, resetRolesForNewConversation } from './roles.js';
 import { renderScheduled, showScheduledError } from './scheduled.js';
 import { renderTeam } from './team.js';
@@ -344,6 +344,7 @@ export function handleServerMessage(msg) {
     case 'text_delta':
       hideThinking();
       appendTextDelta(msg.text);
+      voiceOnDelta(msg.text);
       break;
 
     case 'text':

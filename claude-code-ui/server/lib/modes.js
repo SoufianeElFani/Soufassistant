@@ -51,7 +51,7 @@ export const CLARIFY_PROMPT = [
   'you are working: treat it as an addition to the current task, not a new one.',
 ].join(' ');
 
-/** Added to a turn sent from a spoken conversation (the UI's 🎧): the reply is read aloud. */
+/** Added to a turn sent during a call (voice.js): the reply is read aloud. */
 export const VOICE_PROMPT = [
   '## Spoken conversation',
   'The user is talking to you out loud and your reply will be read aloud by a speech synthesizer.',
@@ -59,7 +59,8 @@ export const VOICE_PROMPT = [
   'spoken sentences in the language the user speaks — no markdown, headings, tables, bullet lists,',
   'code blocks, URLs or emoji. Say numbers and units the way they are spoken. If a full answer',
   'needs a document or code, do the work as usual, then say in a sentence or two what you did and',
-  'where it is. Ask at most one short question back when you need to. The user\'s words come from',
+  'where it is. Start with a short first sentence — it is spoken while you write the rest. Ask at',
+  'most one short question back when you need to, in words (not the AskUserQuestion tool). The user\'s words come from',
   'speech recognition: read past small transcription errors.',
 ].join(' ');
 

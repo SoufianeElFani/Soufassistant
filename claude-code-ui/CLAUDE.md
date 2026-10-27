@@ -56,6 +56,7 @@ loads the persisted state, and listens. Everything with behaviour lives in
 | `workspace.js` | the configurable workspace root, projects, listing and sync status |
 | `modes.js` | Chat / Code / Cowork: per-mode SDK options, the Cowork write fence, per-session modes |
 | `skills.js`, `zip.js` | the Skills panel: discovery, on/off, local CRUD, .zip export |
+| `stt.js`, `tts.js` | voice for calls and dictation: speech to text with the Whisper app over Wyoming (`/api/stt`), text to speech through HA's TTS engine (`/api/tts`) |
 | `roles.js` | the roles (hats) a prompt is written in: the list (seeded with three), each conversation's picks, and the system-prompt section they add |
 | `session-tools.js` | conversation titles/pins, search, export, duplicate, per-turn changes and rewind |
 | `previews.js` | the /preview/<port>/ proxy for apps running in a Cowork project |

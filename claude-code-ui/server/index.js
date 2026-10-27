@@ -59,6 +59,8 @@ import * as scheduler from './lib/scheduler.js';
 import * as team from './lib/team.js';
 import { refreshHaLinks } from './lib/ha-links.js';
 import { registerDiagRoutes } from './lib/diag.js';
+import { transcribe, sttAvailable } from './lib/stt.js';
+import { synthesize, ttsEngine } from './lib/tts.js';
 import { attach } from './lib/ws-protocol.js';
 import { runQuery } from './lib/run-query.js';
 import * as autoContinue from './lib/auto-continue.js';
@@ -117,6 +119,24 @@ app.all('/preview/:port/*', previewProxy);
 
 // A skill folder as a .zip — to upload to claude.ai (Settings → Capabilities),
 // since there is no public API to push a skill to an account.
+// Voice (the spoken call, dictation): speech to text via the Whisper app,
+// text to speech via Home Assistant — for browsers without their own.
+app.get('/api/voice/status', async (_req, res) => {
+  const [stt, tts] = await Promise.all([sttAvailable(), ttsEngine()]);
+  res.json({ stt, tts: !!tts });
+});
+app.post('/api/stt', express.raw({ type: 'application/octet-stream', limit: '6mb' }), async (req, res) => {
+  try {
+    res.json({ text: await transcribe(req.body, { language: String(req.query.lang || 'fr') }) });
+  } catch (e) { res.status(503).json({ error: e.message }); }
+});
+app.post('/api/tts', express.json({ limit: '16kb' }), async (req, res) => {
+  try {
+    const { body, contentType } = await synthesize(req.body?.text, req.body?.lang);
+    res.set('Content-Type', contentType).set('Cache-Control', 'no-store').send(body);
+  } catch (e) { res.status(503).json({ error: e.message }); }
+});
+
 app.get('/api/skills/export', (req, res) => {
   const found = typeof req.query.id === 'string' ? skillDirFor(req.query.id) : null;
   if (!found) return res.status(404).json({ error: 'No such skill' });
