@@ -8,8 +8,7 @@
  * Wyoming is newline-delimited JSON events, each optionally followed by a JSON
  * `data` block (`data_length` bytes, newer servers) and a binary payload
  * (`payload_length` bytes). Older servers put `data` in the header line itself;
- * the reader accepts both. (The Whisper app listens on IPv4 only while its
- * name resolves to IPv6 first, hence autoSelectFamily.)
+ * the reader accepts both. The Whisper app listens on IPv4 only, hence family 4.
  */
 import net from 'net';
 import { log } from './log.js';
@@ -61,7 +60,7 @@ export function transcribe(pcm, { language = 'fr', host = STT_HOST, port = STT_P
     if (!pcm?.length) { resolve(''); return; }
     if (pcm.length > MAX_AUDIO_BYTES) { reject(new Error('Recording too long.')); return; }
     const started = Date.now();
-    const sock = net.connect({ host, port, autoSelectFamily: true });
+    const sock = net.connect({ host, port, family: 4 });
     let done = false;
     const finish = (err, text) => {
       if (done) return;
@@ -93,7 +92,7 @@ export function transcribe(pcm, { language = 'fr', host = STT_HOST, port = STT_P
 /** Whether a Whisper server answers (the UI offers server-side recognition then). */
 export function sttAvailable({ host = STT_HOST, port = STT_PORT } = {}) {
   return new Promise((resolve) => {
-    const s = net.connect({ host, port, autoSelectFamily: true });
+    const s = net.connect({ host, port, family: 4 });
     const end = (ok) => { s.destroy(); resolve(ok); };
     s.setTimeout(1500, () => end(false));
     s.on('connect', () => end(true));
