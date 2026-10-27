@@ -1,5 +1,6 @@
 /*
- * What the spoken conversation reads aloud (frontend/js/voice.js speakable)
+ * What a call reads aloud and when (frontend/js/voice.js speakable,
+ * sentenceEnd), the audio it sends to Whisper (toPcm16k),
  * and where streaming freezes a reply's settled part (transcript.js
  * settledEnd) — the two pure functions behind 0.7.0's voice and streaming.
  * Both modules touch the DOM at load, so the functions are pulled out of the
@@ -24,6 +25,8 @@ function extract(file, name) {
 
 const speakable = extract('voice.js', 'speakable');
 const settledEnd = extract('transcript.js', 'settledEnd');
+const sentenceEnd = extract('voice.js', 'sentenceEnd');
+const toPcm16k = extract('voice.js', 'toPcm16k');
 
 describe('speakable', () => {
   test('drops markdown, code, links and tables', () => {
@@ -32,7 +35,7 @@ describe('speakable', () => {
     assert.doesNotMatch(out, /[#*`|]|https?:/);
     assert.match(out, /Résumé/);
     assert.match(out, /Bonjour, voici le lien/);
-    assert.match(out, /\(code omitted\)/);
+    assert.doesNotMatch(out, /const a/);
     assert.match(out, /light\.salon/);
   });
   test('empty in, empty out', () => assert.equal(speakable(''), ''));
@@ -53,5 +56,33 @@ describe('settledEnd', () => {
   test('continues from where it last cut', () => {
     const t = 'one\n\ntwo';
     assert.equal(settledEnd(t, 5), 5);
+  });
+});
+
+describe('sentenceEnd', () => {
+  test('cuts after the last complete sentence', () => {
+    const t = 'Bonjour. Il fait 21,5 degrés au salon! Et dans';
+    assert.equal(t.slice(0, sentenceEnd(t)), 'Bonjour. Il fait 21,5 degrés au salon!');
+  });
+  test('a number with a dot is not a sentence end', () => {
+    assert.equal(sentenceEnd('Il fait 21.5 deg'), 0);
+  });
+  test('starts after what was already said', () => {
+    const t = 'Un. Deux. Tr';
+    assert.equal(sentenceEnd(t, 4), 'Un. Deux.'.length);
+  });
+  test('waits for a code block to close', () => {
+    const t = 'Voici:\n```\nx = 1.\n';
+    assert.equal(t.slice(0, sentenceEnd(t)), 'Voici:\n');
+  });
+});
+
+describe('toPcm16k', () => {
+  test('48 kHz float → 16 kHz int16, averaged, across chunk boundaries', () => {
+    const a = new Float32Array(6).fill(0.5), b = new Float32Array(6).fill(-1);
+    const out = toPcm16k([a, b], 48000);
+    assert.equal(out.length, 4);
+    assert.equal(out[0], Math.floor(0.5 * 0x7fff));
+    assert.equal(out[3], -0x8000);
   });
 });

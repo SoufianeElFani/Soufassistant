@@ -1642,34 +1642,66 @@ pre:hover > .copy-btn, .copy-btn:focus { opacity: 1; }
 .session-file-ext { flex: none; font-size: 10px; color: var(--text-muted); }
 .session-file-more { color: var(--accent); font-size: 12px; }
 
-/* ── Voice: dictation and the spoken conversation ──────────────────────── */
-.mic-btn.hidden, .talk-btn.hidden { display: none; }
+/* ── Voice: dictation and calls ─────────────────────────────────────────── */
+.mic-btn.unavailable, .talk-btn.unavailable { opacity: .45; }
 .mic-btn.listening { color: #fff; background: #c2410c; animation: mic-pulse 1.4s ease-in-out infinite; }
+.mic-btn.busy { color: var(--accent); animation: mic-pulse 1s ease-in-out infinite; }
 .talk-btn.active { color: var(--accent); background: var(--surface-2); }
 @keyframes mic-pulse { 50% { box-shadow: 0 0 0 5px rgba(194,65,12,.25); } }
-.voice-bar {
-  display: flex; align-items: center; gap: 12px;
-  margin: 0 0 8px; padding: 10px 12px;
-  background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius);
+
+.call-screen {
+  position: fixed; inset: 0; z-index: 150;
+  display: flex; flex-direction: column; align-items: center;
+  padding: calc(28px + env(safe-area-inset-top)) 20px calc(28px + env(safe-area-inset-bottom));
+  background: radial-gradient(circle at 50% 35%, #1d4a43 0%, var(--bg) 70%);
+  color: var(--text);
 }
-.voice-bar.hidden { display: none; }
-.voice-orb {
-  flex: none; width: 44px; height: 44px; border-radius: 50%; cursor: pointer;
-  border: 2px solid var(--accent-strong); background: var(--tool-bg);
-  display: grid; place-items: center;
+.call-screen.hidden { display: none; }
+.call-top { text-align: center; }
+.call-name { font-size: 26px; font-weight: 600; letter-spacing: .01em; }
+.call-timer { font-size: 15px; color: var(--text-muted); margin-top: 4px; font-variant-numeric: tabular-nums; }
+.call-engine { font-size: 11px; color: var(--text-muted); margin-top: 6px; opacity: .8; }
+.call-orb {
+  position: relative; margin: 6vh 0 18px; width: 168px; height: 168px; flex: none;
+  border: none; background: none; cursor: pointer; border-radius: 50%;
+  -webkit-tap-highlight-color: transparent;
 }
-.voice-orb > span { width: 16px; height: 16px; border-radius: 50%; background: var(--accent); transition: transform .2s; }
-.voice-bar[data-state="listening"] .voice-orb > span { animation: orb-listen 1.1s ease-in-out infinite; }
-.voice-bar[data-state="thinking"] .voice-orb > span { animation: orb-think 1.6s linear infinite; border-radius: 3px; }
-.voice-bar[data-state="speaking"] .voice-orb > span { animation: orb-speak .5s ease-in-out infinite alternate; }
-.voice-bar[data-state="idle"] .voice-orb > span { background: var(--text-muted); }
-@keyframes orb-listen { 50% { transform: scale(1.6); } }
-@keyframes orb-think { to { transform: rotate(360deg); } }
-@keyframes orb-speak { from { transform: scaleY(.7); } to { transform: scaleY(1.5) scaleX(1.2); } }
-@media (prefers-reduced-motion: reduce) { .voice-orb > span { animation: none !important; } }
-.voice-text { flex: 1; min-width: 0; }
-.voice-status { font-size: 13px; color: var(--accent); }
-.voice-heard {
-  font-size: 14px; color: var(--text); margin-top: 2px;
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+.call-orb-core, .call-orb-ring { position: absolute; inset: 0; border-radius: 50%; }
+.call-orb-core {
+  inset: 34px;
+  background: radial-gradient(circle at 35% 30%, #5eead4, var(--accent-strong) 70%);
+  box-shadow: 0 0 40px rgba(45,212,191,.45);
+  transition: transform .25s, filter .25s;
 }
+.call-orb-ring { border: 2px solid rgba(45,212,191,.35); }
+.call-orb[data-state="listening"] .call-orb-ring { animation: call-ring 1.6s ease-out infinite; }
+.call-orb[data-state="listening"] .call-orb-core { transform: scale(1.05); }
+.call-orb[data-state="transcribing"] .call-orb-core,
+.call-orb[data-state="thinking"] .call-orb-core,
+.call-orb[data-state="working"] .call-orb-core { animation: call-think 1.4s ease-in-out infinite; }
+.call-orb[data-state="speaking"] .call-orb-core { animation: call-speak .45s ease-in-out infinite alternate; }
+.call-orb[data-state="idle"] .call-orb-core, .call-orb[data-state="muted"] .call-orb-core { filter: grayscale(.8) brightness(.7); }
+@keyframes call-ring { from { transform: scale(.75); opacity: 1; } to { transform: scale(1.15); opacity: 0; } }
+@keyframes call-think { 50% { transform: scale(.88); filter: brightness(.8); } }
+@keyframes call-speak { from { transform: scale(.95); } to { transform: scale(1.12); } }
+@media (prefers-reduced-motion: reduce) { .call-orb * { animation: none !important; } }
+.call-status { font-size: 15px; color: var(--accent); min-height: 1.4em; text-align: center; }
+.call-log {
+  flex: 1; min-height: 0; width: min(100%, 560px); overflow-y: auto; margin: 18px 0;
+  display: flex; flex-direction: column; gap: 8px;
+  mask-image: linear-gradient(to bottom, transparent 0, #000 28px);
+}
+.call-line { font-size: 15px; line-height: 1.4; padding: 8px 12px; border-radius: 12px; max-width: 88%; }
+.call-you { align-self: flex-end; background: var(--user-bg); border: 1px solid var(--user-border); }
+.call-claude { align-self: flex-start; background: var(--surface-2); border: 1px solid var(--border); }
+.call-actions { display: flex; gap: 36px; align-items: center; }
+.call-btn {
+  width: 64px; height: 64px; border-radius: 50%; border: none; cursor: pointer;
+  display: grid; place-items: center; color: var(--text); background: rgba(255,255,255,.12);
+}
+.call-btn:hover { background: rgba(255,255,255,.18); }
+.call-btn .call-mute-slash { display: none; }
+.call-btn.active { background: var(--text); color: var(--bg); }
+.call-btn.active .call-mute-slash { display: inline; }
+.call-hangup { width: 72px; height: 72px; background: #dc2626; color: #fff; }
+.call-hangup:hover { background: #b91c1c; }

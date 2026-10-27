@@ -327,6 +327,27 @@
         </select>
       </div>
       <div class="settings-row">
+        <label for="voice-stt">Speech recognition</label>
+        <select id="voice-stt" class="settings-select" title="For dictation and calls">
+          <option value="auto">Auto</option>
+          <option value="browser">Browser (fast)</option>
+          <option value="whisper">Whisper on HA (local)</option>
+        </select>
+      </div>
+      <div class="settings-row">
+        <label for="voice-tts">Claude's voice</label>
+        <select id="voice-tts" class="settings-select">
+          <option value="auto">Auto</option>
+          <option value="ha">Home Assistant</option>
+          <option value="browser">Browser</option>
+        </select>
+      </div>
+      <div class="settings-row settings-row-toggle">
+        <label for="call-fast">Fast model during calls</label>
+        <input type="checkbox" id="call-fast" class="settings-toggle" checked>
+      </div>
+      <p class="settings-hint">Calls answer with Haiku at low effort, for quick replies. Off: your usual model.</p>
+      <div class="settings-row">
         <label for="notify-service">Notify</label>
         <select id="notify-service" class="settings-select"><option value="">Off</option></select>
       </div>
@@ -407,6 +428,28 @@
       </div>
       <div id="artifact-body" class="artifact-body"></div>
     </aside>
+
+    <!-- A call with Claude (voice.js): it listens, answers aloud, listens again. -->
+    <div id="call-screen" class="call-screen hidden" data-state="idle" role="dialog" aria-label="Call with Claude">
+      <div class="call-top">
+        <div class="call-name">Claude</div>
+        <div id="call-timer" class="call-timer">00:00</div>
+        <div id="call-engine" class="call-engine"></div>
+      </div>
+      <button id="call-orb" type="button" class="call-orb" data-state="idle" aria-label="Speak, send now, or interrupt">
+        <span class="call-orb-ring"></span><span class="call-orb-core"></span>
+      </button>
+      <div id="call-status" class="call-status" aria-live="polite"></div>
+      <div id="call-log" class="call-log"></div>
+      <div class="call-actions">
+        <button id="call-mute" type="button" class="call-btn" title="Mute the microphone" aria-label="Mute">
+          <svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0"/><path d="M12 17v4"/><path class="call-mute-slash" d="M3 3l18 18"/></svg>
+        </button>
+        <button id="call-hangup" type="button" class="call-btn call-hangup" title="Hang up (Esc)" aria-label="Hang up">
+          <svg viewBox="0 0 24 24" width="30" height="30" fill="currentColor"><path d="M12 9c-3.6 0-7 1.2-9.4 3.3-.5.5-.6 1.2-.2 1.8l1.6 2.2c.4.5 1.1.7 1.7.4l2.7-1.3c.5-.2.8-.8.7-1.3l-.3-1.9c1.9-.6 4.5-.6 6.4 0l-.3 1.9c-.1.5.2 1.1.7 1.3l2.7 1.3c.6.3 1.3.1 1.7-.4l1.6-2.2c.4-.6.3-1.3-.2-1.8C19 10.2 15.6 9 12 9z"/></svg>
+        </button>
+      </div>
+    </div>
 
     <div id="permission-overlay" class="permission-overlay hidden">
       <div class="permission-card">
@@ -496,15 +539,6 @@
       <input type="file" id="attach-input" class="hidden-file" multiple
         accept="image/*,application/pdf,text/*,.yaml,.yml,.json,.log,.csv,.md,.py,.js,.ts,.sh,.conf,.ini">
       <div id="roles-menu" class="cmd-menu roles-menu hidden" role="menu" aria-label="Write as"></div>
-      <!-- A spoken conversation (voice.js): listening, thinking, speaking. -->
-      <div id="voice-bar" class="voice-bar hidden" data-state="idle" aria-live="polite">
-        <button id="voice-orb" type="button" class="voice-orb" title="Speak / interrupt" aria-label="Speak or interrupt"><span></span></button>
-        <div class="voice-text">
-          <div id="voice-status" class="voice-status"></div>
-          <div id="voice-heard" class="voice-heard"></div>
-        </div>
-        <button id="voice-end" type="button" class="find-nav" title="End the spoken conversation" aria-label="End the spoken conversation">&#10005;</button>
-      </div>
       <div class="composer">
         <div id="roles-chips" class="roles-chips hidden" aria-label="Roles for this conversation"></div>
         <div id="attach-preview" class="attach-preview hidden"></div>
@@ -534,18 +568,16 @@
             </svg>
             <span id="roles-count" class="roles-count hidden"></span>
           </button>
-          <button type="button" id="mic-btn" class="attach-btn mic-btn hidden" title="Dictate" aria-label="Dictate">
+          <button type="button" id="mic-btn" class="attach-btn mic-btn" title="Dictate" aria-label="Dictate">
             <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <rect x="9" y="2" width="6" height="12" rx="3"/>
               <path d="M5 10a7 7 0 0 0 14 0"/>
               <path d="M12 17v4"/>
             </svg>
           </button>
-          <button type="button" id="talk-btn" class="attach-btn talk-btn hidden" title="Talk with Claude (spoken conversation)" aria-label="Talk with Claude">
+          <button type="button" id="talk-btn" class="attach-btn talk-btn" title="Call Claude" aria-label="Call Claude">
             <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M3 14v-2a9 9 0 0 1 18 0v2"/>
-              <path d="M21 15a2 2 0 0 1-2 2h-1v-6h1a2 2 0 0 1 2 2z"/>
-              <path d="M3 15a2 2 0 0 0 2 2h1v-6H5a2 2 0 0 0-2 2z"/>
+              <path d="M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.1 4.2 2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1 1 .4 1.9.7 2.8a2 2 0 0 1-.5 2.1L8 9.9a16 16 0 0 0 6 6l1.3-1.3a2 2 0 0 1 2.1-.4c.9.3 1.8.6 2.8.7a2 2 0 0 1 1.7 2z"/>
             </svg>
           </button>
           <!-- Phone-width stand-ins for the header's mode switch and project picker
