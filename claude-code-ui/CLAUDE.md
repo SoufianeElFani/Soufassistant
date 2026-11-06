@@ -791,9 +791,45 @@ one after confirmation; refused while that conversation is running. Only
 file-tool changes are tracked, not Bash; conversations from before 0.4.0 have
 no checkpoints.
 
+**Document editors (`server/lib/office-edit.js`, `frontend/js/doc-editor.js`).**
+✎ on a .docx/.pptx/.xlsx/.pdf/.png/.jpg/.webp opens one of doc-editor.js's
+editors instead of the textarea; each mount returns `{ dirty(), save(force) }`
+and artifacts.js keeps the same Save/Cancel/conflict flow. Office files are
+ZIPs of XML: `zip.js` now reads (`readZip`, STORE/DEFLATE via node's zlib, no
+ZIP64) and writes deflated (`makeZip(files, { deflate })`). **docx/pptx**:
+`leafElements()` finds paragraphs that hold no other paragraph (skipping
+`mc:Fallback`, Word's duplicate of a text box); a paragraph's text is its
+`w:t`/`a:t` nodes plus fixed tokens (tab, break); `editParagraph()` applies a
+**word-level LCS diff** (`diffHunks`) hunk by hunk from the end, rewriting only
+the text nodes each hunk touches — formatting of untouched runs survives. pptx
+lists slides in `sldIdLst` order with their notes slide (via the slide's rels),
+drops sldNum/dt/sldImg placeholders, and labels paragraphs by shape name.
+**xlsx**: shared strings + inline strings + formulas read; `setCell()` writes
+inline strings / numbers / booleans / `<f>` keeping the cell's `s` style,
+inserts rows and cells in order, drops the row's `spans`, refuses a shared
+formula's anchor; any save sets `calcPr fullCalcOnLoad="1"` and removes
+`calcChain.xml` (+ its rel and content-type). **pdf**: `pdfseparate` +
+`pdfunite` in the new order (~8 s for 14 pages on a Green — the Save button
+says "Saving…" and leaving is blocked meanwhile). **images**: canvas in the
+browser, POSTed raw to `/api/workspace-binary` (png/jpg/jpeg/webp only).
+Every save: mtime check (conflict as in the text editor), per-paragraph
+`old` text check, a copy of the previous file in `DATA_DIR/cache/edit-backups`
+(last 40), written via a dot-named `.tmp` + rename (the Drive sync excludes
+`*.tmp`). Routes: `GET/POST /api/doc`, `POST /api/workspace-binary`, all
+behind `editTarget()` (no dot-path, inside the workspace).
+
+**Resizable viewer.** `#artifact-resizer` on the pane's left edge (≥1000px):
+pointer drag sets `--artifact-w` on `<html>` (used by the pane's width and
+`#app`'s margin), clamped to leave the chat 380px; persisted in
+localStorage `artifactWidth`; double-click resets; arrow keys ±40px.
+`body.artifact-resizing` turns off iframe pointer events during the drag.
+✨ (`#artifact-ask`) pre-fills the prompt with the file's path.
+
 **File editor (`workspace.js` writeWorkspaceFile/deleteWorkspaceFile, `artifacts.js`).**
 Text formats only (`EDITABLE_EXT`), 2 MB max, never dot-paths or outside the
-root. The editor records the file's mtime when it opens (`workspace_stat`) and
+root. Markdown/HTML/SVG get a live preview beside the textarea (sandboxed
+srcdoc; HTML with a `<base>` to its folder, scripts allowed, no
+allow-same-origin); CSV/TSV open as a grid (`mountCsv`) that saves as text. The editor records the file's mtime when it opens (`workspace_stat`) and
 a save with a stale mtime returns `conflict` (Claude or the Drive sync changed
 it) — the user can overwrite. "+ File" creates with `create: true` (refuses to
 replace). Plain `<textarea>` (no build step, no CDN): Ctrl/⌘+S saves, Tab
@@ -892,6 +928,14 @@ created/edited/deleted from the panel (`skill_save` / `skill_delete`);
 `/api/skills/export?id=` zips any skill (STORE method, no dependency) for
 upload at claude.ai → Settings → Capabilities — there is no public API to push
 a skill to an account; once uploaded it syncs back down as an account skill.
+Sharing (0.9.0): `POST /api/skills/import` (raw .zip or SKILL.md;
+`skillsInArchive()` takes every shallowest folder holding a SKILL.md, skips
+`..`, dot and `__MACOSX` entries; an existing skill is skipped unless
+`?replace=1`), `GET /api/skills/bundle` (all local skills, one deflated zip),
+`POST /api/skills/share` (one zip per local skill into the shared folder:
+`<root>/01_Templates/Skills` when `01_Templates` exists, else `<root>/Skills`),
+`GET /api/skills/shared` + `POST /api/skills/import-shared` (install a zip
+from that folder — so a Drive folder becomes a skill library).
 
 **Scheduled tasks (`server/lib/scheduler.js`, `server/lib/cron.js`).** A
 persisted list (`/data/scheduled-tasks.json`) of `{name, cron, prompt,

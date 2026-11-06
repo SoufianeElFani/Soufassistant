@@ -412,10 +412,13 @@
          PowerPoint / Word / Excel as page images, CSV, text) previewed next to the chat. HTML runs in a sandboxed iframe
          with an opaque origin, so a page cannot reach the app or its socket. -->
     <aside id="artifact-pane" class="artifact-pane hidden" aria-label="Artifact viewer">
+      <div id="artifact-resizer" class="artifact-resizer" role="separator" aria-orientation="vertical" tabindex="0"
+           title="Drag to resize · double-click to reset" aria-label="Resize the viewer"></div>
       <div class="artifact-head">
         <span id="artifact-title" class="artifact-title"></span>
         <select id="artifact-switch" class="perm-mode-select artifact-switch hidden" title="This conversation's artifacts" aria-label="Switch artifact"></select>
         <div class="artifact-actions">
+          <button id="artifact-ask" type="button" class="find-nav hidden" title="Ask Claude to change this file" aria-label="Ask Claude to change this file">&#10024;</button>
           <button id="artifact-edit" type="button" class="find-nav hidden" title="Edit" aria-label="Edit">&#9998;</button>
           <button id="artifact-save" type="button" class="find-nav artifact-save hidden" title="Save (Ctrl+S)" aria-label="Save">Save</button>
           <button id="artifact-cancel" type="button" class="find-nav hidden" title="Stop editing" aria-label="Stop editing">Cancel</button>

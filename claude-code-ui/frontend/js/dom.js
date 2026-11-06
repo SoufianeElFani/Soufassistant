@@ -189,6 +189,8 @@ export const artifactEdit       = document.getElementById('artifact-edit');
 export const artifactSave       = document.getElementById('artifact-save');
 export const artifactCancel     = document.getElementById('artifact-cancel');
 export const artifactDelete     = document.getElementById('artifact-delete');
+export const artifactAsk        = document.getElementById('artifact-ask');
+export const artifactResizer    = document.getElementById('artifact-resizer');
 
 // Roles: the picker under the message box and the panel that manages them.
 export const rolesBtn          = document.getElementById('roles-btn');

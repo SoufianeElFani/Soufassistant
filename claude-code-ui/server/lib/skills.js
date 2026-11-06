@@ -223,3 +223,67 @@ export function skillDirFor(id) {
   if (!s) return null;
   try { return statSync(s.dir).isDirectory() ? { dir: s.dir, folder: s.folder } : null; } catch { return null; }
 }
+
+// ── Sharing: import a .zip, export several at once, a shared folder ────────
+const MAX_IMPORT_BYTES = 20 * 1024 * 1024;
+
+/**
+ * The skills inside a .zip (or one bare SKILL.md): every folder holding a
+ * SKILL.md becomes one skill. Pure given its input — unit-tested.
+ * → [{ name, files: [{ rel, data }] }]
+ */
+export function skillsInArchive(entries) {
+  const safe = entries.filter((e) => {
+    const n = e.name.replace(/\\/g, '/');
+    return !n.startsWith('/') && !n.split('/').some((s) => s === '..' || s.startsWith('.') || s === '__MACOSX');
+  });
+  const roots = safe.filter((e) => /(^|\/)SKILL\.md$/i.test(e.name)).map((e) => e.name.replace(/\\/g, '/').replace(/SKILL\.md$/i, ''));
+  // the shallowest roots win: a skill's own sub-folders are not skills of their own
+  const top = roots.filter((r) => !roots.some((o) => o !== r && r.startsWith(o)));
+  return top.map((root) => {
+    const md = safe.find((e) => e.name.replace(/\\/g, '/') === `${root}SKILL.md` || e.name.replace(/\\/g, '/').toLowerCase() === `${root}skill.md`);
+    const { meta } = parseSkillMd(md.data.toString('utf8'));
+    const folder = root.replace(/\/$/, '').split('/').pop();
+    const name = sanitizeSkillName(meta.name || folder);
+    const files = safe.filter((e) => e.name.replace(/\\/g, '/').startsWith(root))
+      .map((e) => ({ rel: e.name.replace(/\\/g, '/').slice(root.length), data: e.data }))
+      .map((f) => (f.rel.toLowerCase() === 'skill.md' ? { ...f, rel: 'SKILL.md' } : f));
+    return { name, description: meta.description || '', files };
+  }).filter((s) => s.name && s.name !== 'synced');
+}
+
+/** Install skills from an upload (a .zip, or a SKILL.md as text). */
+export function importSkills(buf, { replace = false, userDir = USER_SKILLS_DIR, readZip } = {}) {
+  if (!buf?.length) return { ok: false, error: 'Empty file.' };
+  if (buf.length > MAX_IMPORT_BYTES) return { ok: false, error: 'File too large (20 MB max).' };
+  let entries;
+  if (buf.readUInt32LE(0) === 0x04034b50) {
+    try { entries = readZip(buf); } catch (e) { return { ok: false, error: `Not a readable .zip: ${e.message}` }; }
+  } else {
+    entries = [{ name: 'SKILL.md', data: buf }];
+  }
+  const found = skillsInArchive(entries);
+  if (!found.length) return { ok: false, error: 'No SKILL.md in that file.' };
+  const installed = [], skipped = [];
+  for (const s of found) {
+    if (!s.description.trim()) { skipped.push({ name: s.name, reason: 'no description in SKILL.md' }); continue; }
+    const dir = path.join(userDir, s.name);
+    if (existsSync(dir) && !replace) { skipped.push({ name: s.name, reason: 'already installed' }); continue; }
+    rmSync(dir, { recursive: true, force: true });
+    for (const f of s.files) {
+      const dest = path.join(dir, f.rel);
+      if (!dest.startsWith(dir + path.sep)) continue;
+      mkdirSync(path.dirname(dest), { recursive: true });
+      writeFileSync(dest, f.data);
+    }
+    installed.push(s.name);
+  }
+  return { ok: installed.length > 0 || skipped.length > 0, installed, skipped };
+}
+
+/** The skill folders for a bundle: the given ids, or every local skill. */
+export function bundleDirs(ids = null) {
+  const all = discoverSkills().skills;
+  const pick = ids?.length ? all.filter((s) => ids.includes(s.id)) : all.filter((s) => s.source === 'local');
+  return pick.map((s) => ({ dir: s.dir, folder: s.folder }));
+}

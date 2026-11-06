@@ -6,6 +6,12 @@
  * and their own local skills — with a switch to turn any of them off, a view
  * of its SKILL.md, a .zip export (to upload to claude.ai), and a form to
  * create / edit / delete local skills.
+ *
+ * Sharing: "Import" takes a .zip (one skill or a bundle of several) or a
+ * SKILL.md; "Export all" downloads every local skill in one .zip; "Share"
+ * writes one .zip per local skill into the workspace's shared folder
+ * (01_Templates/Skills, or Skills/) — the Drive sync makes that a Drive folder
+ * others can be given, and whatever .zip lands there is listed to install.
  */
 import { registerPanel } from './panels.js';
 import { S } from './state.js';
@@ -15,6 +21,8 @@ import {
   skillView, skillViewTitle, skillViewBody, skillViewClose, settingsSkillsBtn, settingsPanel,
 } from './dom.js';
 import { relTime } from './workspace.js';
+import { confirmAction } from './confirm.js';
+import { showToast } from './toast.js';
 
 const GROUPS = [
   ['account', 'From your Claude account'],
@@ -52,6 +60,102 @@ function renderInfo() {
   skillsInfoEl.appendChild(line);
   skillsInfoEl.appendChild(el('div', 'usage-note',
     'Switching a skill off hides it from Claude here. To add one of yours to your account, export it (⇩) and upload the .zip on claude.ai — it then syncs back automatically.'));
+  skillsInfoEl.appendChild(shareBar());
+  if (shared.files.length) skillsInfoEl.appendChild(sharedList());
+}
+
+// ── Sharing ─────────────────────────────────────────────────────────────────
+let shared = { dir: '', files: [] };
+
+async function refreshShared() {
+  try {
+    shared = await (await fetch(`${wsBase}/api/skills/shared`, { cache: 'no-store' })).json();
+  } catch { shared = { dir: '', files: [] }; }
+  if (!skillsPanel.classList.contains('hidden')) renderInfo();
+}
+
+function reportImport(r) {
+  if (!r.ok && !r.installed) { showToast(r.error || 'Import failed.', { kind: 'error' }); return; }
+  const parts = [];
+  if (r.installed?.length) parts.push(`Installed: ${r.installed.join(', ')}`);
+  if (r.skipped?.length) parts.push(`Skipped: ${r.skipped.map((x) => `${x.name} (${x.reason})`).join(', ')}`);
+  showToast(parts.join(' · ') || 'Nothing to install.');
+}
+
+/** Import, retrying with "replace" when the user agrees to overwrite. */
+async function importWith(doRequest) {
+  let r = await doRequest(false);
+  const clash = (r.skipped || []).filter((x) => x.reason === 'already installed');
+  if (clash.length && !(r.installed || []).length) {
+    const ok = await confirmAction({
+      title: 'Replace existing skills?',
+      body: `Already installed: ${clash.map((x) => x.name).join(', ')}. Replace them with the imported version?`,
+      confirm: 'Replace', cancel: 'Keep mine',
+    });
+    if (ok) r = await doRequest(true);
+  }
+  reportImport(r);
+}
+
+function shareBar() {
+  const row = el('div', 'skills-share');
+  const file = el('input');
+  file.type = 'file';
+  file.accept = '.zip,.skill,.md';
+  file.className = 'hidden';
+  file.onchange = async () => {
+    const f = file.files?.[0];
+    file.value = '';
+    if (!f) return;
+    const buf = await f.arrayBuffer();
+    await importWith(async (replace) => (await fetch(`${wsBase}/api/skills/import${replace ? '?replace=1' : ''}`, {
+      method: 'POST', headers: { 'Content-Type': 'application/octet-stream' }, body: buf,
+    })).json().catch(() => ({ ok: false, error: 'Import failed.' })));
+  };
+  const imp = el('button', 'session-menu-btn', '⇪ Import…');
+  imp.type = 'button';
+  imp.title = 'Install skills from a .zip (one or several) or a SKILL.md';
+  imp.onclick = () => file.click();
+  const local = data.skills.filter((x) => x.source === 'local');
+  const all = el('a', 'session-menu-btn artifact-link', '⇩ Export all');
+  all.href = `${wsBase}/api/skills/bundle`;
+  all.title = 'Download all your skills in one .zip (to give to someone, or as a backup)';
+  all.setAttribute('download', 'skills.zip');
+  all.classList.toggle('hidden', !local.length);
+  const share = el('button', 'session-menu-btn', '⇄ Share to the workspace');
+  share.type = 'button';
+  share.title = 'Write one .zip per skill into the shared folder of your workspace (synced to your Drive) — ready to upload to claude.ai or to give to someone';
+  share.classList.toggle('hidden', !local.length);
+  share.onclick = async () => {
+    const r = await (await fetch(`${wsBase}/api/skills/share`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}),
+    })).json().catch(() => ({ ok: false }));
+    if (r.ok) showToast(`${r.written.length} skill${r.written.length > 1 ? 's' : ''} written to ${r.dir}/`);
+    else showToast(r.error || 'Could not share.', { kind: 'error' });
+    refreshShared();
+  };
+  row.append(imp, file, all, share);
+  return row;
+}
+
+function sharedList() {
+  const box = el('div', 'skills-shared');
+  box.appendChild(el('div', 'usage-section-title', `In ${shared.dir}/`));
+  const have = new Set(data.skills.map((x) => x.folder));
+  for (const f of shared.files) {
+    const row = el('div', 'skill-row');
+    const name = f.name.replace(/\.(zip|skill)$/i, '');
+    const main = el('div', 'skill-main');
+    main.append(el('div', 'skill-title', name), el('div', 'skill-desc', `${have.has(name) ? 'installed · ' : ''}${relTime(f.mtime)}`));
+    const b = el('button', 'session-menu-btn', have.has(name) ? 'Update' : 'Install');
+    b.type = 'button';
+    b.onclick = () => importWith(async (replace) => (await fetch(`${wsBase}/api/skills/import-shared`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ path: f.path, replace: replace || have.has(name) }),
+    })).json().catch(() => ({ ok: false, error: 'Import failed.' })));
+    row.append(main, b);
+    box.appendChild(row);
+  }
+  return box;
 }
 
 function skillRow(s) {
@@ -145,6 +249,7 @@ export function applySkillResult(msg) {
 
 export function openSkills() {
   send({ type: 'skills_list' });
+  refreshShared();
   renderSkills();
   skillsPanel.classList.remove('hidden');
   skillsBtn.classList.add('active');

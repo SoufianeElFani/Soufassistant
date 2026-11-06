@@ -16,6 +16,12 @@
  *   text-like         <pre>
  *   anything else     "no preview" + download
  *
+ * ✎ edits it in place: text formats in a text editor (Markdown, HTML and SVG
+ * with a live preview beside it), CSV as a grid, and through doc-editor.js
+ * Word / PowerPoint text, Excel cells, PDF pages and pictures. ✨ hands the
+ * file to Claude instead (the prompt box, pre-filled). On a wide screen the
+ * pane's left edge drags to resize it (kept in localStorage).
+ *
  * After every reply the server says which workspace files it produced
  * ('turn_artifacts'): they get an "Artifacts" card in the transcript, the
  * newest previewable one opens automatically, and they join the conversation's
@@ -27,9 +33,10 @@ import { S } from './state.js';
 import {
   wsBase, messagesEl, artifactPane, artifactTitle, artifactBody, artifactOpen,
   artifactDownload, artifactReload, artifactClose, artifactEdit, artifactSave, artifactCancel, artifactDelete,
-  artifactSwitch, artifactsBtn, artifactsMenu, artifactsMenuList,
+  artifactSwitch, artifactsBtn, artifactsMenu, artifactsMenuList, artifactAsk, artifactResizer, promptInput,
 } from './dom.js';
 import { confirmAction } from './confirm.js';
+import { isDocEditable, isImageEditable, mountDocEditor, mountImage, mountCsv } from './doc-editor.js';
 
 const IMAGE = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp', 'ico']);
 const TEXT = new Set(['txt', 'json', 'yaml', 'yml', 'log', 'js', 'mjs', 'cjs', 'ts', 'py', 'sh', 'css',
@@ -77,7 +84,9 @@ export function parseDelimited(text, delim = ',') {
 }
 
 let current = null;   // { path, ext } for a workspace file, or { preview: port }
-let editing = null;   // { text, mtime } while the editor is open
+// While the editor is open: { text, mtime } for the text editor; { grid, text,
+// mtime } for the CSV grid; { doc, mtime } for doc-editor.js's editors.
+let editing = null;
 let renderSeq = 0;    // a slow document render must not land in a pane showing another file
 let pdfAsPages = false;   // the PDF viewer's "Pages" toggle
 
@@ -93,9 +102,13 @@ function send(msg) {
   if (S.ws && S.isConnected) S.ws.send(JSON.stringify(msg));
 }
 
+/** Anything ✎ can open: text, or one of doc-editor.js's kinds. */
+export function canEditExt(ext) { return isEditableExt(ext) || isDocEditable(ext) || isImageEditable(ext); }
+
 function setToolbar() {
   const file = !!current?.path;
-  const canEdit = file && isEditableExt(current.ext);
+  const canEdit = file && canEditExt(current.ext);
+  artifactAsk.classList.toggle('hidden', !file || !!editing);
   artifactEdit.classList.toggle('hidden', !canEdit || !!editing);
   artifactSave.classList.toggle('hidden', !editing);
   artifactCancel.classList.toggle('hidden', !editing);
@@ -295,8 +308,21 @@ export function openPreview(port) {
   render();
 }
 
+function isDirty() {
+  if (!editing) return false;
+  if (editing.doc) return editing.doc.dirty();
+  if (editing.grid) return editing.grid.dirty();
+  return editing.text !== editorEl()?.value;
+}
+
 function confirmLeaveEdit() {
-  return !editing || editing.text === editorEl()?.value || window.confirm('Discard your unsaved changes?');
+  if (artifactSave.disabled && editing) { alert('Still saving — one moment.'); return false; }
+  return !isDirty() || window.confirm('Discard your unsaved changes?');
+}
+
+function setSaving(on) {
+  artifactSave.disabled = on;
+  artifactSave.textContent = on ? 'Saving…' : 'Save';
 }
 
 export function closeArtifact() {
@@ -312,13 +338,25 @@ export function closeArtifact() {
 // ── Editor ───────────────────────────────────────────────────────────────────
 function editorEl() { return artifactBody.querySelector('textarea.artifact-editor'); }
 
-async function startEdit() {
-  if (!current?.path || !isEditableExt(current.ext)) return;
-  let text;
-  try { text = await fetchText(`${fileUrl(current.path)}?t=${Date.now()}`, { raw: true }); }
-  catch (e) { alert(`Could not open ${current.path}: ${e.message}`); return; }
-  editing = { text, mtime: null };
-  send({ type: 'workspace_stat', reqId: 'edit', path: current.path });
+const PREVIEWABLE_SOURCE = new Set(['md', 'markdown', 'html', 'htm', 'svg']);
+const escHtml = (t) => t.replace(/[&<]/g, (c) => (c === '&' ? '&amp;' : '&lt;'));
+
+/** The live preview beside the text editor, for Markdown, HTML and SVG. */
+function sourcePreview(ext, text) {
+  const e = ext.toLowerCase();
+  if (e === 'md' || e === 'markdown') {
+    const html = window.marked ? window.marked.parse(text) : `<pre>${escHtml(text)}</pre>`;
+    return { sandbox: '', srcdoc: `<!doctype html><meta charset="utf-8"><style>body{font:15px/1.6 system-ui,sans-serif;margin:16px;color:#1d2b2a}img{max-width:100%}pre{background:#f3f5f5;padding:10px;overflow:auto}table{border-collapse:collapse}td,th{border:1px solid #ccd;padding:4px 8px}</style>${html}` };
+  }
+  const dir = current.path.includes('/') ? current.path.slice(0, current.path.lastIndexOf('/') + 1) : '';
+  if (e === 'svg') return { sandbox: '', srcdoc: `<!doctype html><style>body{margin:0;display:grid;place-items:center;min-height:100vh}svg{max-width:100%;height:auto}</style>${text}` };
+  // HTML: scripts run (no allow-same-origin — an opaque origin, as in the viewer); relative links resolve against the file
+  const base = new URL(`${wsBase}/workspace/${dir.split('/').map(encodeURIComponent).join('/')}`, location.href).href;
+  return { sandbox: 'allow-scripts allow-forms allow-modals', srcdoc: `<base href="${base}">${text}` };
+}
+
+function startTextEditor(text, original = text) {
+  editing = { text: original, mtime: editing?.mtime ?? null };
   artifactBody.innerHTML = '';
   const ta = document.createElement('textarea');
   ta.className = 'artifact-editor';
@@ -333,17 +371,105 @@ async function startEdit() {
     }
     e.stopPropagation();
   });
-  artifactBody.appendChild(ta);
+  const ext = String(current.ext || '').toLowerCase();
+  if (PREVIEWABLE_SOURCE.has(ext)) {
+    // side by side: source | live preview (stacked on a narrow screen)
+    const split = document.createElement('div');
+    split.className = 'artifact-split';
+    const frame = sandboxFrame({ title: 'Preview' });
+    let timer = null;
+    const refresh = () => {
+      const p = sourcePreview(ext, ta.value);
+      frame.setAttribute('sandbox', p.sandbox);
+      frame.srcdoc = p.srcdoc;
+    };
+    ta.addEventListener('input', () => { clearTimeout(timer); timer = setTimeout(refresh, 350); });
+    const toggle = document.createElement('button');
+    toggle.type = 'button';
+    toggle.className = 'artifact-mini-btn artifact-split-toggle';
+    toggle.textContent = 'Preview';
+    toggle.title = 'Show or hide the live preview';
+    toggle.onclick = () => { split.classList.toggle('no-preview'); localStorage.setItem('editorPreview', split.classList.contains('no-preview') ? 'off' : 'on'); };
+    if (localStorage.getItem('editorPreview') === 'off') split.classList.add('no-preview');
+    split.append(ta, frame);
+    artifactBody.append(toggle, split);
+    refresh();
+  } else {
+    artifactBody.appendChild(ta);
+  }
   setToolbar();
   renderSwitch();
   ta.focus();
 }
 
-function save(force = false) {
-  const ta = editorEl();
-  if (!editing || !ta) return;
-  artifactSave.disabled = true;
-  send({ type: 'workspace_write', reqId: 'edit', path: current.path, content: ta.value, mtime: editing.mtime, force });
+async function startEdit() {
+  if (!current?.path || !canEditExt(current.ext)) return;
+  const path = current.path;
+  const ext = String(current.ext || '').toLowerCase();
+  // the mtime the save is checked against: asked once `editing` exists, so the answer has somewhere to land
+  const stat = () => send({ type: 'workspace_stat', reqId: 'edit', path });
+  if (isDocEditable(ext) || isImageEditable(ext)) {
+    const seq = ++renderSeq;
+    artifactBody.innerHTML = '';
+    const wait = note(ext === 'pdf' || ext === 'pptx' ? 'Opening the editor… (the pages can take a moment)' : 'Opening the editor…');
+    wait.classList.add('artifact-loading');
+    artifactBody.appendChild(wait);
+    editing = { doc: { dirty: () => false, save: async () => ({ ok: true }) }, mtime: null };
+    stat();
+    setToolbar();
+    let handle;
+    try {
+      const holder = document.createElement('div');
+      holder.className = 'artifact-doc-holder';
+      handle = isImageEditable(ext)
+        ? await mountImage(holder, path, `${fileUrl(path)}?t=${Date.now()}`, () => editing?.mtime)
+        : await mountDocEditor(holder, path);
+      if (seq !== renderSeq || current?.path !== path) return;
+      artifactBody.innerHTML = '';
+      artifactBody.appendChild(holder);
+    } catch (e) {
+      if (seq !== renderSeq) return;
+      editing = null;
+      alert(`Could not open the editor: ${e.message}`);
+      render();
+      return;
+    }
+    editing.doc = handle;
+    setToolbar();
+    renderSwitch();
+    return;
+  }
+  let text;
+  try { text = await fetchText(`${fileUrl(path)}?t=${Date.now()}`, { raw: true }); }
+  catch (e) { alert(`Could not open ${path}: ${e.message}`); return; }
+  if (ext === 'csv' || ext === 'tsv') {
+    editing = { text, mtime: null };
+    stat();
+    artifactBody.innerHTML = '';
+    const grid = mountCsv(artifactBody, text, ext === 'tsv' ? '\t' : ',', parseDelimited, (t) => startTextEditor(t, text));
+    editing.grid = grid;
+    setToolbar();
+    renderSwitch();
+    return;
+  }
+  editing = { text, mtime: null };
+  stat();
+  startTextEditor(text);
+}
+
+async function save(force = false) {
+  if (!editing) return;
+  if (editing.doc) {
+    setSaving(true);
+    let r;
+    try { r = await editing.doc.save(force); } catch (e) { r = { ok: false, error: e.message }; }
+    applyWriteResult({ reqId: 'edit', path: current?.path, ...r });
+    return;
+  }
+  const content = editing.grid ? editing.grid.text() : editorEl()?.value;
+  if (content == null) return;
+  setSaving(true);
+  send({ type: 'workspace_write', reqId: 'edit', path: current.path, content, mtime: editing.mtime, force });
 }
 
 export function applyWorkspaceStat(msg) {
@@ -351,7 +477,7 @@ export function applyWorkspaceStat(msg) {
 }
 
 export async function applyWriteResult(msg) {
-  artifactSave.disabled = false;
+  setSaving(false);
   if (msg.reqId === 'newfile') {
     if (msg.ok) openArtifact(msg.path, msg.path.split('.').pop(), { edit: true });
     else alert(msg.error || 'Could not create the file.');
@@ -391,6 +517,60 @@ artifactDelete.onclick = async () => {
   const ok = await confirmAction({ title: 'Delete this file?', body: current.path, confirm: 'Delete', cancel: 'Keep it' });
   if (ok) send({ type: 'workspace_delete', path: current.path });
 };
+
+// ✨ — hand the file to Claude: the prompt box, pre-filled with its path.
+artifactAsk.onclick = () => {
+  if (!current?.path) return;
+  const path = current.path;
+  if (window.innerWidth < 1000) closeArtifact();   // the viewer covers the chat there
+  const prefix = `In \`${path}\`: `;
+  if (!promptInput.value.includes(path)) promptInput.value = prefix + promptInput.value;
+  promptInput.focus();
+  promptInput.setSelectionRange(promptInput.value.length, promptInput.value.length);
+  promptInput.dispatchEvent(new Event('input', { bubbles: true }));
+};
+
+// ── Resizing the pane (wide screens) ───────────────────────────────────────
+const MIN_PANE = 320, MIN_CHAT = 380;
+function setPaneWidth(px, persist = false) {
+  if (px == null) {
+    document.documentElement.style.removeProperty('--artifact-w');
+    if (persist) localStorage.removeItem('artifactWidth');
+    return;
+  }
+  const w = Math.round(Math.max(MIN_PANE, Math.min(window.innerWidth - MIN_CHAT, px)));
+  document.documentElement.style.setProperty('--artifact-w', `${w}px`);
+  if (persist) localStorage.setItem('artifactWidth', String(w));
+}
+{
+  const saved = Number(localStorage.getItem('artifactWidth'));
+  if (saved) setPaneWidth(saved);
+  window.addEventListener('resize', () => { const v = Number(localStorage.getItem('artifactWidth')); if (v) setPaneWidth(v); });
+}
+artifactResizer.addEventListener('pointerdown', (e) => {
+  if (e.button !== 0) return;
+  e.preventDefault();
+  artifactResizer.setPointerCapture(e.pointerId);
+  document.body.classList.add('artifact-resizing');
+  const move = (ev) => setPaneWidth(window.innerWidth - ev.clientX);
+  const up = (ev) => {
+    artifactResizer.removeEventListener('pointermove', move);
+    artifactResizer.removeEventListener('pointerup', up);
+    artifactResizer.removeEventListener('pointercancel', up);
+    document.body.classList.remove('artifact-resizing');
+    setPaneWidth(window.innerWidth - ev.clientX, true);
+  };
+  artifactResizer.addEventListener('pointermove', move);
+  artifactResizer.addEventListener('pointerup', up);
+  artifactResizer.addEventListener('pointercancel', up);
+});
+artifactResizer.addEventListener('dblclick', () => setPaneWidth(null, true));
+artifactResizer.addEventListener('keydown', (e) => {
+  if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+  e.preventDefault();
+  const cur = artifactPane.getBoundingClientRect().width;
+  setPaneWidth(cur + (e.key === 'ArrowLeft' ? 40 : -40), true);
+});
 
 artifactClose.onclick = closeArtifact;
 artifactReload.onclick = () => render();
