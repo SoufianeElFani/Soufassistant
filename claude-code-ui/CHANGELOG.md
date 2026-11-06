@@ -1,3 +1,13 @@
+## 1.2.0
+**Soufassistant gets its own identity — and the phone comes first.**
+- **A real visual identity.** A new mark (a star in a burst of rays), condensed display titles, monospace for what the machine does, numbered entries, hairline rules and one signal colour, flat — no gradients. Three themes: **Ink** (dark), **Paper** (light) and **Signal** (the brand teal, full colour), plus *System* — Settings → Appearance, or ⌘K.
+- **One icon set.** Every icon was redrawn as a single thin, rounded family; no more emoji in the interface.
+- **Claude's activity, readable.** Tool calls are a quiet monospace timeline: an icon per tool, a plain name (*Terminal*, *Read*, *Browser · open*, *Web search*…), what it acted on, a spinner while it runs and a dot when done; a run of steps folds into "4 steps".
+- **A coherent composer.** Left: attach · options (agent, deep research, autonomy, project) · role. Right: the **mode**, dictate · call, send.
+- **The mode, without a menu.** A pill in the composer (and the title on a phone) opens three cards — Chat, Code, Cowork — with what each one can do, and the Cowork project.
+- **Your usage, always in sight.** The plan's 5-hour usage is a ring with its % in the phone's top bar and a bar in the sidebar; tap it for the details.
+- **Built for the phone.** A slim top bar (menu · conversation title and mode · usage · new chat); the menu is a drawer (swipe from the left edge, swipe back to close) with your recent conversations and every tool; panels and pickers open as bottom sheets within thumb reach.
+
 ## 1.1.0
 **A new look, and everything within reach.**
 - **Sidebar on a computer.** The row of icons is now a left sidebar: New chat, Search, your **recent conversations** (one click to reopen, a coloured dot for the mode), then every tool with its name — Workspace, Artifacts, Scheduled, Team, Hub, Skills, Usage, Settings. The ▥ button folds it into a slim icon rail (remembered).

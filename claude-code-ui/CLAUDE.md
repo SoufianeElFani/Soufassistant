@@ -937,6 +937,24 @@ Sharing (0.9.0): `POST /api/skills/import` (raw .zip or SKILL.md;
 `GET /api/skills/shared` + `POST /api/skills/import-shared` (install a zip
 from that folder — so a Drive folder becomes a skill library).
 
+**1.2.0 — identity, icons, phone layout.** `frontend/js/icons.js` is the one
+icon set (`icon()`, `setIcon()` keeps a button's other children, `toolIcon()`
+/ `toolLabel()` for tool rows, `LOGO()`); fonts are bundled in
+`frontend/fonts/` (Barlow Condensed, JetBrains Mono — OFL, see LICENSES.md),
+no CDN. Themes: `dark` | `light` | `signal` | `auto`. Layout classes set by
+shell.js from media queries: `body.layout-sidebar` (≥ 1024px) and
+`body.layout-drawer` (< 700px: `.topbar` added before the header, the header
+becomes a fixed off-canvas drawer — `body.drawer-open` — panels become bottom
+sheets). Both share the sidebar rules (`:is(.layout-sidebar, .layout-drawer)`);
+700–1023px keeps the compact row the browser tests use. The composer is
+regrouped into `.composer-left` (attach, toolbox, roles) and `.composer-right`
+(mode pill, mic, call, send) by moving the existing nodes. The old mode
+switches/project selects stay in the DOM for modes.js but are hidden; the
+mode pill / title open `.mode-pop` (a sheet on phones) and call `setMode`.
+The usage ring/bar mirror `#usage-btn .usage-badge` through a
+MutationObserver. transcript.js renders tool rows with `data-tool`, an icon
+and `toolLabel(name)` (the raw name is the row's title).
+
 **1.1.0 — the design layer (`frontend/theme.css`, `frontend/js/shell.js`).**
 `theme.css` loads after styles.css and owns the look: tokens for
 `html[data-theme="dark"|"light"]` (set before first paint by an inline script

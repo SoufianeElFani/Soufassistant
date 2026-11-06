@@ -2,6 +2,7 @@
  * Building the transcript: user bubbles, assistant text, tool calls and their
  * results, and rebuilding the whole thing from stored history on reconnect.
  */
+import { icon as iconSvg, toolIcon, toolLabel } from './icons.js';
 import { S } from './state.js';
 import { clearScreen } from './commands.js';
 import { messagesEl } from './dom.js';
@@ -200,11 +201,13 @@ export function appendToolUse(id, name, input) {
 
   const icon = document.createElement('span');
   icon.className = 'tool-icon';
-  icon.textContent = '⚙';
+  icon.innerHTML = iconSvg(toolIcon(name), 15);
+  el.dataset.tool = name;
 
   const nameEl = document.createElement('span');
   nameEl.className = 'tool-call-name';
-  nameEl.textContent = name;
+  nameEl.textContent = toolLabel(name);
+  nameEl.title = name;
 
   const summaryEl = document.createElement('span');
   summaryEl.className = 'tool-call-summary';
@@ -215,7 +218,7 @@ export function appendToolUse(id, name, input) {
 
   const chevron = document.createElement('span');
   chevron.className = 'tool-call-chevron';
-  chevron.textContent = '▾';
+  chevron.innerHTML = iconSvg('chevron', 14);
 
   header.append(icon, nameEl, summaryEl, statusEl, chevron);
 
@@ -230,7 +233,8 @@ export function appendToolUse(id, name, input) {
   const st = group._st;
   st.count++;
   st.running.add(el);
-  if (st.names[st.names.length - 1] !== name) st.names.push(name);
+  const label = toolLabel(name);
+  if (st.names[st.names.length - 1] !== label) st.names.push(label);
   group.querySelector('.tool-group-body').appendChild(el);
   refreshToolGroup(group);
 
@@ -292,10 +296,10 @@ export function ensureToolGroup() {
   const gh = document.createElement('div');
   gh.className = 'tool-group-header hidden';
   gh.innerHTML =
-    '<span class="tool-group-icon">⚙</span>' +
+    `<span class="tool-group-icon">${iconSvg('activity', 15)}</span>` +
     '<span class="tool-group-count"></span>' +
     '<span class="tool-group-summary"></span>' +
-    '<span class="tool-group-chevron">▾</span>';
+    `<span class="tool-group-chevron">${iconSvg('chevron', 14)}</span>`;
   gh.onclick = () => {
     group._st.touched = true;
     group.classList.toggle('collapsed');
@@ -336,7 +340,7 @@ export function refreshToolGroup(group) {
   else if (!st.touched) group.classList.add('collapsed');
 
   gh.querySelector('.tool-group-count').textContent =
-    `${st.count} tool call${st.count !== 1 ? 's' : ''}${st.failed ? ` · ${st.failed} failed` : ''}`;
+    `${st.count} step${st.count !== 1 ? 's' : ''}${st.failed ? ` · ${st.failed} failed` : ''}`;
   gh.querySelector('.tool-group-summary').textContent = groupSummary(st);
   gh.classList.toggle('has-error', st.failed > 0);
   group.classList.toggle('running', st.running.size > 0);

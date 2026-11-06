@@ -105,9 +105,9 @@ export function render() {
   btn.classList.toggle('active', n > 0);
   chips.innerHTML = '';
   if (a) chips.appendChild(chip(`${a.icon} ${a.name}`, a.description || a.name, () => setAgent(null), 'chip-agent'));
-  if (research) chips.appendChild(chip('🔭 Deep research', 'Several minutes of sourced research; a report is saved in the workspace', () => { research = false; render(); }, 'chip-research'));
-  if (autonomous) chips.appendChild(chip('🚀 Autonomous', 'Runs to the end without asking you; you get a notification', () => { autonomous = false; render(); }, 'chip-auto'));
-  if (showProject) chips.appendChild(chip(`📁 ${project}`, 'Uses this project\'s instructions and knowledge', () => { project = ''; localStorage.removeItem('knowledgeProject'); render(); }));
+  if (research) chips.appendChild(chip('Deep research', 'Several minutes of sourced research; a report is saved in the workspace', () => { research = false; render(); }, 'chip-research'));
+  if (autonomous) chips.appendChild(chip('Autonomous', 'Runs to the end without asking you; you get a notification', () => { autonomous = false; render(); }, 'chip-auto'));
+  if (showProject) chips.appendChild(chip(`Project · ${project}`, 'Uses this project\'s instructions and knowledge', () => { project = ''; localStorage.removeItem('knowledgeProject'); render(); }));
   chips.classList.toggle('hidden', !chips.children.length);
   if (!menu.classList.contains('hidden')) renderMenu();
 }
@@ -128,8 +128,8 @@ function item(label, desc, checked, onChange, type = 'checkbox', name) {
 function renderMenu() {
   menu.innerHTML = '';
   menu.appendChild(el('div', 'roles-menu-head', 'For this message'));
-  menu.appendChild(item('🔭 Deep research', 'Searches the web for several minutes, cross-checks sources and writes a sourced report into the workspace.', research, (e) => { research = e.target.checked; render(); }));
-  menu.appendChild(item('🚀 Autonomous task', 'Works to the end on its own — plan in the Tasks panel, no permission prompts or questions, a notification when done. You can close the app.', autonomous, (e) => { autonomous = e.target.checked; render(); }));
+  menu.appendChild(item('Deep research', 'Searches the web for several minutes, cross-checks sources and writes a sourced report into the workspace.', research, (e) => { research = e.target.checked; render(); }));
+  menu.appendChild(item('Autonomous task', 'Works to the end on its own — plan in the Tasks panel, no permission prompts or questions, a notification when done. You can close the app.', autonomous, (e) => { autonomous = e.target.checked; render(); }));
   menu.appendChild(el('div', 'roles-menu-head', 'Agent'));
   menu.appendChild(item('None', 'Claude as usual.', !currentAgent(), () => setAgent(null), 'radio', 'tb-agent'));
   for (const a of agents) menu.appendChild(item(`${a.icon} ${a.name}`, a.description || a.instructions.slice(0, 120), a.id === agentId, () => setAgent(a.id), 'radio', 'tb-agent'));
