@@ -937,6 +937,64 @@ Sharing (0.9.0): `POST /api/skills/import` (raw .zip or SKILL.md;
 `GET /api/skills/shared` + `POST /api/skills/import-shared` (install a zip
 from that folder — so a Drive folder becomes a skill library).
 
+**1.0.0 — the Hub, the ✚ menu and the app's own tools.**
+`server/lib/internal-tools.js` builds the one in-process MCP server
+("soufassistant") every run and every scheduled task gets: `generate_image`
+(image-gen.js), `browser_*` (browser.js, when Chromium exists), `gmail_*` /
+`calendar_*` (google.js, when connected), `publish_app` / `list_published_apps`
+(apps.js, not in Chat). Its `allowed` list (read-only tools) is merged into
+`allowedTools`; click/type/select/press, drafts, events and publishing go
+through the permission mode. Routes for everything below are in
+`server/lib/hub-routes.js`; the UI is `frontend/js/hub.js` (panel, tabs) and
+`frontend/js/toolbox.js` (the composer's ✚ menu, chips, `toolboxFields()` sent
+with each prompt; research/autonomous reset after one send).
+- **Agents** (`agents.js`, AGENTS_FILE): `{icon,name,description,instructions,
+  mode,model,effort,skills,research}` + `sessions` map. `agentPrompt()` goes
+  first in the appended system prompt; model/effort apply when the prompt set
+  none; `skills` is an allow-list → `agentSkillOverrides()` merges `off` for the
+  rest into `skillOverrides`. A new conversation's agent is recorded at `init`
+  (like roles). A fixed `mode` is applied client-side (it clicks the mode).
+- **Deep research / autonomous** (`modes.js` `researchPrompt(dir)`,
+  `AUTONOMOUS_PROMPT`; run-query flags `research`, `autonomous`). Research
+  defaults effort to high and, in Chat, adds Write/Read fenced to the workspace
+  with `coworkWriteGuard`. Autonomous replaces canUseTool with allow-all +
+  AskUserQuestion denied ("decide yourself"); hooks (config guard, Cowork fence)
+  still apply.
+- **Skill suggestion**: `run.toolUses` counts tool_use blocks; a successful
+  non-chat turn with ≥ SKILL_SUGGEST_STEPS (12) that wrote no SKILL.md emits
+  `skill_suggestion`; artifacts.js shows the card, whose button sends a prompt
+  asking Claude to write the skill (localStorage `suggestSkills` = off hides it).
+- **Memory** (`memory.js`): reads/writes Claude Code's own auto-memory in
+  STORE_DIR/memory (one file per fact + MEMORY.md index); `dangling` = index
+  lines without a file, `cleanDangling()` drops them.
+- **Project knowledge** (`knowledge.js`): `PROJECT.md` + `Knowledge/` in a
+  project folder. `knowledgePrompt()` lists files (code/cowork) or inlines their
+  text (chat; 60k chars, docx/pptx via office-edit's paragraph scan, xlsx via
+  sheetCells, PDF via pdftotext; cached by mtime). A `project` sent in Chat/Code
+  mode brings only this, never the Cowork write fence.
+- **Google** (`google.js`, CONNECTORS_DIR/google.json mode 600): the user's
+  own Desktop OAuth client; loopback redirect `http://127.0.0.1:53682/` that
+  does not load — the user pastes the address back (`codeFrom`). Refresh token
+  never leaves the server. Drafts only (no send tool); events with
+  `sendUpdates=none`.
+- **Browser** (`browser.js`, puppeteer-core in server/package.json, Debian
+  `chromium` in the Dockerfile): one headless browser, a tab per conversation
+  key, closed after 10 min idle, profile in BROWSER_PROFILE_DIR. Snapshot =
+  page text + `[n] role "label"` list (elements tagged `data-souf-ref`); every
+  action returns a new snapshot and stores a JPEG (`browser_frame` →
+  `GET /api/browser/frame?key=`) that the viewer's "Live browser" view shows.
+- **Published apps** (`apps.js`, APPS_FILE): `/apps/<slug>/` — static (express
+  .static on the project, `entry` at `/`) or server (`bash -lc command` with
+  `$PORT` in 8200–8299, restarted with backoff, started at boot by
+  `startHub()`, proxied like previews). Every response gets
+  `Content-Security-Policy: sandbox …` without allow-same-origin.
+- **Shares** (`shares.js`): HA serves `<config>/www` at `/local/` without login,
+  so a share is SHARE_DIR/<24-byte token>/index.html. Same origin as HA's
+  frontend → never script there: marked (the frontend's own copy, run in a vm)
+  with raw HTML escaped and unsafe hrefs dropped, a CSP meta; HTML/SVG files
+  only inside `<iframe sandbox="allow-scripts …" srcdoc>` (that page alone has
+  no CSP meta, since a srcdoc frame inherits it). Base URL = HA external_url.
+
 **Scheduled tasks (`server/lib/scheduler.js`, `server/lib/cron.js`).** A
 persisted list (`/data/scheduled-tasks.json`) of `{name, cron, prompt,
 enabled}`, ticked every `SCHEDULER_TICK_MS` against `cron.js` — a small,

@@ -117,6 +117,7 @@ function menu(s) {
   });
   act('⧉ Duplicate', 'A copy to continue in another direction', () => send({ type: 'session_duplicate', id: s.id }));
   act('⇩ Export', 'Save as Markdown in the workspace (Conversations/)', () => send({ type: 'session_export', id: s.id }));
+  act('🔗 Share link', 'A read-only link to this conversation', () => import('./hub.js').then((h) => h.shareConversation(s.id, s.title)));
   act('↶ Changes', 'Files changed in this conversation, and undo', () => {
     closeSessions();
     import('./changes.js').then((c) => c.openChanges(s.id, s.title));

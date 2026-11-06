@@ -65,6 +65,7 @@ import { registerDiagRoutes } from './lib/diag.js';
 import { transcribe, sttAvailable } from './lib/stt.js';
 import { synthesize, ttsEngine } from './lib/tts.js';
 import { attach } from './lib/ws-protocol.js';
+import { registerHubRoutes, startHub } from './lib/hub-routes.js';
 import { runQuery } from './lib/run-query.js';
 import * as autoContinue from './lib/auto-continue.js';
 import * as notifier from './lib/notify.js';
@@ -149,6 +150,8 @@ app.post('/api/workspace-binary', express.raw({ type: 'application/octet-stream'
     res.json({ ...r, path: rel });
   } catch (e) { res.json({ ok: false, error: e.message }); }
 });
+
+registerHubRoutes(app);
 
 // Live previews of an app running in a Cowork project (previews.js): only the
 // preview port range, only to localhost.
@@ -324,6 +327,7 @@ refreshHaLinks();          // populate entity/automation link targets
 planUsage.startPolling();  // plan limits for the Usage panel while a tab is open
 autoContinue.rearmOnBoot();
 scheduler.start();
+startHub();
 
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`Claude Code UI listening on port ${PORT}`);

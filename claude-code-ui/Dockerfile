@@ -40,6 +40,12 @@ RUN apt-get update \
         fonts-dejavu-core \
     && rm -rf /var/lib/apt/lists/*
 
+# The browser agent (server/lib/browser.js) drives this Chromium headless
+# through puppeteer-core (no browser download of its own).
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends chromium fonts-noto-color-emoji \
+    && rm -rf /var/lib/apt/lists/*
+
 # uv — used to provision a standalone Python 3.12 for the optional ESPHome venv
 # (Debian bookworm ships 3.11, but ESPHome needs >=3.12) and by the debug
 # /diag/uvx endpoint. Debian has no `uv` apt package; install the wheel.

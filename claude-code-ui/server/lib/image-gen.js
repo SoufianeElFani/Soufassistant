@@ -87,7 +87,12 @@ export async function generateImage({ prompt, width, height, seed, model, name }
  * project's Images/ folder, else the workspace's), `onSaved(abs)` lets the run
  * count the file as its own artifact.
  */
-export function imageMcpServer({ targetDir, onSaved, workspaceRoot }) {
+export function imageMcpServer(ctx) {
+  return createSdkMcpServer({ name: IMAGE_SERVER, version: '1.0.0', tools: imageTools(ctx) });
+}
+
+/** The tool on its own, for the app's combined tool server (internal-tools.js). */
+export function imageTools({ targetDir, onSaved, workspaceRoot }) {
   const generate = tool(
     'generate_image',
     'Generate an image from a text description and save it in the user\'s workspace; the app shows it ' +
@@ -118,5 +123,5 @@ export function imageMcpServer({ targetDir, onSaved, workspaceRoot }) {
       }
     },
   );
-  return createSdkMcpServer({ name: IMAGE_SERVER, version: '1.0.0', tools: [generate] });
+  return [generate];
 }

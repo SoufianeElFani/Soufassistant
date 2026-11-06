@@ -20,6 +20,9 @@
  * Only one run — scheduled or interactive — proceeds at a time: a tick that
  * lands while the chat is busy simply tries again next tick; nothing queues.
  */
+import path from 'path';
+import { internalTools } from './internal-tools.js';
+import { workspaceRoot } from './workspace.js';
 import { randomUUID } from 'crypto';
 import { writeFileAtomic } from './atomic.js';
 import { existsSync, readFileSync, writeFileSync } from 'fs';
@@ -141,6 +144,13 @@ async function fireEntry(entry, { manual = false } = {}) {
   // Resume the same thread each time this entry fires, so a daily check-in
   // genuinely continues yesterday's rather than starting from nothing.
   if (entry.lastSessionId) opts.resume = entry.lastSessionId;
+  // The app's own tools (images, browser, Gmail/Calendar, publishing) — a
+  // morning briefing or a weekly report can use them like a chat turn.
+  try {
+    opts.mcpServers = { soufassistant: internalTools({
+      targetDir: () => path.join(workspaceRoot(), 'Images'), workspaceRoot, key: () => `scheduled:${entry.id}`, chat: false,
+    }).server };
+  } catch (e) { log('WARN', `scheduled task tools unavailable: ${e.message}`); }
 
   try {
     const q = query({ prompt: entry.prompt, options: opts });

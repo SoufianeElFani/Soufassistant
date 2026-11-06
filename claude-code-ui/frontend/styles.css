@@ -1806,3 +1806,40 @@ body.artifact-resizing iframe { pointer-events: none; }
 .skills-share .hidden { display: none; }
 .skills-shared { margin-top: 6px; }
 .skills-shared .skill-row { padding-left: 0; padding-right: 0; }
+
+/* ── 1.0.0: Hub, ✚ menu, live browser, skill suggestions ── */
+.hub-panel { width: 480px; }
+.hub-tabs { padding: 7px 10px; }
+.hub-body { padding: 0 0 12px; }
+.hub-note { padding: 8px 14px 4px; }
+.hub-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px 14px; }
+.hub-body > .session-menu-btn, .hub-body > a.session-menu-btn { margin: 6px 14px; display: inline-block; }
+.hub-body > .scheduled-form-label { padding: 0 14px; }
+.hub-body > .usage-section-title { padding: 12px 14px 4px; }
+.hub-form { padding: 10px 14px; }
+.hub-row2 { display: grid; grid-template-columns: 70px 1fr; gap: 8px; }
+.hub-row3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.hub-select { width: 100%; max-width: none; }
+.hub-check { color: var(--text-muted); margin: 4px 0; }
+.hub-warn { margin: 6px 14px; padding: 8px 10px; border: 1px solid var(--error-border); background: var(--error-bg); border-radius: var(--radius-xs); font-size: 12px; display: flex; gap: 8px; align-items: center; justify-content: space-between; }
+.hub-log { max-height: 140px; margin-top: 6px; }
+.hidden.scheduled-form-label, .hub-body .hidden { display: none; }
+@media (max-width: 520px) { .hub-row3 { grid-template-columns: 1fr; } }
+
+.toolbox-btn { position: relative; }
+.toolbox-btn.active { color: var(--accent); }
+.toolbox-menu { max-height: 420px; }
+.toolbox-project-row { padding: 4px 12px 8px; }
+.toolbox-project { width: 100%; max-width: none; }
+.toolbox-chips { padding-bottom: 4px; }
+.role-chip.chip-agent { border-color: #a78bfa; }
+.role-chip.chip-research { border-color: #60a5fa; }
+.role-chip.chip-auto { border-color: #fbbf24; }
+
+.browser-live { display: flex; flex-direction: column; height: 100%; background: #f4f8f7; }
+.browser-live-url { font: 12px ui-monospace, monospace; color: #33413f; padding: 7px 12px; border-bottom: 1px solid #d5dedc; background: #fff; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.browser-live-img { display: block; width: 100%; height: auto; }
+
+.skill-suggest { border-color: var(--accent); }
+.skill-suggest-text { font-size: 13px; color: var(--text); }
+.skill-suggest-actions { display: flex; gap: 6px; }

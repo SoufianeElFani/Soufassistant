@@ -5,6 +5,7 @@
 import { currentModeFields } from './modes.js';
 import { currentRoleIds } from './roles.js';
 import { voiceFields } from './voice.js';
+import { toolboxFields, afterSend } from './toolbox.js';
 import { S } from './state.js';
 import { attachments, clearAttachments, fileToDataURL } from './attachments.js';
 import { SEND_ICON, STOP_ICON, UI_COMMANDS, clearScreen, hideCmdMenu, showHelp, showUsage } from './commands.js';
@@ -94,9 +95,11 @@ inputForm.onsubmit = async (e) => {
     effort: localStorage.getItem('effort') || undefined,
     ...currentModeFields(),
     roles: currentRoleIds(),
+    ...(steer ? {} : toolboxFields()),
     ...voiceFields(),
     ...(steer ? { steer: true } : {}),
   }));
+  if (!steer) afterSend();
 };
 
 export function doNewSession() {

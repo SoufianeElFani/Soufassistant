@@ -33,7 +33,7 @@ import { S } from './state.js';
 import {
   wsBase, messagesEl, artifactPane, artifactTitle, artifactBody, artifactOpen,
   artifactDownload, artifactReload, artifactClose, artifactEdit, artifactSave, artifactCancel, artifactDelete,
-  artifactSwitch, artifactsBtn, artifactsMenu, artifactsMenuList, artifactAsk, artifactResizer, promptInput,
+  artifactSwitch, artifactsBtn, artifactsMenu, artifactsMenuList, artifactAsk, artifactShare, artifactResizer, promptInput, inputForm,
 } from './dom.js';
 import { confirmAction } from './confirm.js';
 import { isDocEditable, isImageEditable, mountDocEditor, mountImage, mountCsv } from './doc-editor.js';
@@ -109,6 +109,7 @@ function setToolbar() {
   const file = !!current?.path;
   const canEdit = file && canEditExt(current.ext);
   artifactAsk.classList.toggle('hidden', !file || !!editing);
+  artifactShare.classList.toggle('hidden', !file || !!editing);
   artifactEdit.classList.toggle('hidden', !canEdit || !!editing);
   artifactSave.classList.toggle('hidden', !editing);
   artifactCancel.classList.toggle('hidden', !editing);
@@ -207,6 +208,25 @@ async function render() {
   const seq = ++renderSeq;
   setToolbar();
   renderSwitch();
+  if (current.browser) {
+    const f = browserFrames.get(current.browser) || {};
+    artifactTitle.textContent = `Live browser${f.title ? ` · ${f.title}` : ''}`;
+    artifactTitle.title = f.url || '';
+    artifactOpen.href = f.url || '#';
+    artifactBody.innerHTML = '';
+    const wrap = document.createElement('div');
+    wrap.className = 'browser-live';
+    const bar = document.createElement('div');
+    bar.className = 'browser-live-url';
+    bar.textContent = f.url || 'Starting…';
+    const img = document.createElement('img');
+    img.className = 'browser-live-img';
+    img.alt = 'What Claude sees in the browser';
+    img.src = `${wsBase}/api/browser/frame?key=${encodeURIComponent(current.browser)}&t=${f.ts || Date.now()}`;
+    wrap.append(bar, img);
+    artifactBody.appendChild(wrap);
+    return;
+  }
   if (current.preview) {
     const url = `${wsBase}/preview/${current.preview}/`;
     artifactTitle.textContent = `Live preview · port ${current.preview}`;
@@ -295,6 +315,83 @@ export function openArtifact(path, ext, { edit = false } = {}) {
   artifactPane.classList.remove('hidden');
   document.body.classList.add('artifact-open');
   render().then(() => { if (edit) startEdit(); });
+}
+
+// ── The browser agent's live view (browser.js: 'browser_frame') ───────────
+const browserFrames = new Map();   // run key → { url, title, ts }
+const browserOpened = new Set();   // keys whose view opened by itself once
+
+export function openBrowserView(key) {
+  if (editing && !confirmLeaveEdit()) return;
+  closeAllPanels();
+  editing = null;
+  current = { browser: key };
+  artifactPane.classList.remove('hidden');
+  document.body.classList.add('artifact-open');
+  render();
+}
+
+export function applyBrowserFrame(msg) {
+  browserFrames.set(msg.key, { url: msg.url, title: msg.title, ts: msg.ts });
+  if (current?.browser === msg.key) {
+    const img = artifactBody.querySelector('img.browser-live-img');
+    const bar = artifactBody.querySelector('.browser-live-url');
+    if (img) img.src = `${wsBase}/api/browser/frame?key=${encodeURIComponent(msg.key)}&t=${msg.ts}`;
+    if (bar) bar.textContent = msg.url || '';
+    artifactTitle.textContent = `Live browser${msg.title ? ` · ${msg.title}` : ''}`;
+    artifactOpen.href = msg.url || '#';
+    return;
+  }
+  if (!browserOpened.has(msg.key) && !editing) {
+    browserOpened.add(msg.key);
+    if (localStorage.getItem('autoOpenArtifacts') !== 'off') openBrowserView(msg.key);
+    const card = document.createElement('div');
+    card.className = 'artifact-card';
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'artifact-chip';
+    b.textContent = '🌐 Claude is using the browser — watch live';
+    b.onclick = () => openBrowserView(msg.key);
+    card.appendChild(b);
+    messagesEl.appendChild(card);
+  }
+}
+
+// ── Self-improvement: offer to keep a long task as a skill ───────────────
+export function skillSuggestionCard(msg) {
+  if (localStorage.getItem('suggestSkills') === 'off') return;
+  const card = document.createElement('div');
+  card.className = 'artifact-card skill-suggest';
+  const head = document.createElement('div');
+  head.className = 'artifact-card-head';
+  head.textContent = 'Learn from this';
+  const p = document.createElement('div');
+  p.className = 'skill-suggest-text';
+  p.textContent = `That took ${msg.steps} steps. Save how it was done as a skill, so next time it is faster and uses fewer tokens?`;
+  const row = document.createElement('div');
+  row.className = 'skill-suggest-actions';
+  const yes = document.createElement('button');
+  yes.type = 'button';
+  yes.className = 'session-menu-btn';
+  yes.textContent = '✦ Create a skill';
+  yes.onclick = () => {
+    card.remove();
+    promptInput.value = 'Turn what you just did into a reusable skill: write ~/.claude/skills/<short-name>/SKILL.md '
+      + '(front matter name + a precise description of when to use it, in my language), then the steps that worked, the '
+      + 'pitfalls you hit and how you solved them, the commands/paths/files involved, and any helper script worth keeping '
+      + '(in the skill folder). Keep it short and general enough to reuse; if a similar skill exists, improve it instead.';
+    promptInput.dispatchEvent(new Event('input', { bubbles: true }));
+    inputForm.requestSubmit();
+  };
+  const no = document.createElement('button');
+  no.type = 'button';
+  no.className = 'session-menu-btn';
+  no.textContent = 'Not now';
+  no.onclick = () => card.remove();
+  row.append(yes, no);
+  card.append(head, p, row);
+  messagesEl.appendChild(card);
+  if (S.stickToBottom) messagesEl.scrollTop = messagesEl.scrollHeight;
 }
 
 /** A web app running in a Cowork project, through /preview/<port>/ (previews.js). */
@@ -519,6 +616,8 @@ artifactDelete.onclick = async () => {
 };
 
 // ✨ — hand the file to Claude: the prompt box, pre-filled with its path.
+artifactShare.onclick = () => { if (current?.path) import('./hub.js').then((h) => h.shareFile(current.path)); };
+
 artifactAsk.onclick = () => {
   if (!current?.path) return;
   const path = current.path;
