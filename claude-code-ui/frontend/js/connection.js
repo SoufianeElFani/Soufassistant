@@ -25,6 +25,9 @@ import { applySessionMode, applySessionModes } from './modes.js';
 import { applySkills, applySkillDetail, applySkillResult } from './skills.js';
 import { voiceOnDelta, voiceOnText, voiceOnTurnEnd } from './voice.js';
 import { applyRoles, applyRoleResult, applySessionRoles, resetRolesForNewConversation } from './roles.js';
+import { applyAgents, applySessionAgent, applyProjects } from './toolbox.js';
+import { applyPublishedApps } from './hub.js';
+import { applyBrowserFrame, skillSuggestionCard } from './artifacts.js';
 import { renderScheduled, showScheduledError } from './scheduled.js';
 import { renderTeam } from './team.js';
 import { renderUsage } from './usage-panel.js';
@@ -160,6 +163,7 @@ export function handleServerMessage(msg) {
       if (S.activeSessionId && S.activeSessionId !== prevActive) {
         applySessionMode(S.activeSessionId);
         applySessionRoles(S.activeSessionId);
+        applySessionAgent(S.activeSessionId);
       }
       applyRuns(S.runs);   // the "running elsewhere" badge depends on which one is on screen
       if (!sessionsPanel.classList.contains('hidden')) renderSessions();
@@ -196,6 +200,23 @@ export function handleServerMessage(msg) {
 
     case 'workspace_state':
       applyWorkspaceState(msg.state);
+      applyProjects(msg.state?.projects);
+      break;
+
+    case 'agents':
+      applyAgents(msg);
+      break;
+
+    case 'published_apps':
+      applyPublishedApps(msg.apps);
+      break;
+
+    case 'browser_frame':
+      applyBrowserFrame(msg);
+      break;
+
+    case 'skill_suggestion':
+      skillSuggestionCard(msg);
       break;
 
     case 'workspace_result':
@@ -314,6 +335,7 @@ export function handleServerMessage(msg) {
     case 'cleared':
       clearScreen();
       resetRolesForNewConversation();
+      applySessionAgent(null);
       S.viewKey = null;
       setConversationArtifacts([]);
       applyRuns(S.runs);

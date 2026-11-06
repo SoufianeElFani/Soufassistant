@@ -106,6 +106,24 @@ function closeForm() {
 }
 
 scheduledNewBtn.onclick = () => openForm(null);
+
+// A morning briefing (like Perplexity / Grok daily digests): a preset to adjust.
+const BRIEFING_PROMPT = [
+  'Veille du matin. Sujets suivis : [à adapter : efficacité énergétique et énergie en Belgique, smart building et GTB/BMS,',
+  'IoT et plateformes de données pour les bâtiments, concurrents et partenaires, appels d\'offres publics du secteur].',
+  '1) Pour chaque sujet, cherche sur le web les nouvelles des dernières 24 h (le lundi : depuis vendredi), sources fiables',
+  '(FR, NL, EN), sans doublons.',
+  '2) Écris le briefing dans le workspace : Veille/AAAA-MM-JJ_Veille.md — 5 à 10 points, chacun en deux lignes avec la',
+  'source et le lien, puis « À surveiller » et « Idées d\'action ».',
+  '3) Ta réponse finale part en notification sur le téléphone : les 3 points les plus importants, 250 caractères maximum.',
+].join(' ');
+const briefingBtn = document.createElement('button');
+briefingBtn.type = 'button';
+briefingBtn.className = 'scheduled-new-btn';
+briefingBtn.textContent = '+ Briefing';
+briefingBtn.title = 'A daily briefing on the topics you follow, as a notification and a file';
+briefingBtn.onclick = () => openForm({ name: 'Veille du matin', cron: '30 7 * * 1-5', prompt: BRIEFING_PROMPT });
+scheduledNewBtn.before(briefingBtn);
 scheduledFormCancel.onclick = () => closeForm();
 
 scheduledForm.onsubmit = (e) => {

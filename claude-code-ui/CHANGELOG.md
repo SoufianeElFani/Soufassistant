@@ -1,3 +1,23 @@
+## 1.0.0
+Soufassistant now does what the big AI apps do — on your Home Assistant, with your files.
+
+- **✚ menu under the message box** — how a message is worked on:
+  - **🔭 Deep research** (like Perplexity / ChatGPT / Gemini Deep Research): Claude splits the question, searches and reads primary sources for several minutes (in parallel where it can), cross-checks figures and writes a **sourced report** in the workspace; the chat gets the short version. Works in Chat mode too.
+  - **🚀 Autonomous task** (like Manus): Claude works to the end on its own — a plan in the Tasks panel, no permission prompts or questions (it decides and notes its assumptions), a phone notification when done. You can close the app. It still stops before anything irreversible or outward-facing.
+  - **Agents** (like GPTs): pick a custom assistant — its instructions, model, effort, the skills it may use, always-on research. Two examples to start: *Relecteur d'offres* and *Coach présentation*. A conversation keeps its agent.
+  - **Project knowledge** in Chat and Code too (see Projects below).
+- **Hub** (new header button, ⊞) — what makes the assistant yours, in tabs:
+  - **Agents** — create, edit, delete them.
+  - **Memory** (like ChatGPT's memory): see, edit, add and forget what Claude remembers about you between conversations; a warning (and "Clean up") when the index points at memories that no longer exist.
+  - **Projects** (like Claude / ChatGPT Projects): instructions and reference documents (Word, PowerPoint, Excel, PDF, text) for a project, used by every conversation in it — in Cowork, or picked in Chat/Code. Kept in the project folder (`PROJECT.md`, `Knowledge/`), so in your Drive too. In Chat the documents' text is given to Claude directly; elsewhere Claude reads what it needs.
+  - **Connectors** — **Gmail and Google Calendar** with your own Google OAuth client: Claude searches and reads mail, **prepares drafts (never sends)**, reads your calendar and adds events (without e-mailing attendees).
+  - **Apps** (like Lovable / Bolt "publish"): an app built in a Cowork project stays online at its own address behind your Home Assistant login — static files, or a small server kept running and restarted with the app. Ask Claude "publish it", or publish from the tab.
+  - **Shared** — read-only links you created, to copy or revoke.
+- **Browser agent** (like ChatGPT's agent mode): Claude can drive a real Chromium — open sites, read them, click, fill in forms, choose in lists — and you **watch it live** in the viewer. Clicking and typing go through your permission mode. A site it logged into stays logged in.
+- **Learns from experience** (like Hermes Agent): after a long task, a card offers to **save how it was done as a skill**, so next time is faster and uses fewer tokens (Hub → Memory to turn the offer off).
+- **Share by link**: 🔗 in the viewer shares a file, ⋯ → *Share link* in Sessions shares a conversation — a read-only page at a secret address wherever your Home Assistant is reachable. Pages can't run code on Home Assistant's side (HTML is shown sandboxed).
+- **Morning briefing** (like Perplexity / Grok digests): *Scheduled tasks → + Briefing* prepares a weekday 7:30 briefing on the topics you follow — a file in `Veille/` and the 3 key points as a phone notification. Scheduled tasks can now use the browser, Gmail and Calendar too.
+
 ## 0.9.0
 - **Edit every kind of document right in the viewer.** ✎ now opens an editor for everything Claude makes, not only text files:
   - **Word (.docx)** — the text, paragraph by paragraph, headers and footers included, with a search box. Only the words you change are touched: styles, bold words elsewhere in the paragraph, tables, pictures and the template stay exactly as they were. A new line is a line break.

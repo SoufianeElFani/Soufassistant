@@ -27,6 +27,7 @@ import * as team from './team.js';
 import { planUsage, refreshPlanUsage } from './plan-usage.js';
 import * as workspace from './workspace.js';
 import * as skills from './skills.js';
+import { agentsMessage } from './agents.js';
 import { sessionModeMap } from './modes.js';
 import * as sessionTools from './session-tools.js';
 import * as previews from './previews.js';
@@ -72,6 +73,7 @@ function greet(ws) {
   send(ws, { type: 'workspace', entries: workspace.listWorkspaceEntries() });
   send(ws, { type: 'session_modes', modes: sessionModeMap() });
   send(ws, roles.rolesMessage());
+  send(ws, agentsMessage());
 
   // Plan limits (5-hour / weekly / extra usage): the last snapshot right away,
   // then a refresh (rate-limited inside plan-usage.js) that broadcasts if newer.

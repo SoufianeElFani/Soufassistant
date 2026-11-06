@@ -67,12 +67,41 @@ export const VOICE_PROMPT = [
 export const CHAT_PROMPT = [
   'You are in **Chat mode** in Soufassistant: a plain conversation, like claude.ai.',
   'You have no access to files, the shell, Home Assistant or the workspace in this mode —',
-  'only web search and web fetch. Answer directly in the conversation (markdown is rendered).',
+  'only web search and web fetch, plus the app\'s own tools when present (images, a real browser,',
+  'Gmail and Google Calendar). Answer directly in the conversation (markdown is rendered).',
   'If the user asks for something that needs files, code execution or the house,',
   'tell them to switch to Code mode (Home Assistant / config work) or Cowork mode (building',
   'documents, pages or small apps in a workspace project).',
   CLARIFY_PROMPT,
 ].join(' ');
+
+/** Deep research (the composer's ✚ menu, or an agent): several minutes, a sourced report. */
+export function researchPrompt(dir) {
+  return [
+    '## Deep research',
+    'The user asked for DEEP RESEARCH on their message, like Perplexity / ChatGPT / Gemini Deep Research.',
+    '1) Restate the question in one line and list 4–8 sub-questions that would answer it fully (show them).',
+    '2) Research each one thoroughly with WebSearch and WebFetch (several searches each, in the languages that matter:',
+    'French, Dutch, English…), reading primary sources (official sites, regulators, standards, filings, studies) rather than',
+    'summaries; when the Agent tool is available, research independent sub-questions in parallel with subagents.',
+    '3) Cross-check figures across sources, note dates (prefer recent), and say where sources disagree or evidence is thin.',
+    `4) Write the report as a Markdown file in ${dir} named YYYY-MM-DD_Recherche_<subject>.md (follow the workspace's`,
+    'own conventions if it has some): executive summary (5 bullets), findings by sub-question, a comparison table when',
+    'useful, risks/unknowns, recommendations, and a numbered "Sources" list (title, publisher, date, URL) cited inline as [1].',
+    '5) In the chat, give the short summary (≤ 10 lines) and the path of the report. Do not invent sources or URLs.',
+  ].join('\n');
+}
+
+/** An autonomous task (the ✚ menu): runs to the end without the user. */
+export const AUTONOMOUS_PROMPT = [
+  '## Autonomous task',
+  'The user launched this as an AUTONOMOUS task (like Manus): they are not watching and will not answer questions.',
+  'Work to the end on your own: first write a short plan as a task list (the claude-tasks CLI, if available, so the',
+  'user sees progress in the Tasks panel), then do every step, keeping the list up to date. Make sensible decisions',
+  'yourself and note them; never wait for confirmation. Verify your work (run it, open it, check the numbers) before',
+  'finishing. Stop and explain instead of doing anything irreversible or outward-facing (sending, publishing, deleting,',
+  'paying). End with a report: what was done, where the deliverables are, decisions taken, anything left open.',
+].join('\n');
 
 export function coworkPrompt(projectDirAbs, projectName) {
   return [

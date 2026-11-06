@@ -38,10 +38,12 @@ import { makeInputChannel } from './input-channel.js';
 import { notify } from './notify.js';
 import * as autoContinue from './auto-continue.js';
 import { refreshPlanUsage } from './plan-usage.js';
-import { modeOptions, normalizeMode, coworkWriteGuard, rememberSessionMode, sessionModeMap, VOICE_PROMPT } from './modes.js';
+import { modeOptions, normalizeMode, coworkWriteGuard, rememberSessionMode, sessionModeMap, VOICE_PROMPT, researchPrompt, AUTONOMOUS_PROMPT } from './modes.js';
 import { workspaceRoot, activeProject, projectDir } from './workspace.js';
-import { imageMcpServer, IMAGE_TOOL } from './image-gen.js';
-import { disabledOverrides } from './skills.js';
+import { internalTools } from './internal-tools.js';
+import { disabledOverrides, discoverSkills, invocationName } from './skills.js';
+import { getAgent, agentFor, setSessionAgent, agentPrompt, agentSkillOverrides, agentsMessage } from './agents.js';
+import { knowledgePrompt } from './knowledge.js';
 import { decoratedSessions, recordArtifacts, FILE_TOOLS } from './session-tools.js';
 import { listPreviews } from './previews.js';
 import { rolePrompt, rolesFor, setSessionRoles, normalizeRoleIds, rolesMessage } from './roles.js';
@@ -125,7 +127,10 @@ function runArtifacts(run, entries) {
  * the usual case, a prompt typed in the UI — it is the conversation on screen,
  * and a new conversation on screen gets a draft key until its id arrives.
  */
-export async function runQuery(ws, { text, permissionMode, model, effort, mode, project, roles, voice = false, autoAttempts = 0, sessionKey, steer = false }) {
+/** Tool calls in one turn from which saving the procedure as a skill is offered. */
+export const SKILL_SUGGEST_STEPS = parseInt(process.env.SKILL_SUGGEST_STEPS || '12', 10);
+
+export async function runQuery(ws, { text, permissionMode, model, effort, mode, project, roles, voice = false, autoAttempts = 0, sessionKey, steer = false, agent, research = false, autonomous = false }) {
   let key = sessionKey || viewKey();
   const existing = runFor(key);
 
@@ -164,6 +169,14 @@ export async function runQuery(ws, { text, permissionMode, model, effort, mode, 
   // a Cowork prompt with no project is refused without killing a running turn.
   const runMode = normalizeMode(mode);
   const runProject = runMode === 'cowork' ? (project || activeProject()) : null;
+  // A project picked in Chat or Code mode brings only its instructions and knowledge (knowledge.js).
+  const knowledgeProject = runProject || (typeof project === 'string' && projectDir(project) ? project : null);
+  // The conversation's agent (agents.js): the one sent with the prompt, else the one it used before.
+  const runAgent = agent === undefined ? agentFor(sessionKey && !String(sessionKey).startsWith('draft:') ? sessionKey : null) : getAgent(agent);
+  if (runAgent?.model && !model) model = runAgent.model;
+  if (runAgent?.effort && !effort) effort = runAgent.effort;
+  const runResearch = !!research || !!runAgent?.research;
+  if (runResearch && !effort) effort = 'high';
   const mo = modeOptions(runMode, {
     root: workspaceRoot(), project: runProject, projectDir: runProject ? projectDir(runProject) : null,
   });
@@ -195,6 +208,7 @@ export async function runQuery(ws, { text, permissionMode, model, effort, mode, 
     permissionMode: permissionMode || DEFAULT_PERMISSION_MODE,
     backgroundTasks: new Map(), writtenPaths: new Set(),
     mode: runMode, project: runProject, title: runTitle(key, text), startedAt,
+    autonomous: !!autonomous, research: runResearch, agentId: runAgent?.id || null, toolUses: 0,
   };
   runtime.runs.set(key, run);
   runtime.activePermMode = run.permissionMode;
@@ -236,33 +250,62 @@ export async function runQuery(ws, { text, permissionMode, model, effort, mode, 
   // prompt by the UI, else — an auto-continue resume, a scheduled run — the
   // ones this conversation last used.
   const runRoles = Array.isArray(roles) ? normalizeRoleIds(roles) : rolesFor(run.sessionId);
-  const roleText = [rolePrompt(runRoles), voice ? VOICE_PROMPT : ''].filter(Boolean).join('\n\n');
+  const knowledgeText = knowledgeProject
+    ? await knowledgePrompt(knowledgeProject, projectDir(knowledgeProject), { inline: runMode === 'chat' }).catch(() => '')
+    : '';
+  const researchDir = mo.coworkDir || workspaceRoot();
+  const roleText = [
+    agentPrompt(runAgent), rolePrompt(runRoles), knowledgeText,
+    runResearch ? researchPrompt(researchDir) : '', autonomous ? AUTONOMOUS_PROMPT : '',
+    voice ? VOICE_PROMPT : '',
+  ].filter(Boolean).join('\n\n');
+  if (runResearch && runMode === 'chat') {
+    // Chat has no file tools; research needs to write its report (fenced to the workspace).
+    opts.tools = [...new Set([...(opts.tools || []), 'Write', 'Read'])];
+    const pre = [...(opts.hooks?.PreToolUse || []), { hooks: [coworkWriteGuard(researchDir, WORK_DIR)] }];
+    opts.hooks = { ...(opts.hooks || {}), PreToolUse: pre };
+  }
   opts.systemPrompt = mo.systemPrompt != null
     ? (roleText ? `${mo.systemPrompt}\n\n${roleText}` : mo.systemPrompt)
     : { type: 'preset', preset: 'claude_code', append: roleText ? `${mo.append}\n\n${roleText}` : mo.append };
   if (run.sessionId && Array.isArray(roles) && setSessionRoles(run.sessionId, runRoles)) broadcast(rolesMessage());
+  if (run.sessionId && agent !== undefined && setSessionAgent(run.sessionId, runAgent?.id || null)) broadcast(agentsMessage());
   // The reply is shown as it is written (stream_event text deltas, below).
   opts.includePartialMessages = true;
   // Image generation (image-gen.js), in every mode: into the Cowork project's
   // Images/ folder, else the workspace's, and counted as this run's artifact.
-  opts.mcpServers = {
-    ...(opts.mcpServers || {}),
-    soufassistant: imageMcpServer({
-      targetDir: () => path.join(mo.coworkDir || workspaceRoot(), 'Images'),
-      onSaved: (abs) => run.writtenPaths.add(path.normalize(abs)),
-      workspaceRoot,
-    }),
-  };
-  opts.allowedTools = [...(opts.allowedTools || []), IMAGE_TOOL];
+  // The app's own tools (internal-tools.js): images, the browser, Google, publishing apps.
+  const internal = internalTools({
+    targetDir: () => path.join(mo.coworkDir || workspaceRoot(), 'Images'),
+    onSaved: (abs) => run.writtenPaths.add(path.normalize(abs)),
+    workspaceRoot,
+    key: () => run.key,
+    onFrame: (f) => emit(run, { type: 'browser_frame', key: run.key, ...f, ts: Date.now() }),
+    chat: runMode === 'chat',
+  });
+  opts.mcpServers = { ...(opts.mcpServers || {}), soufassistant: internal.server };
+  opts.allowedTools = [...(opts.allowedTools || []), ...internal.allowed];
   if (mo.coworkDir) {
     const pre = [...(opts.hooks?.PreToolUse || []), { hooks: [coworkWriteGuard(mo.coworkDir, WORK_DIR)] }];
     opts.hooks = { ...(opts.hooks || {}), PreToolUse: pre };
   }
   // Skills switched off in the Skills panel (a listing filter; see skills.js).
-  const skillOff = runMode === 'chat' ? null : disabledOverrides();
-  if (skillOff) opts.settings = { ...opts.settings, skillOverrides: skillOff };
+  let skillOff = runMode === 'chat' ? null : disabledOverrides();
+  if (runAgent?.skills?.length && runMode !== 'chat') {
+    const all = discoverSkills().skills.map((sk) => ({ ...sk, invocation: invocationName(sk) }));
+    skillOff = { ...(skillOff || {}), ...(agentSkillOverrides(runAgent, all) || {}) };
+  }
+  if (skillOff && Object.keys(skillOff).length) opts.settings = { ...opts.settings, skillOverrides: skillOff };
 
-  if (run.permissionMode === 'auto') {
+  if (autonomous) {
+    // An autonomous task (the composer's menu): nobody is watching, so every
+    // ordinary tool is allowed (the config-folder and Cowork guards still
+    // apply, they are hooks) and a question gets "decide yourself" instead of
+    // waiting forever.
+    opts.canUseTool = async (toolName, input) => (toolName === 'AskUserQuestion'
+      ? { behavior: 'deny', message: 'Autonomous task: nobody can answer now. Decide with your best judgement, note the assumption, and continue.' }
+      : { behavior: 'allow', updatedInput: input });
+  } else if (run.permissionMode === 'auto') {
     // A model classifier approves or denies each tool — no prompts, no canUseTool.
     opts.permissionMode = 'auto';
   } else {
@@ -492,6 +535,7 @@ export async function runQuery(ws, { text, permissionMode, model, effort, mode, 
         // is the one on screen, the view moves with it.
         if (rekey(run, event.session_id)) saveActive();
         if (wasDraft && runRoles.length && setSessionRoles(event.session_id, runRoles)) broadcast(rolesMessage());
+        if (wasDraft && runAgent && setSessionAgent(event.session_id, runAgent.id)) broadcast(agentsMessage());
         if (rememberSessionMode(event.session_id, runMode, runProject)) {
           broadcast({ type: 'session_modes', modes: sessionModeMap() });
         }
@@ -562,6 +606,7 @@ export async function runQuery(ws, { text, permissionMode, model, effort, mode, 
           } else if (block.type === 'tool_use') {
             vlog(`tool_use: ${block.name}`);
             liveToolNames.set(block.id, block.name);
+            run.toolUses += 1;
             // What this conversation wrote with its own file tools — its
             // artifacts, even with another conversation writing alongside.
             if (FILE_TOOLS.has(block.name)) {
@@ -708,6 +753,12 @@ export async function runQuery(ws, { text, permissionMode, model, effort, mode, 
 
     if (!sawStateEvents && !failed && !limitHit && !aborted && resultSeen) {
       notify('reply', { title: 'Claude finished', message: replyMessage() });
+    }
+    // Self-improvement (like Hermes): a long, successful task is worth keeping
+    // as a skill — the UI offers it under the reply (unless one was just written).
+    if (resultSeen && !failed && !aborted && !limitHit && runMode !== 'chat' && run.toolUses >= SKILL_SUGGEST_STEPS
+      && ![...run.writtenPaths].some((p) => /\/skills\/[^/]+\/SKILL\.md$/.test(p))) {
+      emit(run, { type: 'skill_suggestion', key: run.key, sessionId: run.sessionId, steps: run.toolUses });
     }
 
     // What this reply wrote to the workspace — remembered with the

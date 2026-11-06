@@ -101,6 +101,15 @@ export const SKILLS_CONFIG_FILE = path.join(DATA_DIR, 'skills-config.json');
 
 /** The roles the user can write a prompt as, and which ones each conversation uses. */
 export const ROLES_FILE = path.join(DATA_DIR, 'roles.json');
+// 1.0.0: agents (GPTs-style presets), published apps, shared links, Google connector
+export const AGENTS_FILE = path.join(DATA_DIR, 'agents.json');
+export const APPS_FILE = path.join(DATA_DIR, 'published-apps.json');
+export const SHARES_FILE = path.join(DATA_DIR, 'shares.json');
+export const CONNECTORS_DIR = path.join(DATA_DIR, 'connectors');
+// HA serves <config>/www at /local/ with no login: a shared link lives there.
+export const SHARE_DIR = process.env.SHARE_DIR || path.join(WORK_DIR, 'www', 'soufassistant-share');
+export const BROWSER_PROFILE_DIR = process.env.BROWSER_PROFILE_DIR || path.join(DATA_DIR, 'cache', 'browser-profile');
+export const CHROME_PATH = process.env.CHROME_PATH || '/usr/bin/chromium';
 
 /** Custom titles and pins for conversations (the Sessions panel). */
 export const SESSION_META_FILE = path.join(DATA_DIR, 'session-meta.json');
