@@ -72,6 +72,7 @@ import './js/voice.js';
 import './js/changes.js';
 import './js/toolbox.js';
 import './js/hub.js';
+import './js/shell.js';
 
 // Before anything renders: everything below is laid out inside the frame this
 // sizes, and getting it wrong puts the composer below the fold on a phone.

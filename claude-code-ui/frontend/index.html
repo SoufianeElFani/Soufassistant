@@ -5,6 +5,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <title>Soufassistant</title>
   <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="theme.css">
+  <meta name="theme-color" content="#0b0f12">
+  <script>document.documentElement.dataset.theme = (function () { var p = localStorage.getItem('theme') || 'dark'; return p === 'auto' ? (matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark') : p; })();</script>
 </head>
 <body>
   <div id="app">

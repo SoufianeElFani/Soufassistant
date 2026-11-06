@@ -27,6 +27,7 @@ import { voiceOnDelta, voiceOnText, voiceOnTurnEnd } from './voice.js';
 import { applyRoles, applyRoleResult, applySessionRoles, resetRolesForNewConversation } from './roles.js';
 import { applyAgents, applySessionAgent, applyProjects } from './toolbox.js';
 import { applyPublishedApps } from './hub.js';
+import { renderRecents } from './shell.js';
 import { applyBrowserFrame, skillSuggestionCard } from './artifacts.js';
 import { renderScheduled, showScheduledError } from './scheduled.js';
 import { renderTeam } from './team.js';
@@ -157,6 +158,7 @@ export function handleServerMessage(msg) {
     case 'sessions': {
       const prevActive = S.activeSessionId;
       S.sessions = Array.isArray(msg.sessions) ? msg.sessions : [];
+      renderRecents();
       S.activeSessionId = msg.activeId || null;
       if (msg.view !== undefined) S.viewKey = msg.view || null;
       // Opening another conversation restores the mode it was last used in.

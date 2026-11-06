@@ -1,3 +1,11 @@
+## 1.1.0
+**A new look, and everything within reach.**
+- **Sidebar on a computer.** The row of icons is now a left sidebar: New chat, Search, your **recent conversations** (one click to reopen, a coloured dot for the mode), then every tool with its name — Workspace, Artifacts, Scheduled, Team, Hub, Skills, Usage, Settings. The ▥ button folds it into a slim icon rail (remembered).
+- **⌘K / Ctrl+K — search everything.** One box to reach any action, panel, Hub tab, mode, theme or conversation by typing a few letters, with arrow keys and Enter. On a phone, the ☰ button opens it as a bottom sheet, so the header keeps only what you use all the time.
+- **A home screen.** A new conversation greets you and offers six starting points — deep research, a presentation, the house, your e-mail, an autonomous task, a website — that fill the box (and switch on research or autonomy where it fits).
+- **Light and dark themes.** Settings → Appearance: Dark, Light, or follow the system.
+- **A premium design throughout.** Deeper, calmer colours with a teal-to-indigo accent; a centred reading column with full-width answers and soft user bubbles; refined tables, code blocks and quotes; a floating composer that lights up when you type; panels that slide in beside the sidebar; smoother motion (reduced when your system asks for it).
+
 ## 1.0.0
 Soufassistant now does what the big AI apps do — on your Home Assistant, with your files.
 

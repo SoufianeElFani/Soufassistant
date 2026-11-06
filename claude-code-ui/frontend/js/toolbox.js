@@ -58,6 +58,11 @@ export function toolboxFields() {
   return f;
 }
 
+/** Turn the one-message options on from elsewhere (the home screen, the palette). */
+export function setResearch(on) { research = !!on; render(); }
+export function setAutonomous(on) { autonomous = !!on; render(); }
+export function openToolbox() { openMenu(); }
+
 /** After a send: the one-message options switch off. */
 export function afterSend() {
   if (research || autonomous) { research = false; autonomous = false; render(); }

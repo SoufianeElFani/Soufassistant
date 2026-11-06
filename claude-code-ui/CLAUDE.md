@@ -937,6 +937,26 @@ Sharing (0.9.0): `POST /api/skills/import` (raw .zip or SKILL.md;
 `GET /api/skills/shared` + `POST /api/skills/import-shared` (install a zip
 from that folder — so a Drive folder becomes a skill library).
 
+**1.1.0 — the design layer (`frontend/theme.css`, `frontend/js/shell.js`).**
+`theme.css` loads after styles.css and owns the look: tokens for
+`html[data-theme="dark"|"light"]` (set before first paint by an inline script
+in index.html from localStorage `theme` = dark|light|auto, and by
+`shell.js applyTheme`), controls, conversation, composer, home, palette. Its
+desktop block (≥ 1024px) turns `.header` into an absolute left sidebar of
+width `--sb` (68px when `body.sidebar-collapsed`): `.header-right` becomes a
+column and `order` places New chat, Search, recents, the panel rows and the
+permission select; panels become sheets at `left: var(--sb)`. **No element
+moved and no id changed** — shell.js only appends: `.nav-label` spans in the
+header buttons (hidden below 1024px), the wordmark, the collapse button,
+`#palette-btn`, `#menu-btn` (phones only), the `.sidebar-recents` list
+(`renderRecents()`, called by connection.js on every `sessions` message), the
+`.home` screen (shown while `#messages` has no children, via a
+MutationObserver) and the ⌘K palette (`fuzzyScore`, actions click the
+existing buttons). Below 700px the header hides the panel buttons that the
+palette reaches; 700–1023px tightens the row so all of them still fit (the
+browser tests run at 800px and click them). Font shorthands with `inherit`
+as the family are invalid CSS — use font-family: inherit separately.
+
 **1.0.0 — the Hub, the ✚ menu and the app's own tools.**
 `server/lib/internal-tools.js` builds the one in-process MCP server
 ("soufassistant") every run and every scheduled task gets: `generate_image`
