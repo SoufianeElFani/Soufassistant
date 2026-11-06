@@ -1,3 +1,17 @@
+## 0.9.0
+- **Edit every kind of document right in the viewer.** ✎ now opens an editor for everything Claude makes, not only text files:
+  - **Word (.docx)** — the text, paragraph by paragraph, headers and footers included, with a search box. Only the words you change are touched: styles, bold words elsewhere in the paragraph, tables, pictures and the template stay exactly as they were. A new line is a line break.
+  - **PowerPoint (.pptx)** — slide by slide, each with its picture, the text of every box, and the **speaker notes**.
+  - **Excel (.xlsx)** — a grid per sheet: type a value or a formula (`=SUM(B2:B9)`), Enter/Tab/arrows move like in Excel. Formatting stays; formulas are recalculated when the file is opened in Excel.
+  - **PDF** — reorder pages, remove pages.
+  - **Pictures (PNG, JPG, WebP)** — rotate, flip, crop, resize, draw on them.
+  - **CSV** — a grid (add rows and columns), or back to text in one click.
+  - **Markdown, HTML and SVG** — a live preview next to the text as you type.
+  Saving checks that Claude or the Drive sync did not change the file meanwhile (you can still overwrite), and the previous version is kept on Home Assistant (the last 40 saves).
+- **✨ Ask Claude** in the viewer puts the file's name in the message box, for what an editor cannot do (a new slide, a new chapter, a different layout).
+- **The viewer can be resized on a computer.** Drag its left edge; double-click it to go back to the default width. The width is remembered.
+- **Share skills.** In the Skills panel: **Import** a skill (a .zip with one or several skills, or a SKILL.md), **Export all** your skills in one .zip, and **Share to the workspace** — one .zip per skill in `01_Templates/Skills/` (or `Skills/`), so in your Drive: give someone that folder, or upload a .zip on claude.ai. Any .zip that lands in that folder is listed in the panel with an Install button.
+
 ## 0.8.1
 - **Fixed: the app restarted when Whisper was unreachable.** Connecting to the Whisper app could make the server stop itself on Home Assistant's Node version, so Home Assistant restarted it. The connection now goes over IPv4, which is how the Whisper app listens, and an unreachable Whisper gives a clear message instead.
 

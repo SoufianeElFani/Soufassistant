@@ -90,3 +90,41 @@ describe('makeZip', () => {
     assert.equal(readFileSync(path.join(dir, 'skill', 'ref', 'x.txt'), 'utf8'), 'x');
   });
 });
+
+describe('sharing skills', async () => {
+  const { skillsInArchive, importSkills } = await import('../../server/lib/skills.js');
+  const { readZip } = await import('../../server/lib/zip.js');
+  const md = (name, desc = 'Use it') => `---\nname: ${name}\ndescription: ${desc}\n---\n\nbody`;
+
+  test('finds every skill folder in a bundle, ignores junk and escapes', () => {
+    const found = skillsInArchive([
+      { name: 'one/SKILL.md', data: Buffer.from(md('one')) },
+      { name: 'one/scripts/x.py', data: Buffer.from('print(1)') },
+      { name: 'one/sub/SKILL.md', data: Buffer.from(md('nested')) },
+      { name: 'two/skill.md', data: Buffer.from(md('Two Words')) },
+      { name: '__MACOSX/one/SKILL.md', data: Buffer.from(md('junk')) },
+      { name: '../evil/SKILL.md', data: Buffer.from(md('evil')) },
+    ]);
+    assert.deepEqual(found.map((s) => s.name), ['one', 'two-words']);
+    assert.deepEqual(found[0].files.map((f) => f.rel).sort(), ['SKILL.md', 'scripts/x.py', 'sub/SKILL.md']);
+    assert.deepEqual(found[1].files.map((f) => f.rel), ['SKILL.md']);
+  });
+
+  test('importSkills installs, skips what exists unless replace, takes a bare SKILL.md', () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'skills-import-'));
+    const zip = makeZip([{ name: 'alpha/SKILL.md', data: md('alpha') }, { name: 'alpha/ref.md', data: 'ref' }]);
+    let r = importSkills(zip, { userDir: dir, readZip });
+    assert.deepEqual(r.installed, ['alpha']);
+    assert.equal(readFileSync(path.join(dir, 'alpha', 'ref.md'), 'utf8'), 'ref');
+    r = importSkills(zip, { userDir: dir, readZip });
+    assert.deepEqual(r.skipped, [{ name: 'alpha', reason: 'already installed' }]);
+    r = importSkills(zip, { userDir: dir, readZip, replace: true });
+    assert.deepEqual(r.installed, ['alpha']);
+    r = importSkills(Buffer.from(md('beta')), { userDir: dir, readZip });
+    assert.deepEqual(r.installed, ['beta']);
+    assert.equal(existsSync(path.join(dir, 'beta', 'SKILL.md')), true);
+    r = importSkills(Buffer.from(md('gamma', '')), { userDir: dir, readZip });
+    assert.equal(r.skipped[0].reason, 'no description in SKILL.md');
+    assert.equal(importSkills(Buffer.from('# no front matter'), { userDir: dir, readZip }).ok, false, 'no name, no description: nothing to install');
+  });
+});

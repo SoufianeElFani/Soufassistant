@@ -48,9 +48,12 @@ import {
   ensureWorkspaceDir, listWorkspaceEntries, loadWorkspaceConfig, workspaceRoot, resolveInWorkspace,
 } from './lib/workspace.js';
 import { previewDocument, renderedFile, previewCapabilities } from './lib/doc-preview.js';
-import { loadSkillsConfig, skillDirFor } from './lib/skills.js';
+import { loadSkillsConfig, skillDirFor, importSkills, bundleDirs, listSkills } from './lib/skills.js';
+import { documentModel, saveDocument, saveBinary } from './lib/office-edit.js';
+import { broadcast } from './lib/broadcast.js';
+import { existsSync, readdirSync, readFileSync, statSync, writeFileSync, mkdirSync } from 'fs';
 import { loadSessionModes } from './lib/modes.js';
-import { zipDirectory } from './lib/zip.js';
+import { zipDirectory, makeZip, readZip } from './lib/zip.js';
 import { loadSessionMeta } from './lib/session-tools.js';
 import { previewProxy } from './lib/previews.js';
 import { requireLoopback } from './lib/internal.js';
@@ -110,6 +113,43 @@ app.get('/api/preview/:key/:name', (req, res) => {
   res.sendFile(file);
 });
 
+// Editing documents in the viewer (office-edit.js): the text of a Word or
+// PowerPoint file, the cells of an Excel one, a PDF's page order; and binary
+// writes for the image editor. Same rules as the text editor: never a
+// dot-path, never outside the workspace, a stale mtime is a conflict.
+function editTarget(rel) {
+  rel = String(rel || '');
+  if (!rel || rel.split('/').some((seg) => seg.startsWith('.'))) return null;
+  const abs = resolveInWorkspace(rel);
+  return abs && abs !== workspaceRoot() ? abs : null;
+}
+const workspaceChanged = () => broadcast({ type: 'workspace', entries: listWorkspaceEntries() });
+app.get('/api/doc', async (req, res) => {
+  const abs = editTarget(req.query.path);
+  if (!abs) return res.status(400).json({ ok: false, error: 'Bad path.' });
+  res.json(await documentModel(abs));
+});
+app.post('/api/doc', express.json({ limit: '8mb' }), async (req, res) => {
+  const abs = editTarget(req.body?.path);
+  if (!abs) return res.status(400).json({ ok: false, error: 'Bad path.' });
+  const r = await saveDocument(abs, req.body);
+  if (r.ok) workspaceChanged();
+  res.json(r);
+});
+const IMAGE_SAVE_EXT = new Set(['png', 'jpg', 'jpeg', 'webp']);
+app.post('/api/workspace-binary', express.raw({ type: 'application/octet-stream', limit: '30mb' }), (req, res) => {
+  const rel = String(req.query.path || '');
+  const abs = editTarget(rel);
+  if (!abs || !IMAGE_SAVE_EXT.has(path.extname(abs).slice(1).toLowerCase())) return res.status(400).json({ ok: false, error: 'Only images can be saved this way.' });
+  if (!Buffer.isBuffer(req.body) || !req.body.length) return res.status(400).json({ ok: false, error: 'Empty file.' });
+  if (req.query.create === '1' && existsSync(abs)) return res.json({ ok: false, error: 'A file with that name already exists.' });
+  try {
+    const r = saveBinary(abs, req.body, { mtime: Number(req.query.mtime) || null, force: req.query.force === '1' });
+    if (r.ok) workspaceChanged();
+    res.json({ ...r, path: rel });
+  } catch (e) { res.json({ ok: false, error: e.message }); }
+});
+
 // Live previews of an app running in a Cowork project (previews.js): only the
 // preview port range, only to localhost.
 // Exact match (a regex): Express's non-strict routing would also send
@@ -148,6 +188,68 @@ app.get('/api/skills/export', (req, res) => {
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
+});
+
+// Sharing skills: import a .zip (or a SKILL.md), a bundle of several, and a
+// shared folder in the workspace — which the Drive sync turns into a shared
+// Drive folder: drop a .zip there and it shows up under "Import" everywhere.
+const skillsChanged = () => broadcast({ type: 'skills', ...listSkills() });
+function sharedSkillsDir() {
+  const root = workspaceRoot();
+  return existsSync(path.join(root, '01_Templates')) ? path.join(root, '01_Templates', 'Skills') : path.join(root, 'Skills');
+}
+const relToRoot = (abs) => path.relative(workspaceRoot(), abs).split(path.sep).join('/');
+app.post('/api/skills/import', express.raw({ type: '*/*', limit: '20mb' }), (req, res) => {
+  const r = importSkills(req.body, { replace: req.query.replace === '1', readZip });
+  if (r.installed?.length) skillsChanged();
+  res.json(r);
+});
+app.get('/api/skills/shared', (_req, res) => {
+  const dir = sharedSkillsDir();
+  let files = [];
+  try {
+    files = readdirSync(dir).filter((n) => /\.(zip|skill)$/i.test(n) && !n.startsWith('.'))
+      .map((n) => ({ name: n, path: relToRoot(path.join(dir, n)), mtime: statSync(path.join(dir, n)).mtimeMs }))
+      .sort((a, b) => b.mtime - a.mtime);
+  } catch { /* no shared folder yet */ }
+  res.json({ dir: relToRoot(dir), files });
+});
+app.post('/api/skills/import-shared', express.json({ limit: '16kb' }), (req, res) => {
+  const abs = editTarget(req.body?.path);
+  if (!abs || !abs.startsWith(sharedSkillsDir() + path.sep)) return res.status(400).json({ ok: false, error: 'Bad path.' });
+  let buf;
+  try { buf = readFileSync(abs); } catch { return res.json({ ok: false, error: 'File not found.' }); }
+  const r = importSkills(buf, { replace: !!req.body.replace, readZip });
+  if (r.installed?.length) skillsChanged();
+  res.json(r);
+});
+const idsOf = (q) => (typeof q === 'string' && q ? q.split(',') : null);
+app.get('/api/skills/bundle', (req, res) => {
+  const dirs = bundleDirs(idsOf(req.query.ids));
+  if (!dirs.length) return res.status(404).json({ error: 'No skills to export' });
+  try {
+    const files = dirs.flatMap((d) => readZip(zipDirectory(d.dir, d.folder)));
+    res.setHeader('Content-Type', 'application/zip');
+    res.setHeader('Content-Disposition', `attachment; filename="skills-${new Date().toISOString().slice(0, 10)}.zip"`);
+    res.end(makeZip(files, { deflate: true }));
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+// One .zip per skill (the shape claude.ai's upload wants) into the shared folder.
+app.post('/api/skills/share', express.json({ limit: '64kb' }), (req, res) => {
+  const ids = Array.isArray(req.body?.ids) ? req.body.ids : null;
+  const dirs = bundleDirs(ids);
+  if (!dirs.length) return res.json({ ok: false, error: 'No skills to share.' });
+  const dir = sharedSkillsDir();
+  try {
+    mkdirSync(dir, { recursive: true });
+    const written = dirs.map((d) => {
+      const out = path.join(dir, `${d.folder}.zip`);
+      writeFileSync(out, zipDirectory(d.dir, d.folder));
+      return relToRoot(out);
+    });
+    workspaceChanged();
+    res.json({ ok: true, dir: relToRoot(dir), written });
+  } catch (e) { res.json({ ok: false, error: e.message }); }
 });
 
 // The claude-tasks CLI (a Bash tool call, so it goes through the ordinary
