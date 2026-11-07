@@ -15,9 +15,13 @@ describe('two conversations running at once', () => {
     h = await startServer({
       scenario: { runs: [
         // Conversation "one": slow, so it is still running when "two" starts.
-        { steps: [{ text: 'working on one' }, { sleep: 1500 }, { text: 'one done' }] },
-        // Conversation "two": the test drops a file into the workspace meanwhile.
-        { steps: [{ sleep: 400 }, { text: 'two done' }] },
+        // Its script writes the slides (a shell command: no file tool says so).
+        { steps: [{ text: 'working on one' }, { sleep: 1500 },
+          { tool: { name: 'Bash', input: { command: 'python build.py -o Proj/slides.pptx' }, output: 'ok' } },
+          { text: 'one done' }] },
+        // Conversation "two": converts the report; the test drops the files meanwhile.
+        { steps: [{ tool: { name: 'Bash', input: { command: 'pandoc notes.txt -o report.md' }, output: 'Wrote report.md' } },
+          { sleep: 400 }, { text: 'two done' }] },
       ] },
       sessions: {
         one: [userLine('First conversation')],
@@ -44,6 +48,10 @@ describe('two conversations running at once', () => {
     c.send({ type: 'prompt', text: 'go two', permissionMode: 'bypass' });
     mkdirSync(path.join(h.dataDir, 'workspace', 'Proj'), { recursive: true });
     writeFileSync(path.join(h.dataDir, 'workspace', 'Proj', 'report.md'), '# Report');
+    writeFileSync(path.join(h.dataDir, 'workspace', 'Proj', 'slides.pptx'), 'pptx');
+    // Named by neither: it must not land in either conversation.
+    mkdirSync(path.join(h.dataDir, 'workspace', 'Autre'), { recursive: true });
+    writeFileSync(path.join(h.dataDir, 'workspace', 'Autre', 'mystery.txt'), '?');
 
     const both = await c.waitFor((m) => m.type === 'runs' && m.runs.length === 2);
     assert.deepEqual(both.runs.map((r) => r.key).sort(), ['one', 'two']);
@@ -82,9 +90,12 @@ describe('two conversations running at once', () => {
   });
 
   test('a conversation shows its own artifacts, not the other one’s', async () => {
+    const seen = c.messages.length;   // not the history 'one' had at connect
     c.send({ type: 'session_switch', id: 'one' });
-    const hist = await c.waitFor((m) => m.type === 'history' && m.view === 'one');
-    assert.deepEqual(hist.artifacts, []);
+    const hist = await c.waitFor((m) => m.type === 'history' && m.view === 'one' && c.messages.indexOf(m) >= seen);
+    assert.deepEqual(hist.artifacts.map((f) => f.path), ['Proj/slides.pptx'],
+      'the slides its script wrote while "two" was on screen are filed under "one"');
+    assert.equal(c.all('turn_artifacts').length, 1, 'no card for "one" landed in "two"');
   });
 });
 

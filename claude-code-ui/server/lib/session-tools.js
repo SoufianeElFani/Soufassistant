@@ -23,14 +23,14 @@ import { resolveInWorkspace } from './workspace.js';
 export const FILE_TOOLS = new Set(['Write', 'Edit', 'MultiEdit', 'NotebookEdit']);
 
 // ── Titles and pins ──────────────────────────────────────────────────────────
-let meta = { titles: {}, pinned: [], artifacts: {} };
+let meta = { titles: {}, pinned: [], artifacts: {}, contested: {} };
 
 export function loadSessionMeta() {
   try {
     const d = JSON.parse(readFileSync(SESSION_META_FILE, 'utf8'));
     const obj = (v) => (v && typeof v === 'object' && !Array.isArray(v) ? v : {});
-    meta = { titles: obj(d.titles), pinned: Array.isArray(d.pinned) ? d.pinned : [], artifacts: obj(d.artifacts) };
-  } catch { meta = { titles: {}, pinned: [], artifacts: {} }; }
+    meta = { titles: obj(d.titles), pinned: Array.isArray(d.pinned) ? d.pinned : [], artifacts: obj(d.artifacts), contested: obj(d.contested) };
+  } catch { meta = { titles: {}, pinned: [], artifacts: {}, contested: {} }; }
 }
 function saveMeta() {
   try { writeFileAtomic(SESSION_META_FILE, JSON.stringify(meta, null, 2)); }
@@ -79,6 +79,33 @@ export function recordArtifacts(id, files, ts = Date.now()) {
   return added;
 }
 
+/*
+ * Files two conversations running at once could each have written (a shell
+ * command, no file tool — see artifact-attribution.js): claimed by neither, and
+ * remembered (path → mtime) so the history's timing guess (inferArtifacts)
+ * does not hand them to both either.
+ */
+const MAX_CONTESTED = 500;
+export function noteContested(files) {
+  for (const f of files || []) if (f?.path) meta.contested[f.path] = f.mtime || 0;
+  const keys = Object.keys(meta.contested);
+  for (const k of keys.slice(0, Math.max(0, keys.length - MAX_CONTESTED))) delete meta.contested[k];
+  saveMeta();
+}
+
+/**
+ * Versions (path → mtime) a timing guess must not give conversation `id`: the
+ * contested ones, and the ones another conversation recorded as its own.
+ */
+export function claimedElsewhere(id) {
+  const out = new Map(Object.entries(meta.contested));
+  for (const [sid, list] of Object.entries(meta.artifacts)) {
+    if (sid === id || !Array.isArray(list)) continue;
+    for (const f of list) if (f?.path) out.set(f.path, f.mtime || 0);
+  }
+  return out;
+}
+
 /** The conversation's artifacts, oldest first, without files deleted since. */
 export function sessionArtifacts(id, exists = null) {
   const list = (id && Array.isArray(meta.artifacts[id])) ? meta.artifacts[id] : [];
@@ -97,7 +124,7 @@ export function sessionArtifacts(id, exists = null) {
 const INFER_SLACK_BEFORE_MS = 1500;
 const INFER_SLACK_AFTER_MS = 120000;
 
-export function inferArtifacts(items, entries, { limit = MAX_ARTIFACTS_PER_SESSION } = {}) {
+export function inferArtifacts(items, entries, { limit = MAX_ARTIFACTS_PER_SESSION, exclude = null } = {}) {
   const windows = [];
   let cur = null;
   for (const it of items || []) {
@@ -109,6 +136,8 @@ export function inferArtifacts(items, entries, { limit = MAX_ARTIFACTS_PER_SESSI
   const out = [];
   for (const e of entries || []) {
     if (!e || typeof e.mtime !== 'number' || /\.conflict\d*/i.test(e.name || e.path || '')) continue;
+    // That exact version is another conversation's (or nobody's for sure).
+    if (exclude && exclude.has(e.path) && Math.abs(exclude.get(e.path) - e.mtime) < 1000) continue;
     const w = windows.find((x) => e.mtime >= x.start - INFER_SLACK_BEFORE_MS && e.mtime <= x.end + INFER_SLACK_AFTER_MS);
     if (!w) continue;
     out.push({ path: e.path, ext: e.ext || '', size: e.size || 0, mtime: e.mtime, ts: w.end });

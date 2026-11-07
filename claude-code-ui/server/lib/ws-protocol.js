@@ -132,7 +132,8 @@ function conversationArtifacts(id, items) {
     return !!abs && existsSync(abs);
   });
   let inferred = [];
-  try { inferred = sessionTools.inferArtifacts(items, workspace.listWorkspaceEntries()); } catch { /* best effort */ }
+  try { inferred = sessionTools.inferArtifacts(items, workspace.listWorkspaceEntries(),
+      { exclude: sessionTools.claimedElsewhere(id) }); } catch { /* best effort */ }
   return sessionTools.mergeArtifacts(recorded, inferred);
 }
 

@@ -45,7 +45,8 @@ import { disabledOverrides, discoverSkills, invocationName } from './skills.js';
 import { getAgent, agentFor, setSessionAgent, agentPrompt, agentSkillOverrides, agentsMessage } from './agents.js';
 import { knowledgePrompt } from './knowledge.js';
 import { CONFIDENTIAL_PROMPT } from './vault.js';
-import { decoratedSessions, recordArtifacts, FILE_TOOLS } from './session-tools.js';
+import { decoratedSessions, recordArtifacts, noteContested, FILE_TOOLS } from './session-tools.js';
+import { attributeArtifacts, addEvidence, RIVAL_MEMORY_MS } from './artifact-attribution.js';
 import { listPreviews } from './previews.js';
 import { rolePrompt, rolesFor, setSessionRoles, normalizeRoleIds, rolesMessage } from './roles.js';
 import {
@@ -103,24 +104,29 @@ function runTitle(key, text) {
   return t ? (t.length > 80 ? `${t.slice(0, 80)}…` : t) : null;
 }
 
+// Runs that finished lately: they still compete for the files they may have
+// written (see artifact-attribution.js), so a run ending after them cannot
+// claim those.
+const finishedRuns = [];
+
+/** A run as artifact-attribution.js sees it: workspace-relative written paths. */
+function attributionView(r, root) {
+  const written = new Set([...r.writtenPaths].map((p) => path.relative(root, p)).filter((x) => x && !x.startsWith('..')));
+  return { startedAt: r.startedAt, endedAt: r.endedAt, written, evidence: r.evidence || '', ref: r };
+}
+
 /**
- * The workspace files one reply produced: anything written there since the
- * run started, plus what its own file tools wrote — minus files another run
- * running alongside wrote with ITS file tools (those are that conversation's).
+ * The workspace files one reply produced — never the files of another
+ * conversation running alongside (artifact-attribution.js says how).
  */
 function runArtifacts(run, entries) {
   const root = workspaceRoot();
-  const since = run.startedAt - 1500;
-  const mine = new Set([...run.writtenPaths].map((p) => path.relative(root, p)).filter((r) => r && !r.startsWith('..')));
-  const others = new Set();
-  for (const r of runtime.runs.values()) {
-    if (r === run) continue;
-    for (const p of r.writtenPaths) others.add(path.relative(root, p));
-  }
-  return entries
-    .filter((e) => mine.has(e.path) || (e.mtime >= since && !others.has(e.path)))
-    .filter((e) => !/\.conflict\d*/i.test(e.name))
-    .slice(0, 24);
+  const now = Date.now();
+  while (finishedRuns.length && now - finishedRuns[0].endedAt > RIVAL_MEMORY_MS) finishedRuns.shift();
+  const rivals = [...runtime.runs.values(), ...finishedRuns].filter((r) => r !== run).map((r) => attributionView(r, root));
+  const { claimed, contested } = attributeArtifacts(attributionView(run, root), rivals, entries, { now });
+  if (contested.length) noteContested(contested);
+  return claimed;
 }
 
 /**
@@ -207,7 +213,7 @@ export async function runQuery(ws, { text, permissionMode, model, effort, mode, 
     key, sessionId: key.startsWith('draft:') ? null : key,
     abortController, channel: null, q: null, phase: 'turn', model, effort,
     permissionMode: permissionMode || DEFAULT_PERMISSION_MODE,
-    backgroundTasks: new Map(), writtenPaths: new Set(),
+    backgroundTasks: new Map(), writtenPaths: new Set(), evidence: '',
     mode: runMode, project: runProject, title: runTitle(key, text), startedAt,
     autonomous: !!autonomous, research: runResearch, agentId: runAgent?.id || null, toolUses: 0,
   };
@@ -615,6 +621,9 @@ export async function runQuery(ws, { text, permissionMode, model, effort, mode, 
               const f = block.input?.file_path || block.input?.notebook_path;
               if (typeof f === 'string' && f.startsWith('/')) run.writtenPaths.add(path.normalize(f));
             }
+            // A shell command or script names what it writes — how a file no
+            // file tool saw is told apart from another conversation's.
+            else addEvidence(run, block.input);
             emit(run, { type: 'tool_use', id: block.id, name: block.name, input: block.input });
           }
         }
@@ -643,6 +652,7 @@ export async function runQuery(ws, { text, permissionMode, model, effort, mode, 
                 ? block.content.map((b) => b.text || '').join('')
                 : JSON.stringify(block.content);
             vlog(`tool_result: ${raw.length} chars${block.is_error ? ' (error)' : ''}`);
+            addEvidence(run, raw.slice(0, 8000));
             // An answered question comes back as an error and must not be
             // rendered as one — see isQuestionAnswer().
             const answered = isQuestionAnswer(liveToolNames.get(block.tool_use_id), !!block.is_error, raw);
@@ -765,11 +775,13 @@ export async function runQuery(ws, { text, permissionMode, model, effort, mode, 
 
     // What this reply wrote to the workspace — remembered with the
     // conversation, so the card (and the Artifacts menu) survive a reload.
+    run.endedAt = Date.now();
     const entries = listWorkspaceEntries();
     if (run.sessionId) {
       const files = recordArtifacts(run.sessionId, runArtifacts(run, entries));
-      if (files.length) emit(run, { type: 'turn_artifacts', sessionId: run.sessionId, files });
+      if (files.length) emit(run, { type: 'turn_artifacts', key: run.key, sessionId: run.sessionId, files });
     }
+    finishedRuns.push(run);
 
     broadcastRuns();
     // Finished out of sight: every tab is told, so it can say so.

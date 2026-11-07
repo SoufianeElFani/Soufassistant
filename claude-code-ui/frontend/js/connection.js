@@ -94,6 +94,13 @@ loginCodeForm.onsubmit = (e) => {
   loginWaiting.classList.remove('hidden');
 };
 
+/** A message about one conversation's reply: is that conversation the one on screen? */
+function artifactsBelongHere(msg) {
+  const keys = [msg.sid, msg.key, msg.sessionId].filter(Boolean);
+  if (!keys.length) return true;
+  return keys.some((k) => k === S.viewKey || k === S.activeSessionId);
+}
+
 export function handleServerMessage(msg) {
   switch (msg.type) {
     case 'connected': break;
@@ -188,6 +195,9 @@ export function handleServerMessage(msg) {
     }
 
     case 'turn_artifacts':
+      // Only into the conversation that produced them: another one's files are
+      // recorded with it and appear when it is opened.
+      if (!artifactsBelongHere(msg)) break;
       applyTurnArtifacts(msg.files);
       break;
 

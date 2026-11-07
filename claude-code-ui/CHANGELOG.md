@@ -1,3 +1,6 @@
+## 1.3.2
+- **Artifacts stay in their own conversation.** With several conversations running at once, the files a reply produced could show up in whichever conversation was on screen when it finished. Each file is now filed under the conversation that wrote it: its own file tools first, otherwise the one whose commands or outputs name it. A file no conversation can be sure of is shown in none, instead of in the wrong one. The cards and the Artifacts menu only ever show the conversation's own files.
+
 ## 1.3.1
 - **Confidential mode, more thorough.** Image alt texts and object names in Word / PowerPoint, SmartArt, charts, masters and comments are now pseudonymised too, and the metadata hidden in JPEG pictures (EXIF, XMP, IPTC) is removed. A name that only appears inside a PDF or an Office file is learnt before the file names are computed.
 - **Anonymising a folder twice is harmless**: files already anonymised are skipped (a second run could overwrite the originals kept in the vault).
