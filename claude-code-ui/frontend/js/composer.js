@@ -6,6 +6,7 @@ import { currentModeFields } from './modes.js';
 import { currentRoleIds } from './roles.js';
 import { voiceFields } from './voice.js';
 import { toolboxFields, afterSend } from './toolbox.js';
+import { confidentialFields } from './confidential.js';
 import { S } from './state.js';
 import { attachments, clearAttachments, fileToDataURL } from './attachments.js';
 import { SEND_ICON, STOP_ICON, UI_COMMANDS, clearScreen, hideCmdMenu, showHelp, showUsage } from './commands.js';
@@ -96,6 +97,7 @@ inputForm.onsubmit = async (e) => {
     ...currentModeFields(),
     roles: currentRoleIds(),
     ...(steer ? {} : toolboxFields()),
+    ...confidentialFields(),
     ...voiceFields(),
     ...(steer ? { steer: true } : {}),
   }));

@@ -28,6 +28,7 @@ import { planUsage, refreshPlanUsage } from './plan-usage.js';
 import * as workspace from './workspace.js';
 import * as skills from './skills.js';
 import { agentsMessage } from './agents.js';
+import * as vault from './vault.js';
 import { sessionModeMap } from './modes.js';
 import * as sessionTools from './session-tools.js';
 import * as previews from './previews.js';
@@ -74,6 +75,7 @@ function greet(ws) {
   send(ws, { type: 'session_modes', modes: sessionModeMap() });
   send(ws, roles.rolesMessage());
   send(ws, agentsMessage());
+  send(ws, { type: 'vault_map', map: vault.revealMap() });
 
   // Plan limits (5-hour / weekly / extra usage): the last snapshot right away,
   // then a refresh (rate-limited inside plan-usage.js) that broadcasts if newer.
@@ -315,11 +317,22 @@ const handlers = {
     if (proc && proc.stdin) proc.stdin.write(msg.code + '\n');
   },
 
-  prompt(ws, msg) {
-    if (Array.isArray(msg.attachments) && msg.attachments.length) {
-      msg.text = describeAttachments(msg.text, saveAttachments(msg.attachments));
+  async prompt(ws, msg) {
+    // Confidential mode (vault.js): names become pseudonyms *before* anything
+    // reaches the model — the text, and the attachments' contents and names.
+    const conf = !!msg.confidential && !msg.steer;
+    const before = vault.listEntities().length;
+    const saved = Array.isArray(msg.attachments) && msg.attachments.length ? saveAttachments(msg.attachments) : [];
+    if (conf) {
+      msg.text = vault.mask(msg.text || '');
+      const notes = await vault.maskAttachments(saved).catch((e) => [String(e.message || e)]);
+      if (notes.length) send(ws, { type: 'confidential_notice', notes });
+    } else if (msg.confidential) {
+      msg.text = vault.mask(msg.text || '');
     }
+    if (saved.length) msg.text = describeAttachments(msg.text, saved);
     delete msg.attachments;   // do not carry the base64 payload any further
+    if (vault.listEntities().length !== before) broadcast({ type: 'vault_map', map: vault.revealMap() });
     runQuery(ws, msg);
   },
 

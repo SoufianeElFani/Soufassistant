@@ -8,6 +8,7 @@
  * before it executes. canUseTool is used for anything the user should be asked
  * about, because only it can carry a decision back from the browser.
  */
+import { vaultGuard } from './vault.js';
 import { randomUUID } from 'crypto';
 import {
   ALLOW_ADDON_CONFIGS, ADDON_CONFIGS_PATH, ENABLE_ESPHOME, ESPHOME_CONFIG_DIR, EDIT_TOOLS, IMAGE_TOOL,
@@ -69,10 +70,10 @@ export function addonConfigsDenyHook(input) {
 // Registered only when access is disabled: with it enabled there is no guard to
 // run, so this avoids a per-tool-call round trip to the subprocess.
 const ADDON_CONFIGS_HOOK = ALLOW_ADDON_CONFIGS ? null : async (input) => addonConfigsDenyHook(input);
+// The confidential vault (vault.js) is out of the agent's reach in every run, always.
+const VAULT_HOOK = async (input) => vaultGuard(input);
 
-export const ADDON_CONFIGS_HOOKS = ADDON_CONFIGS_HOOK
-  ? { PreToolUse: [{ hooks: [ADDON_CONFIGS_HOOK] }] }
-  : undefined;
+export const ADDON_CONFIGS_HOOKS = { PreToolUse: [...(ADDON_CONFIGS_HOOK ? [{ hooks: [ADDON_CONFIGS_HOOK] }] : []), { hooks: [VAULT_HOOK] }] };
 
 /**
  * PreToolUse hooks for a run: the guard, plus the question interceptor in
@@ -82,7 +83,7 @@ export const ADDON_CONFIGS_HOOKS = ADDON_CONFIGS_HOOK
  * unchanged), one more control-protocol message per call for nothing.
  */
 export function hooksFor(mode, run = null) {
-  const pre = [];
+  const pre = [{ hooks: [VAULT_HOOK] }];
   if (ADDON_CONFIGS_HOOK) pre.push({ hooks: [ADDON_CONFIGS_HOOK] });
   if (mode === 'auto') {
     const hook = run ? (input, id, opts) => askQuestionHook(input, id, opts, run) : askQuestionHook;

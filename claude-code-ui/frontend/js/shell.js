@@ -255,7 +255,7 @@ setIcon(roles, 'user', 19);
 setIcon(mic, 'mic', 19);
 setIcon(talk, 'phone', 19);
 tools.title = t('Options : agent, recherche approfondie, autonomie, projet', 'Options: agent, deep research, autonomous, project');
-for (const b of [attach, tools, roles].filter(Boolean)) left.appendChild(b);
+for (const b of [attach, tools, roles, $('conf-btn')].filter(Boolean)) left.appendChild(b);
 for (const id of ['composer-mode', 'composer-project']) { const n = $(id); if (n) left.appendChild(n); }
 
 const modePill = el('button', 'mode-pill');

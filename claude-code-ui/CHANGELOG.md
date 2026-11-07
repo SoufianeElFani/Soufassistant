@@ -1,3 +1,12 @@
+## 1.3.0
+**Confidential mode — confidential data never leaves your Home Assistant.**
+- **The shield button** under the message box: when it is on, the names of companies, people, places, projects, references and contact details are **replaced by pseudonyms before your message is sent** (Client-A, Personne-03, REF-0004, contact05@exemple.invalid…) — attachments included (text, Word, PowerPoint, Excel, PDF as text; pictures cannot be masked and you are told so). On by default in Code and Cowork, off in Chat; one click switches it for the current mode.
+- **You still read the real names**: on your screen, pseudonyms in Claude's answers (and in its steps) are shown with the real names, dotted-underlined — hover to see what was sent.
+- **Particulariser**: in the viewer, the person button produces the **real version** of a deliverable (Word, Excel, PowerPoint, Markdown — with its PDF) in the vault, to download. Real documents never go to the Drive.
+- **The vault** (on this Home Assistant only, never synced, and out of Claude's reach — any tool call naming it, or a recursive search through its parent folders, is refused) keeps the name ↔ pseudonym table, the originals and the real versions.
+- **Hub → Confidentiel**: add names (with their variants and abbreviations), **analyse a folder** locally to find what to protect (e-mails, phones, IBAN, VAT and offer numbers, companies with a legal form, people with a title), **anonymise a folder** (simulation first: originals into the vault, pseudonymised copies in their place, file names included, Word re-exported to PDF), download the real documents, edit the never-masked list (Equans, you).
+- Detection is local — nothing is sent anywhere to find the names.
+
 ## 1.2.0
 **Soufassistant gets its own identity — and the phone comes first.**
 - **A real visual identity.** A new mark (a star in a burst of rays), condensed display titles, monospace for what the machine does, numbered entries, hairline rules and one signal colour, flat — no gradients. Three themes: **Ink** (dark), **Paper** (light) and **Signal** (the brand teal, full colour), plus *System* — Settings → Appearance, or ⌘K.

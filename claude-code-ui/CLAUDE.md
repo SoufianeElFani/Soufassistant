@@ -937,6 +937,34 @@ Sharing (0.9.0): `POST /api/skills/import` (raw .zip or SKILL.md;
 `GET /api/skills/shared` + `POST /api/skills/import-shared` (install a zip
 from that folder — so a Drive folder becomes a skill library).
 
+**1.3.0 — confidential mode (`server/lib/vault.js`, `frontend/js/confidential.js`).**
+Vault = `DATA_DIR/.coffre-souf/` (`coffre.json`: entities {real, alias, kind,
+variants, auto}, exempt list, file index; `originaux/`; `reels/`). `mask()`
+= dictionary (longest variant first, case-insensitive, spaces ≙ `[\s_-]+`,
+Unicode-aware boundaries) after `detect()` has learnt pattern hits (e-mail,
+IBAN, BE VAT, phones, offer refs `20YY_MM-NNNN`), companies before a legal form
+(the name only — the form stays in the text) and people after a title.
+`reveal()` = alias → canonical real name. Files: text as text, docx/pptx by
+paragraph through office-edit (`partParagraphs`/`setPartParagraphs`, so a
+name split across runs is caught and formatting kept), xlsx/charts/docProps by
+text nodes, PDF → `.pdf.txt`. **The guard** `vaultGuard` is in every run's
+PreToolUse (permissions.js `hooksFor`, and `ADDON_CONFIGS_HOOKS` for
+scheduled runs): denies any tool input containing the vault name/path, Grep/
+Glob rooted at `/`, `/data` or the vault's parent, and recursive Bash tools
+on those. Not encryption — accident-proofing, said in the docs. **Prompt**:
+ws-protocol `prompt` masks `msg.text` and the saved attachments when
+`msg.confidential` (sent by the composer's shield), broadcasts `vault_map`
+when the dictionary grew; run-query appends `CONFIDENTIAL_PROMPT`. **Screen**:
+`vault_map` (alias → real) is sent to the browser on connect; links.js
+`renderMarkdown` calls `revealDom` (text nodes → `<span class=pii>`), tool
+rows and replayed user bubbles call `reveal`. Mind the `g` regex
+`lastIndex` when testing nodes. Routes `/api/vault*` in hub-routes.js
+(`registerVaultRoutes`): list/add/delete/exempt, local `scan`, `anonymize`
+(dry run, then originals → vault, masked copies in place, renamed, empty dirs
+pruned, PDF regenerated from the masked sibling .docx), `particularize`
+(real version + PDF in `reels/`), `reel` download. The anonymize report only
+ever names masked paths.
+
 **1.2.0 — identity, icons, phone layout.** `frontend/js/icons.js` is the one
 icon set (`icon()`, `setIcon()` keeps a button's other children, `toolIcon()`
 / `toolLabel()` for tool rows, `LOGO()`); fonts are bundled in

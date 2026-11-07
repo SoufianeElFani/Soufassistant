@@ -18,7 +18,7 @@ import { confirmAction } from './confirm.js';
 import { showToast } from './toast.js';
 import { listAgentsCache } from './toolbox.js';
 
-const TABS = [['agents', 'Agents'], ['memory', 'Memory'], ['projects', 'Projects'], ['connectors', 'Connectors'], ['apps', 'Apps'], ['shared', 'Shared']];
+const TABS = [['confidential', 'Confidentiel'], ['agents', 'Agents'], ['memory', 'Memory'], ['projects', 'Projects'], ['connectors', 'Connectors'], ['apps', 'Apps'], ['shared', 'Shared']];
 let tab = 'agents';
 let apps = [];
 
@@ -85,7 +85,7 @@ function render() {
     tabsEl.appendChild(b);
   }
   body.innerHTML = '';
-  ({ agents: renderAgents, memory: renderMemory, projects: renderProjects, connectors: renderConnectors, apps: renderApps, shared: renderShared })[tab]();
+  ({ confidential: renderConfidential, agents: renderAgents, memory: renderMemory, projects: renderProjects, connectors: renderConnectors, apps: renderApps, shared: renderShared })[tab]();
 }
 const note = (t) => el('div', 'usage-note hub-note', t);
 const row = (title, sub, actions = [], onclick) => {
@@ -398,3 +398,100 @@ async function publish(route, body, what) {
 }
 export const shareFile = (path) => publish('/api/shares/file', { path }, `“${path.split('/').pop()}”`);
 export const shareConversation = (id, title) => publish('/api/shares/conversation', { id }, `the conversation “${title || ''}”`);
+
+// ── Confidentiel (vault.js) — tout reste dans le navigateur et sur Home Assistant ──
+const KIND_LABEL = { client: 'Client', personne: 'Personne', lieu: 'Lieu', projet: 'Projet', partenaire: 'Partenaire', ref: 'Référence', email: 'E-mail', tel: 'Téléphone', iban: 'IBAN', tva: 'TVA', autre: 'Autre' };
+let confFilter = '';
+async function renderConfidential() {
+  const v = await api('/api/vault');
+  if (tab !== 'confidential') return;
+  const es = v.entities || [];
+  body.appendChild(note(`Le mode Confidentiel (bouclier sous la zone de saisie) remplace ces noms par leur pseudonyme avant l'envoi à Claude, et les rétablit à l'affichage. ${es.length} entrée(s) dans le coffre, sur ce Home Assistant uniquement (jamais dans le Drive, illisible pour l'agent).`));
+
+  // ajout
+  const real = input('', 'Nom réel (ex. Société X SA)');
+  const kind = select(Object.entries(KIND_LABEL).filter(([k]) => !['email', 'tel', 'iban', 'tva', 'ref'].includes(k)), 'client');
+  const vars = input('', 'Variantes : sigle, nom court… (séparées par des virgules)');
+  const add = button('+ Ajouter', null, async () => {
+    if (!real.value.trim()) return;
+    await api('/api/vault/entity', { real: real.value, kind: kind.value, variants: vars.value.split(',').map((x) => x.trim()).filter(Boolean) });
+    render();
+  });
+  const fr = el('div', 'hub-row3 hub-conf-add');
+  fr.append(field('Nom à protéger', real), field('Type', kind), field('Variantes', vars));
+  body.append(fr, add);
+
+  // outils
+  const folders = [...new Set((S.workspace || []).map((f) => f.path.split('/')[0]).filter((x) => x && !x.includes('.')))].sort();
+  const pick = select(folders.map((x) => [x, x]), folders.includes('03_Travail') ? '03_Travail' : folders[0]);
+  const out = el('div', 'hub-conf-out');
+  const bar = el('div', 'hub-bar');
+  bar.append(pick,
+    button('Analyser', 'Repérer localement les noms, e-mails, téléphones, références… de ce dossier', async () => {
+      out.innerHTML = '';
+      out.appendChild(note('Analyse locale…'));
+      const r = await api('/api/vault/scan', { rel: pick.value });
+      out.innerHTML = '';
+      if (!r.candidates?.length) { out.appendChild(note('Rien de nouveau à protéger dans ce dossier.')); return; }
+      out.appendChild(note(`${r.candidates.length} candidat(s) — cocher ceux à protéger :`));
+      const boxes = r.candidates.map((c) => {
+        const l = el('label', 'doc-check hub-cand');
+        const cb = el('input'); cb.type = 'checkbox'; cb.checked = ['email', 'tel', 'iban', 'tva', 'ref'].includes(c.kind) || c.count > 1;
+        l.append(cb, document.createTextNode(` ${c.real}  `), el('small', null, `${KIND_LABEL[c.kind] || c.kind} · ${c.count}×`));
+        out.appendChild(l);
+        return [cb, c];
+      });
+      out.appendChild(button('Ajouter la sélection', null, async () => {
+        for (const [cb, c] of boxes) if (cb.checked) await api('/api/vault/entity', { real: c.real, kind: c.kind });
+        render();
+      }));
+    }),
+    button('Anonymiser…', 'Originaux au coffre, copies pseudonymisées à leur place', async () => {
+      out.innerHTML = '';
+      const r = await api('/api/vault/anonymize', { rel: pick.value, dryRun: true });
+      if (!r.ok) { showToast(r.error, { kind: 'error' }); return; }
+      const rep = r.report;
+      out.appendChild(note(`Simulation sur ${pick.value} : ${rep.fichiers} fichier(s), ${rep.renommes} renommé(s), ${rep.entites_apres - rep.entites_avant} nouvelle(s) entrée(s) détectée(s).`));
+      out.appendChild(button(`Anonymiser ${pick.value}`, null, async () => {
+        if (!(await confirmAction({ title: `Anonymiser ${pick.value} ?`, body: 'Chaque fichier part dans le coffre (sur ce Home Assistant) et une copie pseudonymisée prend sa place — nom compris. Les images sont seulement renommées : vérifie-les. Pense à vider la corbeille de Google Drive ensuite (elle garde les anciennes versions 30 jours).', confirm: 'Anonymiser', cancel: 'Annuler' }))) return;
+        out.innerHTML = '';
+        out.appendChild(note('Anonymisation en cours… (les Word sont aussi reconvertis en PDF)'));
+        const x = await api('/api/vault/anonymize', { rel: pick.value });
+        out.innerHTML = '';
+        const t = x.report;
+        out.appendChild(note(x.ok ? `Fait : ${t.anonymises} fichier(s) anonymisé(s), ${t.renommes} renommé(s), ${t.deplaces_au_coffre} gardé(s) au coffre seulement${t.images.length ? `, ${t.images.length} image(s) à vérifier` : ''}.` : (x.error || 'Échec.')));
+        render();
+      }));
+    }));
+  body.append(el('div', 'usage-section-title', 'Dossiers du workspace'), bar, out);
+
+  // la table
+  body.appendChild(el('div', 'usage-section-title', 'Coffre'));
+  const q = input(confFilter, 'Filtrer…');
+  q.oninput = () => { confFilter = q.value; draw(); };
+  const list = el('div');
+  body.append(q, list);
+  function draw() {
+    list.innerHTML = '';
+    const f = confFilter.toLowerCase();
+    for (const e of es.filter((x) => !f || `${x.real} ${x.alias} ${(x.variants || []).join(' ')}`.toLowerCase().includes(f)).slice(0, 400)) {
+      list.appendChild(row(`${e.real}`, `→ ${e.alias} · ${KIND_LABEL[e.kind] || e.kind}${e.variants?.length ? ` · aussi : ${e.variants.join(', ')}` : ''}${e.auto ? ' · détecté' : ''}`, [
+        button('🗑', 'Retirer du coffre', async () => { await api('/api/vault/entity/delete', { alias: e.alias }); render(); }, 'find-nav'),
+      ]));
+    }
+  }
+  draw();
+
+  // documents réels et exemptions
+  body.appendChild(el('div', 'usage-section-title', 'Documents réels (Particulariser)'));
+  if (!(v.reels || []).length) body.appendChild(note('Aucun : dans la visionneuse, le bouton « personne » produit la version avec les vrais noms d\'un livrable.'));
+  for (const r of v.reels || []) {
+    const a = el('a', 'find-nav artifact-link', '⇩');
+    a.href = `${wsBase}/api/vault/reel?id=${encodeURIComponent(r.id)}`;
+    a.title = 'Télécharger';
+    body.appendChild(row(r.name, `${when(r.mtime)} · ${Math.max(1, Math.round(r.size / 1024))} Ko`, [a]));
+  }
+  body.appendChild(el('div', 'usage-section-title', 'Jamais pseudonymisés'));
+  const ex = area((v.exempt || []).join('\n'), 4);
+  body.append(ex, button('Enregistrer', null, async () => { await api('/api/vault/exempt', { list: ex.value.split('\n') }); showToast('Exemptions enregistrées.'); }));
+}

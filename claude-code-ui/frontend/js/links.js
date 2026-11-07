@@ -5,6 +5,7 @@
  * Only entity ids the server says exist are linked — a regex alone would happily
  * link "configuration.yaml".
  */
+import { revealDom } from './confidential.js';
 import { S } from './state.js';
 import { messagesEl } from './dom.js';
 
@@ -150,6 +151,7 @@ export function fixAnchorTargets(root) {
 
 export function renderMarkdown(el, raw) {
   el.innerHTML = marked.parse(raw);
+  revealDom(el);
   linkifyEntities(el);
   fixAnchorTargets(el);
   el.querySelectorAll('pre').forEach(addCopyButton);

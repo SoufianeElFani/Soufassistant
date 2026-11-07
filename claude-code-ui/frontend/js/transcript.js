@@ -3,6 +3,7 @@
  * results, and rebuilding the whole thing from stored history on reconnect.
  */
 import { icon as iconSvg, toolIcon, toolLabel } from './icons.js';
+import { reveal, revealDom } from './confidential.js';
 import { S } from './state.js';
 import { clearScreen } from './commands.js';
 import { messagesEl } from './dom.js';
@@ -64,6 +65,7 @@ export function appendUserBubble(text, ts, atts, { steer = false } = {}) {
   if (text) {
     const t = document.createElement('div');
     t.textContent = text;
+    revealDom(t);   // a replayed (pseudonymised) message shows the real names
     content.appendChild(t);
   }
   addTime(div, ts);
@@ -211,7 +213,7 @@ export function appendToolUse(id, name, input) {
 
   const summaryEl = document.createElement('span');
   summaryEl.className = 'tool-call-summary';
-  summaryEl.textContent = getInputSummary(name, input);
+  summaryEl.textContent = reveal(getInputSummary(name, input));
 
   const statusEl = document.createElement('span');
   statusEl.className = 'tool-call-status status-running';
@@ -271,7 +273,7 @@ export function renderToolInput(name, input) {
   const pre = document.createElement('pre');
   pre.className = 'tool-call-input';
   const raw = JSON.stringify(input || {}, null, 2);
-  pre.textContent = raw.length > 600 ? raw.slice(0, 600) + '\n…' : raw;
+  pre.textContent = reveal(raw.length > 600 ? raw.slice(0, 600) + '\n…' : raw);
   addCopyButton(pre);
   return pre;
 }
@@ -375,7 +377,7 @@ export function appendToolResult(id, output, isError, answered) {
     }
     const resultEl = document.createElement('pre');
     resultEl.className = 'tool-call-result' + (isError ? ' result-error' : '');
-    resultEl.textContent = truncated;
+    resultEl.textContent = reveal(truncated);
     body.appendChild(resultEl);
     addCopyButton(resultEl);
 
@@ -392,7 +394,7 @@ export function appendToolResult(id, output, isError, answered) {
     const div = document.createElement('div');
     div.className = 'tool-result' + (isError ? ' tool-result-error' : '');
     const pre = document.createElement('pre');
-    pre.textContent = truncated;
+    pre.textContent = reveal(truncated);
     div.appendChild(pre);
     addCopyButton(pre);
     messagesEl.appendChild(div);

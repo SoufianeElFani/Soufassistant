@@ -17,6 +17,8 @@ import * as apps from './apps.js';
 import { lastFrame, browserAvailable } from './browser.js';
 import { decoratedSessions, sessionToMarkdown } from './session-tools.js';
 import { parseSession } from './sessions.js';
+import * as vault from './vault.js';
+import { readFileSync, statSync as statS, readdirSync as readdirS } from 'fs';
 
 const json = express.json({ limit: '1mb' });
 const wrap = (fn) => async (req, res) => {
@@ -31,6 +33,7 @@ function inWorkspace(rel) {
 }
 
 export function registerHubRoutes(app) {
+  registerVaultRoutes(app);
   // ── Memory ──
   app.get('/api/memory', wrap(() => memory.listMemory()));
   app.post('/api/memory', json, wrap((req) => memory.saveFact(req.body || {})));
@@ -107,6 +110,53 @@ export function registerHubRoutes(app) {
     res.setHeader('Cache-Control', 'no-store');
     res.setHeader('X-Browser-Url', encodeURI(f.url || ''));
     res.type('jpeg').send(f.jpeg);
+  });
+}
+
+// ── Confidential mode (vault.js) — every answer here goes to the browser only, never to the model ──
+const vaultChanged = (r) => { broadcast({ type: 'vault_map', map: vault.revealMap() }); return r; };
+export function registerVaultRoutes(app) {
+  app.get('/api/vault', wrap(() => ({ ok: true, entities: vault.listEntities(), exempt: vault.exemptList(), reels: vault.listReels() })));
+  app.post('/api/vault/entity', json, wrap((req) => vaultChanged({ ok: !!vault.addEntity(req.body || {}) })));
+  app.post('/api/vault/entity/delete', json, wrap((req) => vaultChanged({ ok: vault.removeEntity(req.body?.alias) })));
+  app.post('/api/vault/exempt', json, wrap((req) => vaultChanged((vault.setExempt(req.body?.list || []), { ok: true }))));
+  // candidates found locally in a workspace folder (nothing is added until the user picks them)
+  app.post('/api/vault/scan', json, wrap((req) => {
+    const root = workspaceRoot();
+    const base = path.resolve(root, String(req.body?.rel || ''));
+    if (!base.startsWith(root)) return { ok: false, error: 'Bad path.' };
+    const found = new Map();
+    const walk = (d, depth = 0) => {
+      for (const n of readdirS(d)) {
+        if (n.startsWith('.') || n === '__pycache__') continue;
+        const p = path.join(d, n);
+        const st = statS(p);
+        if (st.isDirectory()) { if (depth < 6) walk(p, depth + 1); continue; }
+        if (!/\.(md|txt|csv|json|ya?ml|py|html?)$/i.test(n) || st.size > 2e6) continue;
+        for (const c of vault.detect(readFileSync(p, 'utf8') + '\n' + n)) found.set(c.real.toLowerCase(), { ...c, count: (found.get(c.real.toLowerCase())?.count || 0) + 1 });
+      }
+    };
+    walk(base);
+    return { ok: true, candidates: [...found.values()].sort((a, b) => b.count - a.count).slice(0, 300) };
+  }));
+  app.post('/api/vault/anonymize', json, wrap(async (req) => {
+    const rel = String(req.body?.rel || '');
+    if (!rel || rel.includes('..')) return { ok: false, error: 'Choose a folder of the workspace.' };
+    const r = await vault.anonymizeTree(workspaceRoot(), rel, { dryRun: !!req.body?.dryRun });
+    if (!req.body?.dryRun) { vaultChanged(); broadcast({ type: 'workspace', entries: listWorkspaceEntries() }); }
+    return { ok: true, report: r };
+  }));
+  app.post('/api/vault/particularize', json, wrap(async (req) => {
+    const abs = inWorkspace(req.body?.path);
+    if (!abs) return { ok: false, error: 'Bad path.' };
+    const r = await vault.particularize(abs, req.body.path);
+    return r.ok ? { ok: true, reels: vault.listReels() } : { ok: false, error: `Cannot produce a real version of this kind of file (${r.how}).` };
+  }));
+  app.get('/api/vault/reel', (req, res) => {
+    const p = vault.reelPath(req.query.id);
+    if (!p) { res.status(404).end(); return; }
+    res.setHeader('Cache-Control', 'no-store');
+    res.download(p);
   });
 }
 

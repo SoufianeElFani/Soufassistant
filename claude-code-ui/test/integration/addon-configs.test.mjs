@@ -50,15 +50,17 @@ describe('with access enabled', () => {
   });
   after(async () => { await h.stop(); });
 
-  test('lets the call through, and registers no hook at all', async () => {
+  test('lets the call through; only the confidential-vault guard is registered', async () => {
     const c = await h.connect();
     await c.waitFor('history');
     c.send({ type: 'prompt', text: 'read it', permissionMode: 'bypass' });
     await c.waitFor('result');
 
     assert.equal(h.records('tool_decision').at(-1).outcome.behavior, 'allow');
-    assert.equal(h.records('query').at(-1).options.preToolUseHooks, 0,
-      'no guard to run means no per-tool-call round trip');
+    // The vault guard (vault.js) runs in every run, whatever this setting;
+    // the config-folder guard itself adds nothing when access is enabled.
+    assert.equal(h.records('query').at(-1).options.preToolUseHooks, 1,
+      'only the vault guard: no config-folder round trip');
   });
 });
 

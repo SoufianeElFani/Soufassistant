@@ -44,6 +44,7 @@ import { internalTools } from './internal-tools.js';
 import { disabledOverrides, discoverSkills, invocationName } from './skills.js';
 import { getAgent, agentFor, setSessionAgent, agentPrompt, agentSkillOverrides, agentsMessage } from './agents.js';
 import { knowledgePrompt } from './knowledge.js';
+import { CONFIDENTIAL_PROMPT } from './vault.js';
 import { decoratedSessions, recordArtifacts, FILE_TOOLS } from './session-tools.js';
 import { listPreviews } from './previews.js';
 import { rolePrompt, rolesFor, setSessionRoles, normalizeRoleIds, rolesMessage } from './roles.js';
@@ -130,7 +131,7 @@ function runArtifacts(run, entries) {
 /** Tool calls in one turn from which saving the procedure as a skill is offered. */
 export const SKILL_SUGGEST_STEPS = parseInt(process.env.SKILL_SUGGEST_STEPS || '12', 10);
 
-export async function runQuery(ws, { text, permissionMode, model, effort, mode, project, roles, voice = false, autoAttempts = 0, sessionKey, steer = false, agent, research = false, autonomous = false }) {
+export async function runQuery(ws, { text, permissionMode, model, effort, mode, project, roles, voice = false, autoAttempts = 0, sessionKey, steer = false, agent, research = false, autonomous = false, confidential = false }) {
   let key = sessionKey || viewKey();
   const existing = runFor(key);
 
@@ -257,6 +258,7 @@ export async function runQuery(ws, { text, permissionMode, model, effort, mode, 
   const roleText = [
     agentPrompt(runAgent), rolePrompt(runRoles), knowledgeText,
     runResearch ? researchPrompt(researchDir) : '', autonomous ? AUTONOMOUS_PROMPT : '',
+    confidential ? CONFIDENTIAL_PROMPT : '',
     voice ? VOICE_PROMPT : '',
   ].filter(Boolean).join('\n\n');
   if (runResearch && runMode === 'chat') {
