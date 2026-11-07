@@ -77,7 +77,8 @@ export function exemptList() { return load().exempt; }
 export function addEntity({ real, kind = 'autre', variants = [], alias, auto = false }) {
   const s = load();
   real = String(real || '').trim();
-  if (real.length < 2) return null;
+  if (real.length < 2 || isAliasLike(real)) return null;
+  variants = variants.filter((v) => !isAliasLike(v));
   if (s.exempt.some((x) => norm(x) === norm(real))) return null;
   const all = [real, ...variants].map((v) => String(v).trim()).filter((v) => v.length >= 2);
   let e = s.entities.find((x) => [x.real, ...(x.variants || [])].some((v) => all.some((a) => norm(a) === norm(v))));
@@ -130,10 +131,14 @@ const LEGAL = /\b((?:[A-Z][\p{L}&'.-]+|[A-Z]{2,})(?:\s+(?:[A-Z][\p{L}&'.-]+|[A-Z
 const TITLED = /\b(?:M\.|Mme|Mlle|Mr\.?|Mrs\.?|Ms\.?|Dhr\.?|Mevr\.?|Madame|Monsieur|Attn\.\s*(?:Mr|Mrs|Ms)\.?)\s+((?:[A-Z][\p{L}'-]+|[A-Z]{2,})(?:\s+(?:[A-Z][\p{L}'-]+|[A-Z]{2,}|van|de|der|du)){0,3})/gu;
 
 /** Repérer de nouvelles entités dans un texte (sans rien remplacer). → [{real, kind}] */
+// Our own pseudonyms must never be learnt as real names (a phone alias looks like a phone…)
+const ALIAS_LIKE = /exemple\.invalid|\+32\s+400\s+00\s+\d{2}\s+\d{2}|BE\s+0000\.000\.\d{3}|BE00\s+0000\s+0000\s+\d{4}|\bREF-\d{4}\b|\b(?:Client|Partenaire)-(?:[A-Z]{1,3}\b|$|\s)|\b(?:Personne|Lieu|Projet|Donnee)-(?:\d+|$|\s)|^(?:Client|Partenaire|Personne|Lieu|Projet|Donnee|REF)-?$/;
+export const isAliasLike = (v) => ALIAS_LIKE.test(String(v));
+
 export function detect(text) {
   const s = load();
   const out = [];
-  const isExempt = (v) => s.exempt.some((x) => norm(v).includes(norm(x)) || norm(x) === norm(v));
+  const isExempt = (v) => isAliasLike(v) || s.exempt.some((x) => norm(v).includes(norm(x)) || norm(x) === norm(v));
   for (const [kind, re] of PATTERNS) for (const m of String(text).matchAll(re)) if (!isExempt(m[0])) out.push({ real: m[0].trim(), kind });
   // une société avec sa forme juridique : on retient le nom seul (la forme reste dans le texte)
   for (const m of String(text).matchAll(LEGAL)) if (!isExempt(m[1])) out.push({ real: m[1].trim(), kind: 'client' });
@@ -159,6 +164,21 @@ export function reveal(text) {
 export function revealMap() { return Object.fromEntries(load().entities.map((e) => [e.alias, e.real])); }
 
 // ── Fichiers ────────────────────────────────────────────────────────────────
+/** Un JPEG sans ses métadonnées (EXIF / XMP en APP1, IPTC en APP13, commentaires) — l'image est intacte. */
+export function stripJpeg(buf) {
+  if (buf.length < 4 || buf[0] !== 0xff || buf[1] !== 0xd8) return buf;
+  const out = [buf.subarray(0, 2)];
+  let i = 2;
+  while (i + 4 <= buf.length && buf[i] === 0xff) {
+    const m = buf[i + 1];
+    if (m === 0xda) { out.push(buf.subarray(i)); return Buffer.concat(out); }   // début des données : on garde tout
+    const len = buf.readUInt16BE(i + 2);
+    if (!(m === 0xe1 || m === 0xed || m === 0xfe)) out.push(buf.subarray(i, i + 2 + len));
+    i += 2 + len;
+  }
+  return buf;   // structure inattendue : ne rien toucher
+}
+
 const TEXT_EXT = new Set(['md', 'markdown', 'txt', 'csv', 'tsv', 'json', 'yaml', 'yml', 'py', 'js', 'mjs', 'cjs', 'ts', 'html', 'htm', 'svg', 'xml', 'css', 'sh', 'toml', 'ini', 'log', 'sql', 'tex']);
 const OFFICE = { docx: 'docx', pptx: 'pptx', xlsx: 'xlsx' };
 const ext = (p) => path.extname(p).slice(1).toLowerCase();
@@ -179,12 +199,23 @@ function transformOffice(buf, kind, fn) {
       const edits = partParagraphs(x, flavor).filter((p) => p.text.trim()).map((p) => ({ i: p.i, old: p.text, text: fn(p.text) })).filter((e) => e.text !== e.old);
       if (edits.length) x = setPartParagraphs(x, flavor, edits);
       files.set(name, Buffer.from(x));
-    } else if ((kind === 'xlsx' && /^xl\/(sharedStrings|worksheets\/sheet\d+|comments\d*)\.xml$/.test(name)) || /^docProps\/(core|app)\.xml$/.test(name)
-      || (kind === 'pptx' && /^ppt\/charts\/chart\d+\.xml$/.test(name)) || (kind === 'docx' && /^word\/charts\/chart\d+\.xml$/.test(name))) {
+    } else if (/\.xml$/i.test(name) && !/(^|\/)_rels\/|^\[Content_Types\]\.xml$|\/theme\/|\/styles\.xml$|\/fontTable\.xml$|\/settings\.xml$/.test(name)) {
+      // every other XML part (SmartArt, charts, masters, comments, docProps, sheets…): its text nodes
       // texte des éléments, sans toucher aux balises
       x = x.replace(/>([^<>]+)</g, (m, t) => `>${fn(t)}<`);
       files.set(name, Buffer.from(x));
     }
+  }
+  for (const name of [...files.keys()]) if (/\/media\/[^/]+\.jpe?g$/i.test(name)) files.set(name, stripJpeg(files.get(name)));
+  // texte alternatif et titres d'objets (images, formes), dans toutes les parties
+  const unx = (v) => v.replace(/&quot;/g, '"').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
+  const enx = (v) => v.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  for (const name of [...files.keys()]) {
+    if (!/\.xml$/i.test(name) || /_rels\//.test(name)) continue;
+    const x = files.get(name).toString('utf8');
+    const y = x.replace(/\b(descr|title)="([^"]*)"/g, (m, a, v) => `${a}="${enx(fn(unx(v)))}"`)
+      .replace(/(<(?:p|pic|wp|xdr|dgm):(?:cNvPr|docPr)\b[^>]*?\bname=")([^"]*)"/g, (m, pre, v) => `${pre}${enx(fn(unx(v)))}"`);
+    if (y !== x) files.set(name, Buffer.from(y));
   }
   return makeZip(entries.filter((e) => files.has(e.name)).map((e) => ({ name: e.name, data: files.get(e.name) })), { deflate: true });
 }
@@ -248,11 +279,20 @@ export async function anonymizeTree(root, rel, { dryRun = false } = {}) {
     }
   };
   if (existsSync(base)) walk(base);
+  // déjà anonymisés (une 2e exécution ne doit rien refaire : elle écraserait les originaux du coffre)
+  const done = new Set(load().files.filter((f) => f.masked).map((f) => f.masked));
+  for (let i = files.length - 1; i >= 0; i--) if (done.has(path.relative(root, files[i]))) { files.splice(i, 1); report.deja_faits = (report.deja_faits || 0) + 1; }
   // 1er passage : apprendre les entités dans les textes (motifs, sociétés, civilités) et les noms de fichiers
+  // (tous les formats, PDF et Office compris : un nom qui n'est que dans un PDF doit être connu
+  //  avant de calculer les noms de fichiers)
+  const scratch = path.join(VAULT_DIR, 'tmp-apprentissage');
   for (const p of files) {
     mask(path.relative(root, p));
-    if (TEXT_EXT.has(ext(p)) && statSync(p).size < 2e6) mask(readFileSync(p, 'utf8'));
+    const k = ext(p);
+    if (TEXT_EXT.has(k) && statSync(p).size < 2e6) mask(readFileSync(p, 'utf8'));
+    else if ((OFFICE[k] || k === 'pdf') && statSync(p).size < 60e6) await maskFile(p, path.join(scratch, 'x.' + k)).catch(() => {});
   }
+  rmSync(scratch, { recursive: true, force: true });
   for (const p of files) {
     report.fichiers++;
     const r0 = path.relative(root, p);
@@ -271,7 +311,10 @@ export async function anonymizeTree(root, rel, { dryRun = false } = {}) {
       report.anonymises++;
       state.files.push({ orig: r0, masked: path.relative(root, finalDst), how: res.how, at: Date.now() });
     } else if (['png', 'jpg', 'jpeg', 'gif', 'webp'].includes(k)) {
-      if (p !== dst) { mkdirSync(path.dirname(dst), { recursive: true }); renameSync(p, dst); report.renommes++; }
+      mkdirSync(path.dirname(dst), { recursive: true });
+      const img = readFileSync(p);
+      rmSync(p, { force: true });
+      writeFileSync(dst, /^jpe?g$/.test(k) ? stripJpeg(img) : img);
       report.images.push(path.relative(root, dst));
       state.files.push({ orig: r0, masked: path.relative(root, dst), how: 'image (à vérifier)', at: Date.now() });
     } else {

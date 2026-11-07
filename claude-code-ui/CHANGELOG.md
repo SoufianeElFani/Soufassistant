@@ -1,3 +1,8 @@
+## 1.3.1
+- **Confidential mode, more thorough.** Image alt texts and object names in Word / PowerPoint, SmartArt, charts, masters and comments are now pseudonymised too, and the metadata hidden in JPEG pictures (EXIF, XMP, IPTC) is removed. A name that only appears inside a PDF or an Office file is learnt before the file names are computed.
+- **Anonymising a folder twice is harmless**: files already anonymised are skipped (a second run could overwrite the originals kept in the vault).
+- Pseudonyms are never mistaken for real names (a pseudonymous phone number looks like a phone number), and a common word can no longer end up in the vault.
+
 ## 1.3.0
 **Confidential mode — confidential data never leaves your Home Assistant.**
 - **The shield button** under the message box: when it is on, the names of companies, people, places, projects, references and contact details are **replaced by pseudonyms before your message is sent** (Client-A, Personne-03, REF-0004, contact05@exemple.invalid…) — attachments included (text, Word, PowerPoint, Excel, PDF as text; pictures cannot be masked and you are told so). On by default in Code and Cowork, off in Chat; one click switches it for the current mode.

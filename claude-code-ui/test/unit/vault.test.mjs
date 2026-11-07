@@ -49,6 +49,39 @@ describe('vault', () => {
     assert.equal(g('Bash', { command: 'grep -r Acme /config/Claude_Travail' }), 'allow');
     assert.equal(g('Read', { file_path: '/config/configuration.yaml' }), 'allow');
   });
+  test('nos pseudonymes ne sont jamais appris comme de vrais noms', () => {
+    const n = V.listEntities().length;
+    V.mask('Mr Personne-01 et Client-A NV, tél. +32\n400 00 00 03, contact02@exemple.invalid, REF-0004');
+    assert.equal(V.listEntities().length, n);
+    assert.equal(V.addEntity({ real: 'Personne-', kind: 'personne' }), null);
+    assert.equal(V.mask('une personne habilitée', { learn: false }), 'une personne habilitée');
+  });
+  test('Office : texte alternatif des images, métadonnées JPEG', async () => {
+    const jpeg = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe1, 0x00, 0x08]), Buffer.from('Acme!!'), Buffer.from([0xff, 0xda, 0x00, 0x02, 0x11, 0x22, 0xff, 0xd9])]);
+    assert.ok(!V.stripJpeg(jpeg).includes(Buffer.from('Acme')));
+    assert.deepEqual([...V.stripJpeg(jpeg).subarray(-4)], [0x11, 0x22, 0xff, 0xd9]);
+    const slide = '<p:sld><p:pic><p:nvPicPr><p:cNvPr id="2" name="Logo Acme Brewing" descr="Acme Brewing logo"/></p:nvPicPr></p:pic><p:sp><p:txBody><a:p><a:r><a:t>Hi</a:t></a:r></a:p></p:txBody></p:sp></p:sld>';
+    const a = path.join(tmp, 's.pptx'), b = path.join(tmp, 's2.pptx');
+    writeFileSync(a, makeZip([{ name: 'ppt/slides/slide1.xml', data: slide }, { name: 'ppt/media/image1.jpeg', data: jpeg }]));
+    await V.maskFile(a, b);
+    const all = readZip(readFileSync(b)).map((e) => e.data.toString('latin1')).join(' ');
+    assert.doesNotMatch(all, /Acme/);
+    assert.match(all, /descr="Client-A logo"/);
+  });
+  test('anonymiser deux fois ne refait rien (les originaux du coffre restent intacts)', async () => {
+    const root = path.join(tmp, 'ws');
+    const { mkdirSync } = await import('fs');
+    mkdirSync(path.join(root, 'T'), { recursive: true });
+    writeFileSync(path.join(root, 'T', 'note.md'), 'Acme Brewing à Gent');
+    const r1 = await V.anonymizeTree(root, 'T');
+    assert.equal(r1.anonymises, 1);
+    const orig = readFileSync(path.join(process.env.VAULT_DIR, 'originaux', 'T', 'note.md'), 'utf8');
+    const r2 = await V.anonymizeTree(root, 'T');
+    assert.equal(r2.anonymises, 0);
+    assert.equal(r2.deja_faits, 1);
+    assert.equal(readFileSync(path.join(process.env.VAULT_DIR, 'originaux', 'T', 'note.md'), 'utf8'), orig);
+    assert.equal(orig, 'Acme Brewing à Gent');
+  });
   test('la table pour l\'écran', () => {
     assert.equal(V.revealMap()['Client-A'], 'Acme Brewing');
   });
