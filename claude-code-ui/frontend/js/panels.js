@@ -55,6 +55,26 @@ document.addEventListener('keydown', (e) => {
   closeAllPanels();
 });
 
+// On a phone, the on-screen keyboard shrinks the visible band (viewport.js) but
+// the panel's own scroller does not follow the field being typed in: a field low
+// in the Hub (the vault passphrase) ended up under the keyboard. Keep the focused
+// field of a panel or a dialog in view — on focus, and each time the band resizes.
+const FIELD = 'input:not([type=checkbox]):not([type=radio]):not([type=file]), textarea, select';
+function revealField() {
+  const f = document.activeElement;
+  if (!f?.matches?.(FIELD)) return;
+  if (!registry.some((r) => isOpen(r.panel) && r.panel.contains(f)) && !f.closest('.permission-overlay')) return;
+  const band = window.visualViewport?.height || window.innerHeight;
+  const r = f.getBoundingClientRect();
+  if (r.top >= 8 && r.bottom <= band - 8) return;
+  f.scrollIntoView({ block: 'center', inline: 'nearest' });
+}
+let revealTimer = null;
+const scheduleReveal = () => { clearTimeout(revealTimer); revealTimer = setTimeout(revealField, 120); };
+document.addEventListener('focusin', () => { scheduleReveal(); setTimeout(revealField, 450); });   // again once the keyboard is up
+window.visualViewport?.addEventListener('resize', scheduleReveal);
+window.addEventListener('resize', scheduleReveal);
+
 window.addEventListener('blur', () => {
   // activeElement is updated by the time the blur has been dispatched; defer a
   // tick anyway so the check never races the focus change.

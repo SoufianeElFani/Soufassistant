@@ -1,3 +1,6 @@
+## 1.5.1
+- **On a phone, a field in a panel stays above the keyboard.** The vault passphrase in Hub › Confidentiel (and every other field low in a panel or a dialog) used to stay hidden under the on-screen keyboard: it now scrolls back into view when you tap it and when the keyboard opens.
+
 ## 1.5.0
 **Confidential mode: pictures and plans too.**
 - **A redaction editor.** With the shield on, a picture or a PDF you attach (a screenshot, a P&ID, a plan) opens an editor before anything is sent. Your Home Assistant finds what to mask: the vault's names, e-mails, phones, URLs, addresses, companies, people, drawing numbers and the fields of a title block (CLIENT:, PROJECT:, DWG No…). It reads the text of a vector PDF directly and runs a local OCR (Tesseract, French / English / Dutch) on screenshots and scans. Solid zones are masked and dotted ones are suggestions: tap a zone to switch it, drag to draw one, and *Cartouche* covers the bottom-right corner. Only the painted picture leaves, re-encoded as PNG: no text layer, no hidden layers, no metadata.
