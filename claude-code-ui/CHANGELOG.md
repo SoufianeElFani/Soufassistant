@@ -1,3 +1,7 @@
+## 1.5.6
+- **Old formats too.** `.doc`, `.xls`, `.ppt`, as well as `.rtf`, `.odt`, `.ods` and `.odp`, are converted on your Home Assistant (LibreOffice) to `.docx`, `.xlsx` or `.pptx`, then pseudonymised like the others, pictures included. The pseudonymised copy is in the new format. If a conversion fails, the file is not sent, and when a folder is anonymised it stays in the vault only, never in clear in the workspace.
+- **The pictures of an anonymised folder's documents.** Hub › Confidentiel › *Documents avec images* lists the Word, Excel and PowerPoint files whose pictures have not been checked yet. For each one: *Vérifier…* (picture by picture in the redaction editor), *Tout masquer*, or *Rien de sensible*. The anonymisation report says how many documents are waiting.
+
 ## 1.5.5
 **Confidential mode: Word, Excel and PowerPoint, thoroughly.**
 - **The pictures inside a document.** When you attach a Word, Excel or PowerPoint file that contains pictures, you choose: check them one by one in the redaction editor (with a new *Image entière* button for a logo or a photo), black them all out, or send them as they are. Pictures in a format the browser cannot repaint (EMF, WMF, SVG, GIF) are replaced by a blank one.

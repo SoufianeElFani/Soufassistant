@@ -118,7 +118,7 @@ export function registerHubRoutes(app) {
 const vaultChanged = (r) => { broadcast({ type: 'vault_map', map: vault.revealMap() }); return r; };
 const statusChanged = (r) => { broadcast({ type: 'vault_status', ...vault.vaultStatus() }); return vaultChanged(r); };
 export function registerVaultRoutes(app) {
-  app.get('/api/vault', wrap(() => ({ ok: true, ...vault.vaultStatus(), entities: vault.listEntities(), exempt: vault.exemptList(), reels: vault.listReels(), ignored: vault.isLocked() ? [] : vault.ignoredList(), images: vault.imagesToCheck(workspaceRoot()) })));
+  app.get('/api/vault', wrap(() => ({ ok: true, ...vault.vaultStatus(), entities: vault.listEntities(), exempt: vault.exemptList(), reels: vault.listReels(), ignored: vault.isLocked() ? [] : vault.ignoredList(), images: vault.imagesToCheck(workspaceRoot()), docs: vault.docsToCheck(workspaceRoot()) })));
   // encryption: the passphrase only ever travels browser → server, and is never stored
   app.post('/api/vault/unlock', json, wrap((req) => (vault.unlock(String(req.body?.pass || '')) ? statusChanged({ ok: true }) : { ok: false, error: 'Phrase de passe incorrecte.' })));
   app.post('/api/vault/lock', json, wrap(() => statusChanged((vault.lock(), { ok: true }))));
@@ -139,10 +139,27 @@ export function registerVaultRoutes(app) {
     return { ok: true, path: out };
   }));
   // the pictures inside an Office attachment, for the redaction editor (nothing is kept or sent)
-  app.post('/api/vault/office-media', express.json({ limit: '80mb' }), wrap((req) => {
+  // an attachment (`data`) or a workspace document (`path`); an old format is converted first
+  app.post('/api/vault/office-media', express.json({ limit: '80mb' }), wrap(async (req) => {
     if (vault.isLocked()) return { ok: true, locked: true };
-    const buf = Buffer.from(String(req.body?.data || '').replace(/^data:[^;]+;base64,/, ''), 'base64');
-    try { return { ok: true, ...vault.officeMedia(buf) }; } catch { return { ok: false, error: 'Fichier Office illisible.' }; }
+    const rel = req.body?.path ? String(req.body.path) : null;
+    const abs = rel ? inWorkspace(rel) : null;
+    if (rel && !abs) return { ok: false, error: 'Bad path.' };
+    let buf = abs ? readFileSync(abs) : Buffer.from(String(req.body?.data || '').replace(/^data:[^;]+;base64,/, ''), 'base64');
+    const k = path.extname(rel || String(req.body?.name || '')).slice(1).toLowerCase();
+    try {
+      if (vault.LEGACY[k]) buf = await vault.convertLegacy(buf, k);
+      return { ok: true, ...vault.officeMedia(buf) };
+    } catch { return { ok: false, error: 'Fichier Office illisible.' }; }
+  }));
+  // a workspace document's pictures, checked in the editor (or all blanked, or « rien de sensible »)
+  app.post('/api/vault/office-save', express.json({ limit: '120mb' }), wrap((req) => {
+    const rel = String(req.body?.path || '');
+    if (!inWorkspace(rel)) return { ok: false, error: 'Bad path.' };
+    const m = req.body?.media && typeof req.body.media === 'object' ? new Map(Object.entries(req.body.media).map(([p, d]) => [p, Buffer.from(String(d).replace(/^data:[^;]+;base64,/, ''), 'base64')])) : null;
+    if (!vault.saveDocMedia(workspaceRoot(), rel, m, !!req.body?.blank)) return { ok: false, error: 'Fichier introuvable.' };
+    broadcast({ type: 'workspace', entries: listWorkspaceEntries() });
+    return { ok: true };
   }));
   app.post('/api/vault/ignore', json, wrap((req) => ((Array.isArray(req.body?.list) ? vault.setIgnored(req.body.list) : vault.addIgnored([].concat(req.body?.words || []))), { ok: true })));
   app.post('/api/vault/entity', json, wrap((req) => vaultChanged({ ok: !!vault.addEntity(req.body || {}) })));

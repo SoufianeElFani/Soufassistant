@@ -24,7 +24,7 @@
  * récursive dans un dossier parent) ; elle protège contre l'accident.
  */
 import { execFile } from 'child_process';
-import { createCipheriv, createDecipheriv, randomBytes, scryptSync } from 'crypto';
+import { createCipheriv, createDecipheriv, createHash, randomBytes, scryptSync } from 'crypto';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'fs';
 import os from 'os';
 import path from 'path';
@@ -381,6 +381,9 @@ export function stripJpeg(buf) {
 
 const TEXT_EXT = new Set(['md', 'markdown', 'txt', 'csv', 'tsv', 'json', 'yaml', 'yml', 'py', 'js', 'mjs', 'cjs', 'ts', 'html', 'htm', 'svg', 'xml', 'css', 'sh', 'toml', 'ini', 'log', 'sql', 'tex']);
 const OFFICE = { docx: 'docx', pptx: 'pptx', xlsx: 'xlsx' };
+// Old binary and OpenDocument formats: converted here by LibreOffice, then masked like the others.
+// The pseudonymised copy is in the new format (a .doc becomes a .docx).
+export const LEGACY = { doc: 'docx', rtf: 'docx', odt: 'docx', xls: 'xlsx', ods: 'xlsx', ppt: 'pptx', odp: 'pptx' };
 const ext = (p) => path.extname(p).slice(1).toLowerCase();
 
 function run(cmd, args, timeout = 240000) {
@@ -565,6 +568,12 @@ export async function transformFile(src, dst, fn, opts = {}) {
   mkdirSync(path.dirname(dst), { recursive: true });
   if (TEXT_EXT.has(k)) { writeFileSync(dst, fn(readFileSync(src, 'utf8'))); return { ok: true, how: 'texte', dst }; }
   if (OFFICE[k]) { writeFileSync(dst, transformOffice(readFileSync(src), OFFICE[k], fn, opts)); return { ok: true, how: k, dst, notes: opts.notes || [] }; }
+  if (LEGACY[k]) {
+    const conv = await convertLegacy(readFileSync(src), k);
+    const d2 = withOoxmlExt(dst);
+    writeFileSync(d2, transformOffice(conv, LEGACY[k], fn, opts));
+    return { ok: true, how: `${k}→${LEGACY[k]}`, dst: d2, notes: opts.notes || [] };
+  }
   if (k === 'pdf') {
     const txt = await run('pdftotext', ['-layout', '-q', src, '-']).catch(() => '');
     const d2 = dst.replace(/\.pdf$/i, '.pdf.txt');
@@ -572,6 +581,31 @@ export async function transformFile(src, dst, fn, opts = {}) {
     return { ok: true, how: 'pdf→texte', dst: d2 };
   }
   return { ok: false, how: 'non pris en charge', dst };
+}
+
+/** `x.doc` → `x.docx` (unchanged for any other format). */
+export const withOoxmlExt = (p) => { const k = ext(p); return LEGACY[k] ? String(p).slice(0, -k.length) + LEGACY[k] : p; };
+// The same file converted twice gives the same media names: kept a quarter of an hour, so the
+// pictures shown in the redaction editor are the ones masking then replaces.
+const legacyCache = new Map();   // sha256 → { buf, at }
+export async function convertLegacy(buf, k) {
+  const target = LEGACY[k];
+  if (!target) return buf;
+  const key = createHash('sha256').update(buf).digest('hex');
+  for (const [h, v] of legacyCache) if (Date.now() - v.at > 15 * 60e3) legacyCache.delete(h);
+  if (legacyCache.has(key)) return legacyCache.get(key).buf;
+  const tmp = mkdtempSync(path.join(os.tmpdir(), 'legacy-'));
+  try {
+    const src = path.join(tmp, 'in.' + k);
+    writeFileSync(src, buf);
+    // its own profile: a LibreOffice already running (previews) would otherwise hold the lock
+    await run('soffice', [`-env:UserInstallation=file://${tmp}/profile`, '--headless', '--convert-to', target, '--outdir', tmp, src], 180000);
+    const out = path.join(tmp, 'in.' + target);
+    if (!existsSync(out)) throw new Error(`conversion ${k} → ${target} impossible`);
+    const b = readFileSync(out);
+    legacyCache.set(key, { buf: b, at: Date.now() });
+    return b;
+  } finally { rmSync(tmp, { recursive: true, force: true }); }
 }
 
 export const maskFile = (src, dst, opts = {}) => transformFile(src, dst, (t) => mask(t), { masking: true, notes: [], ...opts });
@@ -624,7 +658,7 @@ export function reelFile(id) {
  */
 export async function anonymizeTree(root, rel, { dryRun = false } = {}) {
   const base = path.join(root, rel);
-  const report = { fichiers: 0, anonymises: 0, deplaces_au_coffre: 0, inchanges: 0, renommes: 0, images: [], non_pris: [], entites_avant: load().entities.length };
+  const report = { fichiers: 0, anonymises: 0, deplaces_au_coffre: 0, inchanges: 0, renommes: 0, images: [], non_pris: [], convertis: [], documents_images: [], entites_avant: load().entities.length };
   const files = [];
   const walk = (d) => {
     for (const n of readdirSync(d)) {
@@ -645,7 +679,7 @@ export async function anonymizeTree(root, rel, { dryRun = false } = {}) {
     mask(path.relative(root, p));
     const k = ext(p);
     if (TEXT_EXT.has(k) && statSync(p).size < 2e6) mask(readFileSync(p, 'utf8'));
-    else if ((OFFICE[k] || k === 'pdf') && statSync(p).size < 60e6) await maskFile(p, path.join(scratch, 'x.' + k)).catch(() => {});
+    else if ((OFFICE[k] || LEGACY[k] || k === 'pdf') && statSync(p).size < 60e6) await maskFile(p, path.join(scratch, 'x.' + k)).catch(() => {});
   }
   rmSync(scratch, { recursive: true, force: true });
   for (const p of files) {
@@ -656,12 +690,25 @@ export async function anonymizeTree(root, rel, { dryRun = false } = {}) {
     if (dryRun) { if (r1 !== r0) report.renommes++; continue; }
     putReal('orig', r0, readFileSync(p));
     const dst = path.join(root, r1);
-    if (TEXT_EXT.has(k) || OFFICE[k] || k === 'pdf') {
-      const res = await maskFile(p, dst + '.anon-tmp' + path.extname(dst));
-      const finalDst = res.how === 'pdf→texte' ? dst + '.txt' : dst;
+    if (TEXT_EXT.has(k) || OFFICE[k] || LEGACY[k] || k === 'pdf') {
+      const res = await maskFile(p, dst + '.anon-tmp' + path.extname(dst)).catch((e) => ({ ok: false, error: e.message }));
+      if (!res.ok) {
+        // never leave the clear original in the workspace: it is in the vault already
+        rmSync(p, { force: true });
+        report.deplaces_au_coffre++;
+        report.non_pris.push(`${r1} (${res.error || res.how})`);
+        state.files.push({ orig: r0, masked: null, how: 'au coffre seulement', at: Date.now() });
+        continue;
+      }
+      const finalDst = res.how === 'pdf→texte' ? dst + '.txt' : withOoxmlExt(dst);
       if (p !== finalDst) rmSync(p, { force: true });
       renameSync(res.dst, finalDst);
       report.anonymises++;
+      if (LEGACY[k]) report.convertis.push(path.relative(root, finalDst));
+      if (OFFICE[ext(finalDst)]) {
+        const m = officeMedia(readFileSync(finalDst));
+        if (m.images.length || m.other.length) report.documents_images.push(path.relative(root, finalDst));
+      }
       state.files.push({ orig: r0, masked: path.relative(root, finalDst), how: res.how, at: Date.now() });
     } else if (['png', 'jpg', 'jpeg', 'gif', 'webp'].includes(k)) {
       mkdirSync(path.dirname(dst), { recursive: true });
@@ -715,6 +762,49 @@ export function saveRedacted(root, rel, png) {
   if (f) { f.masked = relPng; f.how = 'image masquée'; f.at = Date.now(); } else s.files.push({ orig: rel, masked: relPng, how: 'image masquée', at: Date.now() });
   save();
   return relPng;
+}
+
+// ── Documents du workspace dont les images restent à vérifier ─────────────────
+const mediaCount = new Map();   // abs → { mtime, images, other }
+export function docsToCheck(root) {
+  if (isLocked()) return [];
+  const out = [];
+  for (const f of load().files) {
+    if (!f.masked || f.imagesChecked || !OFFICE[ext(f.masked)]) continue;
+    const abs = path.join(root, f.masked);
+    if (!existsSync(abs)) continue;
+    const mtime = statSync(abs).mtimeMs;
+    let c = mediaCount.get(abs);
+    if (!c || c.mtime !== mtime) {
+      try { const m = officeMedia(readFileSync(abs)); c = { mtime, images: m.images.length, other: m.other.length }; } catch { c = { mtime, images: 0, other: 0 }; }
+      mediaCount.set(abs, c);
+    }
+    if (c.images || c.other) out.push({ path: f.masked, images: c.images, other: c.other });
+  }
+  return out;
+}
+/**
+ * A workspace document's pictures, checked: `media` (path → Buffer) repainted in the
+ * editor replace the originals, `blank` blanks those that cannot be repainted;
+ * neither = « rien de sensible ». The document leaves the list. → true
+ */
+export function saveDocMedia(root, rel, media = null, blank = false) {
+  const s = load();
+  const abs = path.resolve(root, rel);
+  if (!abs.startsWith(path.resolve(root) + path.sep) || !existsSync(abs) || !OFFICE[ext(abs)]) return false;
+  if (media?.size || blank) {
+    const entries = readZip(readFileSync(abs)).map((e) => {
+      if (!MEDIA_RE.test(e.name)) return e;
+      if (media?.has(e.name)) return { name: e.name, data: media.get(e.name) };
+      const b = blank && !PAINTABLE.test(e.name) && BLANK[ext(e.name)];
+      return b ? { name: e.name, data: b() } : e;
+    });
+    writeFileSync(abs, makeZip(entries.map((e) => ({ name: e.name, data: e.data })), { deflate: true }));
+  }
+  const f = s.files.find((x) => x.masked === rel);
+  if (f) f.imagesChecked = Date.now(); else s.files.push({ orig: rel, masked: rel, how: 'document', imagesChecked: Date.now(), at: Date.now() });
+  save();
+  return true;
 }
 
 // ── La garde : l'agent n'atteint jamais le coffre ─────────────────────────────
@@ -811,23 +901,24 @@ export async function maskAttachments(saved) {
     const k = ext(a.path);
     if (a.isImage && a.redacted) { a.name = mask(a.name, { learn: false }); markSafe(a.path); continue; }   // masked by the user (redact.js), re-encoded PNG
     if (a.isImage) { notes.push(`image non masquée : ${a.name}`); continue; }
-    if (TEXT_EXT.has(k) || OFFICE[k] || k === 'pdf') {
+    if (TEXT_EXT.has(k) || OFFICE[k] || LEGACY[k] || k === 'pdf') {
       // pictures inside an Office file, repainted in the redaction editor (redact.js) — or all blanked
       const media = a.redactedMedia ? new Map(Object.entries(a.redactedMedia).map(([p, d]) => [p, Buffer.from(String(d).replace(/^data:[^;]+;base64,/, ''), 'base64')])) : null;
-      const r = await maskFile(a.path, a.path + '.masq' + path.extname(a.path), { media, blankMedia: !!a.blankMedia });
+      const r = await maskFile(a.path, a.path + '.masq' + path.extname(a.path), { media, blankMedia: !!a.blankMedia })
+        .catch((e) => ({ ok: false, how: e.message }));
       for (const n of r.notes || []) notes.push(`${a.name} — ${n}`);
-      if (OFFICE[k] && !a.redactedMedia && !a.blankMedia) {
-        const left = officeMedia(readFileSync(a.path)).images.length;
+      if (r.ok && (OFFICE[k] || LEGACY[k]) && !a.redactedMedia && !a.blankMedia) {
+        const left = officeMedia(readFileSync(r.dst)).images.length;
         if (left) notes.push(`${a.name} — ${left} image(s) non masquée(s) dans le document`);
       }
       if (r.ok) {
         rmSync(a.path, { force: true });
-        const final = r.how === 'pdf→texte' ? a.path + '.txt' : a.path;
+        const final = r.how === 'pdf→texte' ? a.path + '.txt' : withOoxmlExt(a.path);
         renameSync(r.dst, final);
         a.path = final;
         markSafe(final);
-        a.name = mask(a.name, { learn: false });
-      }
+        a.name = mask(withOoxmlExt(a.name), { learn: false });
+      } else notes.push(`${a.name} — non pseudonymisable (${r.how}) : non transmis`);
     } else notes.push(`fichier non pseudonymisable : ${a.name}`);
   }
   return notes;

@@ -937,6 +937,17 @@ Sharing (0.9.0): `POST /api/skills/import` (raw .zip or SKILL.md;
 `GET /api/skills/shared` + `POST /api/skills/import-shared` (install a zip
 from that folder — so a Drive folder becomes a skill library).
 
+**1.5.6 — old formats, documents with pictures (`vault.js`).**
+`LEGACY` (doc/rtf/odt → docx, xls/ods → xlsx, ppt/odp → pptx): `convertLegacy()`
+runs soffice with its own `-env:UserInstallation` profile and caches the result by
+sha256 for 15 min, so the `office-media` listing and the masking see the same media
+names; `transformFile` writes `withOoxmlExt(dst)`, `how: 'doc→docx'`. A failed
+conversion: attachment not sent (note); in `anonymizeTree` the original goes to the
+vault only (`au coffre seulement`). `docsToCheck()` (state.files Office entries
+without `imagesChecked`, media counted per mtime) and `saveDocMedia()` (repainted /
+blanked / just checked) behind the `office-save` route and the Hub section
+*Documents avec images*; the `office-media` route also takes a workspace `path`.
+
 **1.5.5 — Office files, the gaps (`vault.js` transformOffice, `confidential.js` officePictures).**
 `transformOffice(buf, kind, fn, { masking, media, blankMedia, notes })`: with
 `masking`, authors (`w:author`/`author`, persons' `displayName`, commentAuthors

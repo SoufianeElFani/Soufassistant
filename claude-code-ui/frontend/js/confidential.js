@@ -196,7 +196,8 @@ export async function preSendCheck(text, atts = []) {
   return { replaced, extra };
 }
 
-const OFFICE_RE = /\.(docx|pptx|xlsx)$/i;
+// old formats too: the server converts them (LibreOffice) before listing their pictures
+const OFFICE_RE = /\.(docx|pptx|xlsx|doc|xls|ppt|rtf|odt|ods|odp)$/i;
 /**
  * The pictures inside a Word / PowerPoint / Excel file: the text is pseudonymised
  * by the server, but a logo, a screenshot or a site photo would leave as is.

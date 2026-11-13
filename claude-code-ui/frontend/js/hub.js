@@ -15,7 +15,7 @@ import { S } from './state.js';
 import { wsBase, modelSelect } from './dom.js';
 import { registerPanel } from './panels.js';
 import { confirmAction } from './confirm.js';
-import { redactAttachment } from './redact.js';
+import { redactAttachment, blackOut } from './redact.js';
 import { secretField } from './confidential.js';
 import { showToast } from './toast.js';
 import { listAgentsCache } from './toolbox.js';
@@ -501,7 +501,7 @@ async function renderConfidential() {
         const x = await api('/api/vault/anonymize', { rel: pick.value });
         out.innerHTML = '';
         const t = x.report;
-        out.appendChild(note(x.ok ? `Fait : ${t.anonymises} fichier(s) anonymisé(s), ${t.renommes} renommé(s), ${t.deplaces_au_coffre} gardé(s) au coffre seulement${t.images.length ? `, ${t.images.length} image(s) à vérifier` : ''}.` : (x.error || 'Échec.')));
+        out.appendChild(note(x.ok ? `Fait : ${t.anonymises} fichier(s) anonymisé(s), ${t.renommes} renommé(s), ${t.deplaces_au_coffre} gardé(s) au coffre seulement${t.convertis?.length ? `, ${t.convertis.length} ancien(s) format(s) converti(s) (.doc → .docx…)` : ''}${t.images.length ? `, ${t.images.length} image(s) à vérifier` : ''}${t.documents_images?.length ? `, ${t.documents_images.length} document(s) avec images à vérifier (plus bas)` : ''}.` : (x.error || 'Échec.')));
         render();
       }));
     }));
@@ -538,6 +538,34 @@ async function renderConfidential() {
       showToast(r.ok ? `Image masquée : ${r.path}` : (r.error || 'Échec.'), r.ok ? {} : { kind: 'error' });
       render();
     }, 'find-nav')]));
+  }
+
+  // Word / Excel / PowerPoint of an anonymised folder whose pictures are not checked yet
+  body.appendChild(el('div', 'usage-section-title', 'Documents avec images'));
+  if (!(v.docs || []).length) body.appendChild(note('Aucun : les Word, Excel et PowerPoint d\'un dossier anonymisé qui contiennent des images apparaissent ici, le temps de les vérifier (logos, captures, photos de site).'));
+  for (const d of v.docs || []) {
+    const fix = async (how) => {
+      const r = await api('/api/vault/office-media', { path: d.path });
+      if (!r.ok) { showToast(r.error || 'Échec.', { kind: 'error' }); return; }
+      const media = {};
+      for (const [i, img] of r.images.entries()) {
+        const src = `data:${img.mime};base64,${img.b64}`;
+        if (how === 'blank') { media[img.path] = await blackOut(src, img.mime); continue; }
+        const out = await redactAttachment({ name: `${d.path.split('/').pop()} — image ${i + 1}/${r.images.length}`, mediaType: img.mime, dataUrl: src }, { single: true, format: img.mime, confirm: i + 1 < r.images.length ? 'Image suivante' : 'Terminer' });
+        if (!out) return;   // cancelled: nothing saved, the document stays in the list
+        media[img.path] = out[0].dataUrl;
+      }
+      const x = await api('/api/vault/office-save', { path: d.path, media, blank: true });
+      showToast(x.ok ? `Images masquées : ${d.path.split('/').pop()}` : (x.error || 'Échec.'), x.ok ? {} : { kind: 'error' });
+      render();
+    };
+    body.appendChild(row(d.path.split('/').pop(), `${d.path} · ${d.images} image(s)${d.other ? ` + ${d.other} à remplacer par une image vide (EMF, WMF…)` : ''}`, [
+      button('Vérifier…', 'Masquer image par image dans l\'éditeur', () => fix('check'), 'find-nav'),
+      button('Tout masquer', 'Noircir toutes les images du document', async () => {
+        if (await confirmAction({ title: 'Masquer toutes les images ?', body: `Toutes les images de ${d.path.split('/').pop()} seront noircies (l'original est au coffre).`, confirm: 'Tout masquer', cancel: 'Annuler' })) fix('blank');
+      }, 'find-nav'),
+      button('Rien de sensible', 'Les images ne montrent rien de confidentiel : retirer de la liste', async () => { await api('/api/vault/office-save', { path: d.path }); render(); }, 'find-nav'),
+    ]));
   }
 
   body.appendChild(el('div', 'usage-section-title', 'Documents réels (Particulariser)'));

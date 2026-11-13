@@ -175,4 +175,20 @@ describe('confidential shield in the browser', { skip }, () => {
     assert.deepEqual(px, [0, 0, 0]);
     assert.deepEqual(errors, []);
   });
+
+  test('Hub: an anonymised folder\'s document with pictures is listed, then checked', async () => {
+    const API = '/api/' + 'vault';
+    const { mkdirSync } = await import('node:fs');
+    const ws = path.join(h.dataDir, 'workspace', 'Dossier');
+    mkdirSync(ws, { recursive: true });
+    const png = await page.evaluate(() => { const c = document.createElement('canvas'); c.width = 20; c.height = 10; return c.toDataURL('image/png').split(',')[1]; });
+    writeFileSync(path.join(ws, 'deck Globex Industries.pptx'), makeZip([{ name: 'ppt/slides/slide1.xml', data: '<p:sld/>' }, { name: 'ppt/media/image1.png', data: Buffer.from(png, 'base64') }]));
+    const r = await post(API + '/anonymize', { rel: 'Dossier' });
+    assert.deepEqual(r.report.documents_images, ['Dossier/deck Client-A.pptx']);
+    await page.evaluate(() => import('./js/hub.js').then((m) => m.openHub('confidential')));
+    await page.waitForFunction(() => /documents avec images/i.test(document.getElementById('hub-panel').innerText) && /deck/.test(document.getElementById('hub-panel').innerText), { timeout: 8000 });
+    await page.evaluate(() => [...document.querySelectorAll('#hub-panel button')].find((b) => /Rien de sensible/.test(b.textContent)).click());
+    await page.waitForFunction(() => ![...document.querySelectorAll('#hub-panel button')].some((b) => /Rien de sensible/.test(b.textContent)), { timeout: 8000 });
+    assert.deepEqual(errors, []);
+  });
 });
