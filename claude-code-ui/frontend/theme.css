@@ -480,7 +480,8 @@ kbd {
 .hub-cand { font-size: 13px; color: var(--text); }
 .conf-btn.locked { color: var(--warning, #c58a00); }
 .conf-dialog .confirm-body { margin-bottom: 8px; }
-.conf-dialog input[type=password] { width: 100%; margin: 4px 0 8px; }
+.conf-dialog .pass-field { width: 100%; margin: 4px 0 8px; }
+.pass-field { -webkit-text-security: disc; text-security: disc; font-family: inherit; letter-spacing: .08em; }
 .conf-rows { display: flex; flex-direction: column; gap: 6px; max-height: 46vh; overflow: auto; margin: 4px 0 10px; }
 .conf-row { display: flex; align-items: center; gap: 8px; font-size: 13.5px; }
 .conf-row b { flex: 1; min-width: 0; overflow-wrap: anywhere; }

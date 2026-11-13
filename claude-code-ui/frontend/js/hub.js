@@ -16,6 +16,7 @@ import { wsBase, modelSelect } from './dom.js';
 import { registerPanel } from './panels.js';
 import { confirmAction } from './confirm.js';
 import { redactAttachment } from './redact.js';
+import { secretField } from './confidential.js';
 import { showToast } from './toast.js';
 import { listAgentsCache } from './toolbox.js';
 
@@ -411,10 +412,10 @@ async function renderConfidential() {
 
   // chiffrement
   body.appendChild(el('div', 'usage-section-title', 'Chiffrement du coffre'));
-  const pass = (ph) => { const i = input('', ph); i.type = 'password'; i.autocomplete = 'new-password'; return i; };
+  const pass = (ph) => secretField(input('', ph));
   if (v.locked) {
     body.appendChild(note('Coffre chiffré et verrouillé (après un redémarrage de l\'app). Le bouclier n\'enverra rien tant qu\'il n\'est pas déverrouillé.'));
-    const p1 = pass('Phrase de passe'); p1.autocomplete = 'current-password';
+    const p1 = pass('Phrase de passe');
     body.append(p1, button('Déverrouiller', null, async () => {
       const r = await api('/api/vault/unlock', { pass: p1.value });
       if (!r.ok) { showToast(r.error || 'Échec.', { kind: 'error' }); return; }
@@ -436,7 +437,6 @@ async function renderConfidential() {
   } else {
     body.appendChild(note('Coffre chiffré (AES-256), déverrouillé jusqu\'au prochain redémarrage de l\'app.'));
     const o = pass('Phrase actuelle'), n1 = pass('Nouvelle phrase'), n2 = pass('Nouvelle phrase, 2e fois');
-    o.autocomplete = 'current-password';
     const bar0 = el('div', 'hub-bar');
     bar0.append(button('Verrouiller maintenant', 'Le coffre redevient illisible jusqu\'à la prochaine saisie de la phrase', async () => { await api('/api/vault/lock', {}); render(); }),
       button('Changer la phrase…', null, () => { chg.classList.toggle('hidden'); }));

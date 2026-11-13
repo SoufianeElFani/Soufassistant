@@ -1,3 +1,7 @@
+## 1.5.2
+- **The vault passphrase can be typed on an iPhone.** In the Home Assistant app, the passphrase fields opened iOS's password AutoFill bar but never the keyboard. They are now plain fields masked on screen (•••), which iOS leaves alone.
+- **Opening the Hub from the phone menu closes the menu**, instead of leaving it open behind the Hub.
+
 ## 1.5.1
 - **On a phone, a field in a panel stays above the keyboard.** The vault passphrase in Hub › Confidentiel (and every other field low in a panel or a dialog) used to stay hidden under the on-screen keyboard: it now scrolls back into view when you tap it and when the keyboard opens.
 

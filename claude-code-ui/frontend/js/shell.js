@@ -186,11 +186,13 @@ backdrop.onclick = closeDrawer;
 topNew.onclick = (e) => { e.stopPropagation(); $('new-session-btn').click(); };
 title.onclick = (e) => { e.stopPropagation(); openModePicker(title); };
 // Anything chosen in the drawer closes it (the panel it opens shows on its own).
+// Capture phase: buttons that stop propagation (the Hub's, for its outside-click
+// rule) left the drawer open over the panel they had just opened.
 header.addEventListener('click', (e) => {
   if (!document.body.classList.contains('drawer-open')) return;
   const b = e.target.closest('button, select');
   if (b && b.tagName === 'BUTTON' && b !== collapse) setTimeout(closeDrawer, 0);
-});
+}, true);
 // Swipe the drawer back to the left.
 let touchX = null;
 header.addEventListener('touchstart', (e) => { touchX = e.touches[0].clientX; }, { passive: true });

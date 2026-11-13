@@ -100,6 +100,20 @@ render();
 
 export const confidentialFields = () => (isConfidential() ? { confidential: true } : {});
 
+/**
+ * A passphrase field iOS leaves alone. In the Home Assistant app's WebView a
+ * type=password field opened the password AutoFill bar but never the keyboard,
+ * so the vault passphrase could not be typed on an iPhone: plain text, masked by
+ * CSS (-webkit-text-security), no autofill hints.
+ */
+export function secretField(i) {
+  i.type = 'text';
+  i.classList.add('pass-field');
+  i.autocomplete = 'off';
+  for (const [k, v] of [['autocapitalize', 'off'], ['autocorrect', 'off'], ['spellcheck', 'false'], ['data-1p-ignore', ''], ['data-lpignore', 'true']]) i.setAttribute(k, v);
+  return i;
+}
+
 export function applyVaultStatus(m) { status = { encrypted: !!m.encrypted, locked: !!m.locked }; render(); }
 
 const readFileAsDataURL = (file) => new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = () => rej(r.error); r.readAsDataURL(file); });
@@ -138,7 +152,7 @@ function buttons(card, list) {
 export function askUnlock() {
   return dialog((card, done) => {
     head(card, 'Coffre verrouillé', 'Le coffre du mode Confidentiel est chiffré. Saisis ta phrase de passe pour pseudonymiser ce message. Elle n\'est jamais enregistrée ; le coffre se reverrouille au redémarrage de l\'app.');
-    const inp = h('input', 'scheduled-form-input'); inp.type = 'password'; inp.autocomplete = 'current-password'; inp.id = 'conf-pass';
+    const inp = secretField(h('input', 'scheduled-form-input')); inp.id = 'conf-pass';
     const err = h('div', 'conf-err');
     card.append(inp, err);
     const go = async () => {

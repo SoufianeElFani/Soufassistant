@@ -31,10 +31,20 @@ describe('a panel field and the phone keyboard', { skip }, () => {
   });
   after(async () => { await browser?.close(); await h?.stop(); });
 
+  test('opening the Hub from the phone drawer closes the drawer', async () => {
+    await page.click('#menu-btn');
+    await page.waitForFunction(() => document.body.classList.contains('drawer-open'), { timeout: 3000 });
+    await page.click('#hub-btn');
+    await page.waitForFunction(() => !document.body.classList.contains('drawer-open'), { timeout: 3000 });
+    assert.equal(await page.$eval('#hub-panel', (p) => p.classList.contains('hidden')), false, 'the Hub is open');
+  });
+
   test('the vault passphrase stays above the keyboard and takes what is typed', async () => {
     await page.evaluate(() => import('./js/hub.js').then((m) => m.openHub('confidential')));
-    await page.waitForSelector('#hub-panel input[type=password]', { timeout: 5000 });
-    const field = await page.$('#hub-panel input[type=password]');
+    await page.waitForSelector('#hub-panel .pass-field', { timeout: 5000 });
+    const field = await page.$('#hub-panel .pass-field');
+    // not a password field: iOS's AutoFill would take it and show no keyboard
+    assert.deepEqual(await field.evaluate((i) => [i.type, i.autocomplete, getComputedStyle(i).webkitTextSecurity]), ['text', 'off', 'disc']);
     const bb = await field.boundingBox();
     await page.touchscreen.tap(bb.x + bb.width / 2, bb.y + bb.height / 2);
     await page.keyboard.type('abcd');
@@ -44,7 +54,7 @@ describe('a panel field and the phone keyboard', { skip }, () => {
       return r.top >= 0 && r.bottom <= innerHeight - 8;
     }, { timeout: 3000 });
     await page.keyboard.type('efgh');
-    assert.equal(await page.$eval('#hub-panel input[type=password]', (i) => i.value), 'abcdefgh');
+    assert.equal(await page.$eval('#hub-panel .pass-field', (i) => i.value), 'abcdefgh');
     assert.equal(await page.$eval('#hub-panel', (p) => p.classList.contains('hidden')), false, 'the Hub stays open');
     assert.deepEqual(errors, []);
   });
