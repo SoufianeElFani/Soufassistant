@@ -43,6 +43,8 @@ async function getBrowser() {
       executablePath: CHROME_PATH, headless: true, userDataDir: BROWSER_PROFILE_DIR,
       args: ['--no-sandbox', '--disable-dev-shm-usage', '--disable-gpu', '--lang=fr-BE,fr,en', '--window-size=1280,860'],
       defaultViewport: { width: 1280, height: 860 },
+      // a cold Chromium start can pass puppeteer's default 30 s on the Green (and on CI runners)
+      timeout: 90000,
     });
     browser.on('disconnected', () => { browser = null; pages.clear(); });
     log('INFO', 'browser: Chromium started');
