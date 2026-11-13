@@ -81,7 +81,7 @@ inputForm.onsubmit = async (e) => {
     const mt = (dataUrl.match(/^data:([^;]+);/) || [])[1] || a.mediaType || 'application/octet-stream';
     let name = a.name;
     if (a.isImage && /jpeg/.test(mt) && !/\.jpe?g$/i.test(name)) name = name.replace(/\.[^.]+$/, '') + '.jpg';
-    payload.push({ name, mediaType: mt, data: dataUrl });
+    payload.push({ name, mediaType: mt, data: dataUrl, ...(check.extra?.get(a) || {}) });
     bubbleAtts.push({ name, isImage: a.isImage, dataUrl });
   }
   if (readFailed) appendErrorBubble(`${readFailed} attachment${readFailed > 1 ? 's' : ''} could not be read and ${readFailed > 1 ? 'were' : 'was'} skipped.`);

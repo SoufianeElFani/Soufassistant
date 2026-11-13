@@ -9,6 +9,7 @@ import { existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import puppeteer from 'puppeteer-core';
 import { startServer } from '../helpers/server-harness.mjs';
+import { makeZip, readZip } from '../../server/lib/zip.js';
 
 const CANDIDATES = [
   process.env.CHROME_PATH,
@@ -24,7 +25,8 @@ describe('confidential shield in the browser', { skip }, () => {
   const post = (u, b) => fetch(`${h.baseUrl}${u}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(b) }).then((r) => r.json());
   before(async () => {
     h = await startServer({ scenario: { runs: [{ steps: [{ text: 'Ok 1' }] }, { steps: [{ text: 'Ok 2' }] }, { steps: [{ text: 'Ok 3' }] },
-      { steps: [{ tool: { name: 'AskUserQuestion', input: { questions: [{ header: 'Client-A', question: 'On relance Client-A ?', options: [{ label: 'Oui, Client-A', description: 'Mail à Client-A' }, { label: 'Non' }] }] }, id: 'qa' } }] }] } });
+      { steps: [{ tool: { name: 'AskUserQuestion', input: { questions: [{ header: 'Client-A', question: 'On relance Client-A ?', options: [{ label: 'Oui, Client-A', description: 'Mail à Client-A' }, { label: 'Non' }] }] }, id: 'qa' } }] },
+      { steps: [{ text: 'Ok 5' }] }, { steps: [{ text: 'Ok 6' }] }] } });
     browser = await puppeteer.launch({ executablePath, args: ['--no-sandbox', '--disable-dev-shm-usage'] });
     page = await browser.newPage();
     page.on('pageerror', (e) => errors.push(String(e)));
@@ -129,5 +131,48 @@ describe('confidential shield in the browser', { skip }, () => {
     const d = await h.waitForRecord((r) => r.kind === 'tool_decision' && r.id === 'qa', { timeout: 8000 });
     assert.match(d.outcome.message, /Oui, Client-A/);
     assert.doesNotMatch(d.outcome.message, /Globex/);
+  });
+
+  // a PowerPoint with one red picture; returns the colour of its centre once sent
+  async function sendDeck(text, choose) {
+    await page.waitForFunction(() => !document.querySelector('#send-btn.stop'), { timeout: 8000 });
+    const png = await page.evaluate(() => {
+      const c = document.createElement('canvas'); c.width = 60; c.height = 30;
+      const g = c.getContext('2d'); g.fillStyle = '#f00'; g.fillRect(0, 0, 60, 30);
+      return c.toDataURL('image/png').split(',')[1];
+    });
+    const f = path.join(h.dataDir, 'deck.pptx');
+    writeFileSync(f, makeZip([{ name: 'ppt/slides/slide1.xml', data: '<p:sld><a:t>Offre Globex Industries</a:t></p:sld>' }, { name: 'ppt/media/image1.png', data: Buffer.from(png, 'base64') }]));
+    await (await page.$('#attach-input')).uploadFile(f);
+    await send(text);
+    await page.waitForFunction(() => [...document.querySelectorAll('.conf-dialog .confirm-body')].some((p) => /image/.test(p.textContent)), { timeout: 10000 });
+    await choose();
+    const q = await h.waitForRecord((r) => r.kind === 'query' && r.prompt?.includes(text), { timeout: 15000 });
+    const sent = q.prompt.match(/- (\S+\.pptx)/)[1];
+    const files = Object.fromEntries(readZip(readFileSync(sent)).map((e) => [e.name, e.data]));
+    assert.doesNotMatch(files['ppt/slides/slide1.xml'].toString(), /Globex/);
+    return page.evaluate(async (b64) => {
+      const img = new Image(); img.src = `data:image/png;base64,${b64}`; await img.decode();
+      const c = document.createElement('canvas'); c.width = img.width; c.height = img.height;
+      const g = c.getContext('2d'); g.drawImage(img, 0, 0);
+      return [...g.getImageData(30, 15, 1, 1).data].slice(0, 3);
+    }, files['ppt/media/image1.png'].toString('base64'));
+  }
+  const clickText = (sel, re) => page.evaluate((s, r) => [...document.querySelectorAll(s)].find((b) => new RegExp(r).test(b.textContent)).click(), sel, re);
+
+  test('an Office attachment\'s pictures: « Tout masquer » blacks them out', async () => {
+    const px = await sendDeck('voici le deck', () => clickText('.conf-dialog .perm-buttons button', 'Tout masquer'));
+    assert.deepEqual(px, [0, 0, 0]);
+  });
+
+  test('an Office attachment\'s pictures: checked one by one in the editor', async () => {
+    const px = await sendDeck('voici le deck encore', async () => {
+      await clickText('.conf-dialog .perm-buttons button', 'une à une');
+      await page.waitForFunction(() => /zone/.test(document.querySelector('.redact-info')?.textContent || ''), { timeout: 20000 });
+      await clickText('.redact-bar button', 'Image entière');
+      await clickText('.redact-bar button', 'Terminer');
+    });
+    assert.deepEqual(px, [0, 0, 0]);
+    assert.deepEqual(errors, []);
   });
 });

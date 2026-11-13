@@ -21,7 +21,7 @@ import { S } from './state.js';
 import { wsBase } from './dom.js';
 import { icon } from './icons.js';
 import { showToast } from './toast.js';
-import { redactAttachment } from './redact.js';
+import { redactAttachment, blackOut } from './redact.js';
 
 let map = {};          // alias → vrai nom
 let re = null;
@@ -173,10 +173,17 @@ const KINDS = [['client', 'Client'], ['personne', 'Personne'], ['lieu', 'Lieu'],
  */
 export async function preSendCheck(text, atts = []) {
   const replaced = new Map();
-  if (!isConfidential()) return { replaced };
+  const extra = new Map();     // attachment → fields sent with it (an Office file's repainted pictures)
+  if (!isConfidential()) return { replaced, extra };
   if (status.locked && !(await askUnlock())) return false;
   if (text && !(await namesCheck(text))) return false;
   for (const a of atts) {
+    if (OFFICE_RE.test(a.name)) {
+      const f = await officePictures(a);
+      if (f === null) return false;
+      if (f) extra.set(a, f);
+      continue;
+    }
     const pdf = /pdf/i.test(a.mediaType) || /\.pdf$/i.test(a.name);
     if (!a.isImage && !pdf) continue;
     if (pdf && !(await askPdfAsImage(a.name))) continue;      // as pseudonymised text, server-side
@@ -186,7 +193,43 @@ export async function preSendCheck(text, atts = []) {
     if (!out) return false;
     replaced.set(a, out);
   }
-  return { replaced };
+  return { replaced, extra };
+}
+
+const OFFICE_RE = /\.(docx|pptx|xlsx)$/i;
+/**
+ * The pictures inside a Word / PowerPoint / Excel file: the text is pseudonymised
+ * by the server, but a logo, a screenshot or a site photo would leave as is.
+ * → null (cancelled), false (none, or sent as they are), or the fields to send:
+ *   { redactedMedia: { 'word/media/image1.png': dataUrl… }, blankMedia: true }
+ */
+async function officePictures(a) {
+  const dataUrl = await readFileAsDataURL(a.file).catch(() => null);
+  if (!dataUrl) return null;
+  const r = await post('/api/vault/office-media', { name: a.name, data: dataUrl }).catch(() => null);
+  if (r?.locked) { if (!(await askUnlock())) return null; return officePictures(a); }
+  if (!r?.ok || (!r.images.length && !r.other.length)) return false;
+  const n = r.images.length, o = r.other.length;
+  const how = await dialog((card, done) => {
+    head(card, `Images dans ${a.name}`, `Ce document contient ${n + o} image(s)${o ? ` (dont ${o} dans un format que je ne peux que remplacer par une image vide : EMF, WMF, SVG…)` : ''}. Le texte est pseudonymisé, mais les images partiraient telles quelles : logos, captures, photos de site.`);
+    buttons(card, [
+      ['Annuler', 'btn-deny', () => done(null)],
+      ['Les laisser', 'btn-deny', () => done('keep')],
+      ['Tout masquer', 'btn-deny', () => done('blank')],
+      ...(n ? [['Les vérifier une à une', 'btn-allow', () => done('check')]] : []),
+    ]);
+  });
+  if (!how) return null;
+  if (how === 'keep') return false;
+  const media = {};
+  for (const [i, img] of r.images.entries()) {
+    const src = `data:${img.mime};base64,${img.b64}`;
+    if (how === 'blank') { media[img.path] = await blackOut(src, img.mime); continue; }
+    const out = await redactAttachment({ name: `${a.name} — image ${i + 1}/${n}`, mediaType: img.mime, dataUrl: src }, { single: true, format: img.mime, confirm: i + 1 < n ? 'Image suivante' : 'Terminer' });
+    if (!out) return null;
+    media[img.path] = out[0].dataUrl;
+  }
+  return { redactedMedia: media, blankMedia: true };
 }
 
 /** Un PDF joint : document (texte pseudonymisé) ou plan / P&ID (image masquée) ? → true = image */

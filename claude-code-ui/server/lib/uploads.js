@@ -33,6 +33,9 @@ export function saveAttachments(attachments) {
         name: a.name || fname, mediaType: a.mediaType || '',
         isImage: /^image\//.test(a.mediaType || ''),
         redacted: !!a.redacted,   // painted in the confidential redaction editor
+        // an Office file's pictures repainted in that editor (media path -> data URL), or all to be blanked
+        redactedMedia: a.redactedMedia && typeof a.redactedMedia === 'object' ? a.redactedMedia : undefined,
+        blankMedia: !!a.blankMedia,
       });
       log('INFO', `attachment saved: ${fname} (${a.mediaType || '?'}, ${Math.round(buf.length / 1024)} KB)`);
     } catch (e) { log('WARN', `attachment save failed: ${e.message}`); }

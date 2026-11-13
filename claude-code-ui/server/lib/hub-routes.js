@@ -138,6 +138,12 @@ export function registerVaultRoutes(app) {
     broadcast({ type: 'workspace', entries: listWorkspaceEntries() });
     return { ok: true, path: out };
   }));
+  // the pictures inside an Office attachment, for the redaction editor (nothing is kept or sent)
+  app.post('/api/vault/office-media', express.json({ limit: '80mb' }), wrap((req) => {
+    if (vault.isLocked()) return { ok: true, locked: true };
+    const buf = Buffer.from(String(req.body?.data || '').replace(/^data:[^;]+;base64,/, ''), 'base64');
+    try { return { ok: true, ...vault.officeMedia(buf) }; } catch { return { ok: false, error: 'Fichier Office illisible.' }; }
+  }));
   app.post('/api/vault/ignore', json, wrap((req) => ((Array.isArray(req.body?.list) ? vault.setIgnored(req.body.list) : vault.addIgnored([].concat(req.body?.words || []))), { ok: true })));
   app.post('/api/vault/entity', json, wrap((req) => vaultChanged({ ok: !!vault.addEntity(req.body || {}) })));
   app.post('/api/vault/entity/delete', json, wrap((req) => vaultChanged({ ok: vault.removeEntity(req.body?.alias) })));

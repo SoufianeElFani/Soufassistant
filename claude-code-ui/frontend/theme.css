@@ -482,6 +482,7 @@ kbd {
 .conf-btn.locked { color: var(--warning, #c58a00); }
 .conf-dialog .confirm-body { margin-bottom: 8px; }
 .conf-dialog .pass-field { width: 100%; margin: 4px 0 8px; }
+.conf-dialog .perm-buttons { flex-wrap: wrap; justify-content: flex-end; }
 .pass-field { -webkit-text-security: disc; text-security: disc; font-family: inherit; letter-spacing: .08em; }
 .conf-rows { display: flex; flex-direction: column; gap: 6px; max-height: 46vh; overflow: auto; margin: 4px 0 10px; }
 .conf-row { display: flex; align-items: center; gap: 8px; font-size: 13.5px; }

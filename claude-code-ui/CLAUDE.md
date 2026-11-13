@@ -937,6 +937,23 @@ Sharing (0.9.0): `POST /api/skills/import` (raw .zip or SKILL.md;
 `GET /api/skills/shared` + `POST /api/skills/import-shared` (install a zip
 from that folder — so a Drive folder becomes a skill library).
 
+**1.5.5 — Office files, the gaps (`vault.js` transformOffice, `confidential.js` officePictures).**
+`transformOffice(buf, kind, fn, { masking, media, blankMedia, notes })`: with
+`masking`, authors (`w:author`/`author`, persons' `displayName`, commentAuthors
+`name`) and core/app creators are learnt as people first; external
+`Relationship` targets → `maskUrl` (mailto masked, foreign host →
+`lien-masque.invalid`); docx parts also get `w:delText` / `w:instrText`
+(HYPERLINK fields) and a text-node fallback; attributes: sheet `name` (≤ 31),
+table `name`/`displayName` (identifier-safe) + `tableColumn name`, pivot
+`v|n|name|caption`; embeddings: OOXML recursed, others emptied (+ note); media:
+`media` map (repainted in the browser) replaces, `blankMedia` blanks non-paintable
+formats (`BLANK` gif/svg/emf/wmf), JPEG/PNG metadata stripped (`stripPng`).
+`officeMedia()` and its `office-media` route (hub-routes.js) list the pictures;
+`officePictures()` in the composer's pre-send asks check / blank / keep, the
+attachment carries `redactedMedia` + `blankMedia` (uploads.js) into
+`maskAttachments`. `vaultGuard` checks the recursive tool and the parent path
+in the same command segment.
+
 **1.5.0 — redaction of pictures and plans (`server/lib/redact.js`, `frontend/js/redact.js`).**
 `POST /api/vault/redact` → `redact.analyze()`: an image is OCR'd as is
 (tesseract TSV, every word kept even at low confidence, `parseTsv`); a PDF is

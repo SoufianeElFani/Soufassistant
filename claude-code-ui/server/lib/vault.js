@@ -387,45 +387,184 @@ function run(cmd, args, timeout = 240000) {
   return new Promise((res, rej) => execFile(cmd, args, { timeout, maxBuffer: 32 * 1024 * 1024 }, (e, out) => (e ? rej(e) : res(String(out)))));
 }
 
-function transformOffice(buf, kind, fn) {
+// ── Office (docx / pptx / xlsx) ─────────────────────────────────────────────
+// Images in a PNG: drop its text / EXIF / time chunks (the pixels are kept).
+export function stripPng(buf) {
+  const SIG = '89504e470d0a1a0a';
+  if (buf.length < 8 || buf.subarray(0, 8).toString('hex') !== SIG) return buf;
+  const out = [buf.subarray(0, 8)];
+  let i = 8;
+  while (i + 12 <= buf.length) {
+    const len = buf.readUInt32BE(i);
+    const type = buf.subarray(i + 4, i + 8).toString('latin1');
+    const end = i + 12 + len;
+    if (end > buf.length) return buf;   // unexpected structure: leave it alone
+    if (!['tEXt', 'zTXt', 'iTXt', 'eXIf', 'tIME'].includes(type)) out.push(buf.subarray(i, end));
+    i = end;
+    if (type === 'IEND') break;
+  }
+  return Buffer.concat(out);
+}
+
+// Placeholders for pictures the browser cannot repaint (vector / legacy formats): blank, same format.
+const BLANK = {
+  gif: () => Buffer.from('R0lGODlhAQABAIAAAP///wAAACH5BAAAAAAALAAAAAABAAEAAAICRAEAOw==', 'base64'),
+  svg: () => Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><rect width="10" height="10" fill="#000"/></svg>'),
+  emf: () => {   // EMR_HEADER (88 bytes) + EMR_EOF (20 bytes)
+    const b = Buffer.alloc(108);
+    b.writeUInt32LE(1, 0); b.writeUInt32LE(88, 4);
+    b.writeInt32LE(1, 16); b.writeInt32LE(1, 20); b.writeInt32LE(26, 32); b.writeInt32LE(26, 36);   // bounds, frame (0.01 mm)
+    b.write(' EMF', 40, 'latin1'); b.writeUInt32LE(0x10000, 44); b.writeUInt32LE(108, 48); b.writeUInt32LE(2, 52);
+    b.writeInt32LE(1920, 72); b.writeInt32LE(1080, 76); b.writeInt32LE(508, 80); b.writeInt32LE(286, 84);
+    b.writeUInt32LE(14, 88); b.writeUInt32LE(20, 92); b.writeUInt32LE(0, 96); b.writeUInt32LE(16, 100); b.writeUInt32LE(20, 104);
+    return b;
+  },
+  wmf: () => {   // META_HEADER (18 bytes) + META_EOF (6 bytes)
+    const b = Buffer.alloc(24);
+    b.writeUInt16LE(1, 0); b.writeUInt16LE(9, 2); b.writeUInt16LE(0x300, 4); b.writeUInt32LE(12, 6);
+    b.writeUInt16LE(0, 10); b.writeUInt32LE(3, 12); b.writeUInt16LE(0, 16);
+    b.writeUInt32LE(3, 18); b.writeUInt16LE(0, 22);
+    return b;
+  },
+};
+export const MEDIA_RE = /^(?:word|ppt|xl)\/media\/[^/]+\.(png|jpe?g|gif|svg|emf|wmf|bmp|tiff?|wdp)$/i;
+const PAINTABLE = /\.(png|jpe?g)$/i;
+
+/** The pictures inside an Office file, for the redaction editor. → { images: [{ path, mime, b64 }], other: [path] } */
+export function officeMedia(buf) {
+  const images = [], other = [];
+  for (const e of readZip(buf)) {
+    if (!MEDIA_RE.test(e.name)) continue;
+    if (PAINTABLE.test(e.name)) images.push({ path: e.name, mime: /png$/i.test(e.name) ? 'image/png' : 'image/jpeg', b64: e.data.toString('base64') });
+    else other.push(e.name);
+  }
+  return { images, other };
+}
+
+const SAFE_HOST = /(^|\.)(openxmlformats\.org|microsoft\.com|office\.com|w3\.org|purl\.org|schemas\.[\w.-]+|exemple\.invalid|lien-masque\.invalid)$/i;
+/** An external link: the address of a client's site or mailbox is an identity too. */
+function maskUrl(u, fn) {
+  const v = String(u);
+  if (/^mailto:/i.test(v)) return 'mailto:' + fn(v.slice(7).split('?')[0]);
+  const m = v.match(/^(\w[\w+.-]*:\/\/)([^/?#:]+)/);
+  if (!m) return fn(v);
+  const host = m[2].toLowerCase();
+  const exempt = load().exempt.some((x) => host.includes(norm(x).replace(/\s+/g, '')));
+  return SAFE_HOST.test(host) || exempt ? fn(v) : `${m[1]}lien-masque.invalid/`;
+}
+/** The authors of comments and tracked changes, the creator of the file: people, learnt as such. */
+function learnPerson(v) {
+  const n = String(v || '').trim();
+  if (n.length >= 2 && !/^[\d\s.@-]+$/.test(n) && !load().exempt.some((x) => norm(x) === norm(n))) addEntity({ real: n, kind: 'personne', auto: true });
+}
+
+const unx = (v) => v.replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
+const enx = (v) => v.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+const enxT = (v) => v.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');   // text nodes: quotes stay as written
+const attr = (x, names, f) => x.replace(new RegExp(`(\\s(?:${names})=")([^"]*)"`, 'g'), (m, pre, v) => `${pre}${enx(f(unx(v)))}"`);
+
+/**
+ * `fn` over every piece of text of an Office file. With `masking`: authors and
+ * creators are learnt first, external links are masked, embedded Office files
+ * are treated too (other embedded objects are emptied), pictures the user
+ * repainted (`media`: path → Buffer) replace the originals, and with
+ * `blankMedia` the pictures that cannot be repainted are blanked. `notes`
+ * collects what the user should know.
+ */
+function transformOffice(buf, kind, fn, opts = {}) {
+  const { masking = false, media = null, blankMedia = false, notes = [] } = opts;
   const entries = readZip(buf);
   const files = new Map(entries.map((e) => [e.name, e.data]));
   const flavor = kind === 'pptx' ? 'pptx' : 'docx';
-  for (const name of [...files.keys()]) {
+  const xmlNames = [...files.keys()].filter((n) => /\.(xml|rels)$/i.test(n));
+
+  if (masking) {
+    for (const name of xmlNames) {
+      const x = files.get(name).toString('utf8');
+      for (const m of x.matchAll(/\s(?:w:author|author)="([^"]+)"/g)) learnPerson(unx(m[1]));
+      // displayName is a person only in Excel's list of people (a table has one too: « Tableau1 »)
+      if (/persons\/person\.xml$/.test(name)) for (const m of x.matchAll(/\sdisplayName="([^"]+)"/g)) learnPerson(unx(m[1]));
+      if (/commentAuthors\.xml$/.test(name)) for (const m of x.matchAll(/\sname="([^"]+)"/g)) learnPerson(unx(m[1]));
+      // <dc:creator xmlns:dc="…">: the element may carry attributes
+      if (/docProps\/core\.xml$/.test(name)) for (const m of x.matchAll(/<(?:dc:creator|cp:lastModifiedBy)\b[^>]*>([^<]+)</g)) learnPerson(unx(m[1]));
+      if (/docProps\/app\.xml$/.test(name)) for (const m of x.matchAll(/<Manager\b[^>]*>([^<]+)</g)) learnPerson(unx(m[1]));
+    }
+  }
+
+  for (const name of xmlNames) {
     let x = files.get(name).toString('utf8');
     const isPart = kind === 'docx' ? /^word\/(document|header\d*|footer\d*|footnotes|endnotes|comments)\.xml$/.test(name)
       : kind === 'pptx' ? /^ppt\/(slides\/slide|notesSlides\/notesSlide)\d+\.xml$/.test(name) : false;
+    if (/(^|\/)_rels\/[^/]+\.rels$/.test(name)) {
+      // external targets only (hyperlinks, linked files): the rest are part paths
+      if (masking) x = x.replace(/<Relationship\b[^>]*>/g, (r) => (/TargetMode="External"/.test(r) ? r.replace(/\sTarget="([^"]*)"/, (m, t) => ` Target="${enx(maskUrl(unx(t), fn))}"`) : r));
+      files.set(name, Buffer.from(x));
+      continue;
+    }
+    if (/^\[Content_Types\]\.xml$|\/theme\/|\/styles\.xml$|\/fontTable\.xml$|\/settings\.xml$/.test(name)) continue;
     if (isPart) {
       const edits = partParagraphs(x, flavor).filter((p) => p.text.trim()).map((p) => ({ i: p.i, old: p.text, text: fn(p.text) })).filter((e) => e.text !== e.old);
       if (edits.length) x = setPartParagraphs(x, flavor, edits);
-      files.set(name, Buffer.from(x));
-    } else if (/\.xml$/i.test(name) && !/(^|\/)_rels\/|^\[Content_Types\]\.xml$|\/theme\/|\/styles\.xml$|\/fontTable\.xml$|\/settings\.xml$/.test(name)) {
-      // every other XML part (SmartArt, charts, masters, comments, docProps, sheets…): its text nodes
-      // texte des éléments, sans toucher aux balises
-      x = x.replace(/>([^<>]+)</g, (m, t) => `>${fn(t)}<`);
-      files.set(name, Buffer.from(x));
+      // tracked deletions and field codes are not paragraph text
+      x = x.replace(/(<w:(?:delText|instrText)\b[^>]*>)([^<]*)(<\/w:(?:delText|instrText)>)/g, (m, a, t, b) => {
+        let v = unx(t);
+        if (masking) v = v.replace(/HYPERLINK\s+"([^"]+)"/g, (h, u) => `HYPERLINK "${maskUrl(u, fn)}"`);
+        return a + enxT(fn(v)) + b;
+      });
+      // and any text left outside a paragraph (a malformed or hand-made part): masking twice is harmless
+      x = x.replace(/>([^<>]+)</g, (m, t) => `>${enxT(fn(unx(t)))}<`);
+    } else {
+      // every other XML part (SmartArt, charts, masters, comments, docProps, sheets, shared strings…): its text nodes
+      x = x.replace(/>([^<>]+)</g, (m, t) => `>${enxT(fn(unx(t)))}<`);
     }
+    // people and labels kept in attributes
+    x = attr(x, 'w:author|author|userId|caption', fn);
+    if (/persons\/person\.xml$/.test(name)) x = attr(x, 'displayName', fn);
+    if (/commentAuthors\.xml$/.test(name)) x = attr(x, 'name|initials', fn);
+    if (/^xl\/workbook\.xml$/.test(name)) x = x.replace(/<sheet\b[^>]*>/g, (t) => attr(t, 'name', (v) => fn(v).slice(0, 31)));
+    if (/^xl\/tables\/[^/]+\.xml$/.test(name)) {
+      // a column's name must stay equal to its (masked) header cell, or Excel "repairs" the file
+      x = x.replace(/<tableColumn\b[^>]*>/g, (t) => attr(t, 'name', fn));
+      x = x.replace(/<table\b[^>]*>/, (t) => attr(t, 'name|displayName', (v) => fn(v).replace(/[^\p{L}\p{N}_.]/gu, '_')));
+    }
+    if (/^xl\/(pivotCache|pivotTables)\//.test(name)) x = attr(x, 'v|n|name|caption', fn);
+    x = attr(x, 'descr|title', fn).replace(/(<(?:p|pic|wp|xdr|dgm):(?:cNvPr|docPr)\b[^>]*?\bname=")([^"]*)"/g, (m, pre, v) => `${pre}${enx(fn(unx(v)))}"`);
+    files.set(name, Buffer.from(x));
   }
-  for (const name of [...files.keys()]) if (/\/media\/[^/]+\.jpe?g$/i.test(name)) files.set(name, stripJpeg(files.get(name)));
-  // texte alternatif et titres d'objets (images, formes), dans toutes les parties
-  const unx = (v) => v.replace(/&quot;/g, '"').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
-  const enx = (v) => v.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+
   for (const name of [...files.keys()]) {
-    if (!/\.xml$/i.test(name) || /_rels\//.test(name)) continue;
-    const x = files.get(name).toString('utf8');
-    const y = x.replace(/\b(descr|title)="([^"]*)"/g, (m, a, v) => `${a}="${enx(fn(unx(v)))}"`)
-      .replace(/(<(?:p|pic|wp|xdr|dgm):(?:cNvPr|docPr)\b[^>]*?\bname=")([^"]*)"/g, (m, pre, v) => `${pre}${enx(fn(unx(v)))}"`);
-    if (y !== x) files.set(name, Buffer.from(y));
+    // embedded files: an Office one is treated like the outer file, anything else is emptied
+    if (masking && /^(?:word|ppt|xl)\/embeddings\//.test(name)) {
+      const k = (name.match(/\.(docx|pptx|xlsx|docm|pptm|xlsm)$/i) || [])[1];
+      if (k) {
+        try { files.set(name, transformOffice(files.get(name), OFFICE[k.slice(0, 3) + 'x'] || 'docx', fn, { ...opts, media: null })); }
+        catch { files.set(name, Buffer.alloc(0)); notes.push(`objet incorporé illisible, vidé : ${path.basename(name)}`); }
+      } else {
+        files.set(name, Buffer.alloc(0));
+        notes.push(`objet incorporé vidé (non pseudonymisable) : ${path.basename(name)}`);
+      }
+      continue;
+    }
+    if (!MEDIA_RE.test(name)) continue;
+    if (media?.has(name)) { files.set(name, media.get(name)); continue; }
+    const e = ext(name);
+    if (masking && blankMedia && !PAINTABLE.test(name)) {
+      const b = BLANK[e];   // tiff, bmp and wdp have none: reported
+      if (b) files.set(name, b()); else notes.push(`image non masquée (format ${e}) : ${path.basename(name)}`);
+      continue;
+    }
+    if (/^jpe?g$/.test(e)) files.set(name, stripJpeg(files.get(name)));
+    else if (e === 'png') files.set(name, stripPng(files.get(name)));
   }
   return makeZip(entries.filter((e) => files.has(e.name)).map((e) => ({ name: e.name, data: files.get(e.name) })), { deflate: true });
 }
 
 /** Écrire `dst` = `src` passé par `fn` (mask ou reveal). → { ok, how, dst } */
-export async function transformFile(src, dst, fn) {
+export async function transformFile(src, dst, fn, opts = {}) {
   const k = ext(src);
   mkdirSync(path.dirname(dst), { recursive: true });
   if (TEXT_EXT.has(k)) { writeFileSync(dst, fn(readFileSync(src, 'utf8'))); return { ok: true, how: 'texte', dst }; }
-  if (OFFICE[k]) { writeFileSync(dst, transformOffice(readFileSync(src), OFFICE[k], fn)); return { ok: true, how: k, dst }; }
+  if (OFFICE[k]) { writeFileSync(dst, transformOffice(readFileSync(src), OFFICE[k], fn, opts)); return { ok: true, how: k, dst, notes: opts.notes || [] }; }
   if (k === 'pdf') {
     const txt = await run('pdftotext', ['-layout', '-q', src, '-']).catch(() => '');
     const d2 = dst.replace(/\.pdf$/i, '.pdf.txt');
@@ -435,7 +574,7 @@ export async function transformFile(src, dst, fn) {
   return { ok: false, how: 'non pris en charge', dst };
 }
 
-export const maskFile = (src, dst) => transformFile(src, dst, (t) => mask(t));
+export const maskFile = (src, dst, opts = {}) => transformFile(src, dst, (t) => mask(t), { masking: true, notes: [], ...opts });
 export const revealFile = (src, dst) => transformFile(src, dst, reveal);
 
 /** Version réelle d'un livrable (dans le coffre). → chemin dans le coffre */
@@ -592,8 +731,14 @@ export function vaultGuard(input) {
   const raw = String(ti.path || ti.file_path || '');
   const target = raw ? (raw.replace(/\/+$/, '') || '/') : null;
   if ((tool === 'Grep' || tool === 'Glob') && target && PARENTS.includes(target)) return deny(`Recherche trop large (${target}) : elle traverserait le coffre du mode Confidentiel. Cible un dossier plus précis.`);
-  if (tool === 'Bash' && RECURSIVE.test(ti.command || '') && new RegExp(`(^|[\\s'"=])(${PARENTS.filter((p) => p !== '/').map(esc).join('|')})/?(\\s|$|['"])|(^|\\s)/(\\s|$)`).test(ti.command || '')) {
-    return deny('Commande récursive sur un dossier parent du coffre du mode Confidentiel : cible un dossier plus précis.');
+  // a recursive tool and a parent of the vault in the *same* command segment: « ls && echo a / b »
+  // or a sentence with « du » next to a lone slash is not a search through /
+  if (tool === 'Bash') {
+    const parent = new RegExp(`(^|[\\s'"=])(${PARENTS.filter((p) => p !== '/').map(esc).join('|')})/?(\\s|$|['"])|(^|\\s)/(\\s|$)`);
+    const segments = String(ti.command || '').split(/;|&&|\|\||\||\n|`|\$\(/);
+    if (segments.some((sg) => RECURSIVE.test(sg) && parent.test(sg))) {
+      return deny('Commande récursive sur un dossier parent du coffre du mode Confidentiel : cible un dossier plus précis.');
+    }
   }
   return { continue: true };
 }
@@ -667,7 +812,14 @@ export async function maskAttachments(saved) {
     if (a.isImage && a.redacted) { a.name = mask(a.name, { learn: false }); markSafe(a.path); continue; }   // masked by the user (redact.js), re-encoded PNG
     if (a.isImage) { notes.push(`image non masquée : ${a.name}`); continue; }
     if (TEXT_EXT.has(k) || OFFICE[k] || k === 'pdf') {
-      const r = await maskFile(a.path, a.path + '.masq' + path.extname(a.path));
+      // pictures inside an Office file, repainted in the redaction editor (redact.js) — or all blanked
+      const media = a.redactedMedia ? new Map(Object.entries(a.redactedMedia).map(([p, d]) => [p, Buffer.from(String(d).replace(/^data:[^;]+;base64,/, ''), 'base64')])) : null;
+      const r = await maskFile(a.path, a.path + '.masq' + path.extname(a.path), { media, blankMedia: !!a.blankMedia });
+      for (const n of r.notes || []) notes.push(`${a.name} — ${n}`);
+      if (OFFICE[k] && !a.redactedMedia && !a.blankMedia) {
+        const left = officeMedia(readFileSync(a.path)).images.length;
+        if (left) notes.push(`${a.name} — ${left} image(s) non masquée(s) dans le document`);
+      }
       if (r.ok) {
         rmSync(a.path, { force: true });
         const final = r.how === 'pdf→texte' ? a.path + '.txt' : a.path;

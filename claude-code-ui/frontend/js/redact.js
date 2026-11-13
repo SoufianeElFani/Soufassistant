@@ -26,7 +26,7 @@ async function analyze(att) {
 }
 
 /** The painted pixels of one page, cut into tiles when it is large. → [{ name, dataUrl }] */
-function exportPage(img, boxes, name, tile) {
+function exportPage(img, boxes, name, tile, mime = 'image/png') {
   const W = img.naturalWidth, H = img.naturalHeight;
   const paint = (cv, sx, sy, sw, sh, scale = 1) => {
     const g = cv.getContext('2d');
@@ -34,10 +34,10 @@ function exportPage(img, boxes, name, tile) {
     g.drawImage(img, sx, sy, sw, sh, 0, 0, cv.width, cv.height);
     g.fillStyle = '#000';
     for (const b of boxes) if (b.on) g.fillRect((b.x - sx) * scale, (b.y - sy) * scale, b.w * scale, b.h * scale);
-    return cv.toDataURL('image/png');
+    return cv.toDataURL(mime, 0.92);
   };
   const cv = (w, hh) => { const c = document.createElement('canvas'); c.width = Math.max(1, Math.round(w)); c.height = Math.max(1, Math.round(hh)); return c; };
-  if (Math.max(W, H) <= tile * 1.15) return [{ name: `${name}.png`, dataUrl: paint(cv(W, H), 0, 0, W, H) }];
+  if (Math.max(W, H) <= tile * 1.15) return [{ name: `${name}.${mime === 'image/jpeg' ? 'jpg' : 'png'}`, dataUrl: paint(cv(W, H), 0, 0, W, H) }];
   const out = [];
   const k = 1568 / Math.max(W, H);
   out.push({ name: `${name}_vue.png`, dataUrl: paint(cv(W * k, H * k), 0, 0, W, H, k) });
@@ -54,8 +54,10 @@ function exportPage(img, boxes, name, tile) {
 /**
  * Open the editor for one attachment ({ name, mediaType, dataUrl }).
  * → [{ name, mediaType: 'image/png', dataUrl }] to send instead, or null (cancelled).
+ * `single`: one full-resolution picture (no tiles), in `format` (a picture inside an
+ * Office file keeps its own format); `confirm`: the label of the button that ends it.
  */
-export async function redactAttachment(att, { single = false } = {}) {
+export async function redactAttachment(att, { single = false, format = 'image/png', confirm = null } = {}) {
   const wait = h('div', 'permission-overlay redact-overlay');
   wait.appendChild(h('div', 'redact-wait', 'Analyse locale de l\'image (texte, OCR)…'));
   document.body.appendChild(wait);
@@ -91,17 +93,23 @@ export async function redactAttachment(att, { single = false } = {}) {
       pages[cur].boxes.push({ x: Math.round(W * 0.62), y: Math.round(H * 0.72), w: Math.round(W * 0.38), h: Math.round(H * 0.28), on: true, why: 'cartouche' });
       draw();
     }, 'Masquer le coin inférieur droit (cartouche d\'un plan) — ajustable en traçant d\'autres zones');
+    btn('Image entière', 'btn-deny', () => {
+      const { img } = pages[cur];
+      pages[cur].boxes.push({ x: 0, y: 0, w: img.naturalWidth, h: img.naturalHeight, on: true, why: 'main' });
+      draw();
+    }, 'Masquer toute l\'image (un logo, une photo, une signature)');
     btn('Suggestions', 'btn-deny', () => { const s = pages[cur].boxes.filter((b) => b.auto && !b.sure); const on = !s.every((b) => b.on); for (const b of s) b.on = on; draw(); }, 'Masquer / démasquer toutes les suggestions de la page');
     btn('Annuler', 'btn-deny', () => done(null));
-    btn(single ? 'Enregistrer masqué' : 'Envoyer masqué', 'btn-allow', () => {
+    btn(confirm || (single ? 'Enregistrer masqué' : 'Envoyer masqué'), 'btn-allow', () => {
       const name = base(att.name);
       let tile = TILE;
       const count = (t) => pages.reduce((n, p) => { const W = p.img.naturalWidth, H = p.img.naturalHeight; return n + (Math.max(W, H) <= t * 1.15 ? 1 : 1 + Math.ceil(W / t) * Math.ceil(H / t)); }, 0);
       while (count(tile) > MAX_IMAGES && tile < 8000) tile += 400;
       if (single) tile = Infinity;      // one full-resolution picture (saved in the workspace, not sent)
       const out = [];
-      pages.forEach((p, i) => out.push(...exportPage(p.img, p.boxes, pages.length > 1 ? `${name}_p${i + 1}` : name, tile)));
-      done(out.map((o) => ({ ...o, mediaType: 'image/png' })));
+      const mime = single ? format : 'image/png';
+      pages.forEach((p, i) => out.push(...exportPage(p.img, p.boxes, pages.length > 1 ? `${name}_p${i + 1}` : name, tile, mime)));
+      done(out.map((o) => ({ ...o, mediaType: mime })));
     });
     card.append(top, stage, bar);
     document.body.appendChild(ov);
@@ -171,4 +179,14 @@ function alertBox(msg) {
   const ok = h('button', 'btn btn-allow', 'OK'); ok.type = 'button'; ok.onclick = () => ov.remove();
   bar.appendChild(ok); card.appendChild(bar); ov.appendChild(card);
   document.body.appendChild(ov);
+}
+
+/** A picture painted all black, same size and format (« masquer toutes les images » of an Office file). */
+export async function blackOut(dataUrl, mime = 'image/png') {
+  const img = await loadImage(dataUrl);
+  const c = document.createElement('canvas');
+  c.width = Math.max(1, img.naturalWidth); c.height = Math.max(1, img.naturalHeight);
+  const g = c.getContext('2d');
+  g.fillStyle = '#000'; g.fillRect(0, 0, c.width, c.height);
+  return c.toDataURL(mime, 0.92);
 }

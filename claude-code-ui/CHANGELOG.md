@@ -1,3 +1,15 @@
+## 1.5.5
+**Confidential mode: Word, Excel and PowerPoint, thoroughly.**
+- **The pictures inside a document.** When you attach a Word, Excel or PowerPoint file that contains pictures, you choose: check them one by one in the redaction editor (with a new *Image entière* button for a logo or a photo), black them all out, or send them as they are. Pictures in a format the browser cannot repaint (EMF, WMF, SVG, GIF) are replaced by a blank one.
+- **What used to slip through is pseudonymised now:**
+  - Excel sheet names (formulas follow), table column names, which now stay equal to their masked header so Excel no longer "repairs" the file, and pivot-table caches;
+  - the addresses of external links and e-mail links;
+  - the authors of comments and tracked changes, and the creator and last editor of the file;
+  - text deleted in tracked changes, and field codes;
+  - Office files embedded in a document. Other embedded objects are emptied, and you are told.
+- PNG pictures lose their hidden text, EXIF and dates, like JPEG ones.
+- The vault guard no longer refuses a command because of a lone slash in a sentence.
+
 ## 1.5.4
 - **Claude's questions show the real names.** In confidential mode, the question pop-ups and the permission cards now show the real names instead of the pseudonyms (dotted underline; hover to see what Claude wrote). The answer you pick goes back to Claude as Claude wrote it, with the pseudonym.
 - **What you type in a question's "Other" box is pseudonymised**, like a message. Until now it reached Claude as typed. If the vault is locked, the typed answer is not passed on.
