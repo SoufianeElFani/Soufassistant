@@ -1,3 +1,6 @@
+## 1.5.3
+- **In the Home Assistant app, the Hub no longer disappears under the keyboard.** The app's frame keeps its full height when the keyboard opens, and the panels stayed glued to its bottom, under the keyboard. They now sit on top of the keyboard, and the field you are typing in stays in view without moving Home Assistant's page.
+
 ## 1.5.2
 - **The vault passphrase can be typed on an iPhone.** In the Home Assistant app, the passphrase fields opened iOS's password AutoFill bar but never the keyboard. They are now plain fields masked on screen (•••), which iOS leaves alone.
 - **Opening the Hub from the phone menu closes the menu**, instead of leaving it open behind the Hub.

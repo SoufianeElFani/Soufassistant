@@ -31,6 +31,34 @@ describe('a panel field and the phone keyboard', { skip }, () => {
   });
   after(async () => { await browser?.close(); await h?.stop(); });
 
+  test('inside a frame that keeps its height (the HA app), the sheet rides above the keyboard', async () => {
+    // Same-origin parent with the app in an 844px iframe; the parent's visible band
+    // then shrinks to 420px (the keyboard) while the iframe stays 844px tall.
+    const p = await browser.newPage();
+    await p.setViewport(phone(844));
+    await p.goto(h.baseUrl, { waitUntil: 'domcontentloaded' });
+    await p.evaluate((src) => {
+      document.open();
+      document.write(`<body style="margin:0"><iframe id="f" src="${src}" style="border:0;width:390px;height:844px;display:block"></iframe></body>`);
+      document.close();
+    }, h.baseUrl);
+    const frameOf = async () => (await (await p.$('#f')).contentFrame());
+    let f = await frameOf();
+    await f.waitForSelector('#prompt-input', { timeout: 10000 });
+    await f.evaluate(() => import('./js/hub.js').then((m) => m.openHub('confidential')));
+    await f.waitForSelector('#hub-panel .pass-field', { timeout: 5000 });
+    await f.focus('#hub-panel .pass-field');
+    await p.setViewport(phone(420));               // the keyboard opens over the parent
+    f = await frameOf();
+    await f.waitForFunction(() => {
+      const r = document.getElementById('hub-panel').getBoundingClientRect();
+      const field = document.activeElement.getBoundingClientRect();
+      return r.bottom <= 420 + 2 && field.top >= 0 && field.bottom <= 420;
+    }, { timeout: 4000 });
+    if (process.env.SHOT) await p.screenshot({ path: process.env.SHOT });
+    await p.close();
+  });
+
   test('opening the Hub from the phone drawer closes the drawer', async () => {
     await page.click('#menu-btn');
     await page.waitForFunction(() => document.body.classList.contains('drawer-open'), { timeout: 3000 });

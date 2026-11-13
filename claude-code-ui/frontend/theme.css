@@ -265,7 +265,8 @@ kbd {
 .layout-drawer #phone-menu { display: none; }
 /* Panels become bottom sheets */
 .layout-drawer .sessions-panel, .layout-drawer .settings-panel {
-  position: fixed; left: 0; right: 0; bottom: 0; top: auto; width: 100%; max-width: none;
+  /* on the bottom of the *visible* band (viewport.js --app-bottom: the keyboard), not of the iframe */
+  position: fixed; left: 0; right: 0; bottom: var(--app-bottom, 0px); top: auto; width: 100%; max-width: none;
   max-height: calc(var(--app-height, 100dvh) * .86); border-radius: 18px 18px 0 0; border-bottom: 0; z-index: 130;
   padding-bottom: env(safe-area-inset-bottom); animation: sheet-up .24s var(--ease);
 }

@@ -129,15 +129,25 @@ export function applyViewport() {
   pending = false;
   const band = visibleBand(frameChain());
   const root = document.documentElement;
+  // --app-bottom: how much of our own viewport lies *below* the visible band —
+  // the on-screen keyboard, mostly. The phone bottom sheets sit on it: with
+  // `bottom: 0` they stayed glued to the bottom of the iframe, under the keyboard
+  // (the Hub vanished while typing the vault passphrase in the Home Assistant app).
+  const below = (top, height) => root.style.setProperty('--app-bottom', `${Math.max(0, Math.round(window.innerHeight - top - height))}px`);
   if (!band) {
     root.style.removeProperty('--app-top');
     root.style.removeProperty('--app-height');
     root.classList.add('viewport-unmeasured');
+    const vv = window.visualViewport;
+    if (vv) below(vv.offsetTop, vv.height); else root.style.removeProperty('--app-bottom');
+    window.dispatchEvent(new Event('appband'));
     return;
   }
   root.classList.remove('viewport-unmeasured');
   root.style.setProperty('--app-top', `${Math.round(band.top)}px`);
   root.style.setProperty('--app-height', `${Math.round(band.height)}px`);
+  below(band.top, band.height);
+  window.dispatchEvent(new Event('appband'));   // panels.js keeps a focused field in this band
 }
 
 // Several of these fire together (a URL bar collapsing resizes and scrolls at

@@ -64,15 +64,27 @@ function revealField() {
   const f = document.activeElement;
   if (!f?.matches?.(FIELD)) return;
   if (!registry.some((r) => isOpen(r.panel) && r.panel.contains(f)) && !f.closest('.permission-overlay')) return;
-  const band = window.visualViewport?.height || window.innerHeight;
+  // the visible band viewport.js measured (inside the HA app's iframe, our own
+  // window does not shrink for the keyboard: only that band does)
+  const css = getComputedStyle(document.documentElement);
+  const top = parseFloat(css.getPropertyValue('--app-top')) || 0;
+  const height = parseFloat(css.getPropertyValue('--app-height')) || window.visualViewport?.height || window.innerHeight;
   const r = f.getBoundingClientRect();
-  if (r.top >= 8 && r.bottom <= band - 8) return;
-  f.scrollIntoView({ block: 'center', inline: 'nearest' });
+  if (r.top >= top + 8 && r.bottom <= top + height - 8) return;
+  // scroll the field's own scroller only: scrollIntoView would also scroll Home
+  // Assistant's page around the ingress iframe, and the whole app with it
+  let sc = f.parentElement;
+  while (sc && sc !== document.body && !/(auto|scroll)/.test(getComputedStyle(sc).overflowY)) sc = sc.parentElement;
+  if (!sc || sc === document.body) return;
+  const box = sc.getBoundingClientRect();
+  const visTop = Math.max(box.top, top), visBottom = Math.min(box.bottom, top + height);
+  sc.scrollTop += (r.top + r.height / 2) - (visTop + visBottom) / 2;
 }
 let revealTimer = null;
 const scheduleReveal = () => { clearTimeout(revealTimer); revealTimer = setTimeout(revealField, 120); };
 document.addEventListener('focusin', () => { scheduleReveal(); setTimeout(revealField, 450); });   // again once the keyboard is up
 window.visualViewport?.addEventListener('resize', scheduleReveal);
+window.addEventListener('appband', scheduleReveal);
 window.addEventListener('resize', scheduleReveal);
 
 window.addEventListener('blur', () => {
