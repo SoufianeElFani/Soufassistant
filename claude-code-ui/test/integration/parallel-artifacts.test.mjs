@@ -56,6 +56,8 @@ describe('two conversations running at once', () => {
     const both = await c.waitFor((m) => m.type === 'runs' && m.runs.length === 2);
     assert.deepEqual(both.runs.map((r) => r.key).sort(), ['one', 'two']);
 
+    // the 'runs' broadcast can beat the stub's record of the second query (slow CI runner)
+    await h.waitForRecord(() => h.records('query').length >= 2);
     const queries = h.records('query');
     assert.equal(queries.length, 2);
     assert.deepEqual(queries.map((q) => q.options.resume).sort(), ['one', 'two']);
