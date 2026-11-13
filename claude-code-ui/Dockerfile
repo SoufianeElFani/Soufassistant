@@ -40,6 +40,14 @@ RUN apt-get update \
         fonts-dejavu-core \
     && rm -rf /var/lib/apt/lists/*
 
+# Confidential mode's redaction editor (server/lib/redact.js): local OCR of
+# screenshots and scanned plans, so the text to mask is found without the
+# picture ever reaching the model. French, English and Dutch.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        tesseract-ocr tesseract-ocr-fra tesseract-ocr-eng tesseract-ocr-nld \
+    && rm -rf /var/lib/apt/lists/*
+
 # The browser agent (server/lib/browser.js) drives this Chromium headless
 # through puppeteer-core (no browser download of its own).
 RUN apt-get update \

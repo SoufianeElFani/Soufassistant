@@ -7,7 +7,9 @@
  *                     pour le mode courant (mémorisé).
  *   avant l'envoi     coffre chiffré et verrouillé → demande de la phrase de passe ;
  *                     puis l'alerte : les mots qui ressemblent à des noms et que le
- *                     coffre ne connaît pas (protéger / ne plus signaler / laisser).
+ *                     coffre ne connaît pas (protéger / ne plus signaler / laisser) ;
+ *                     enfin chaque image / PDF joint passe par l'éditeur de masquage
+ *                     (redact.js) — un PDF peut aussi partir en texte pseudonymisé.
  *   démasquage        les pseudonymes (Client-A, Personne-03…) des réponses sont
  *                     affichés avec les vrais noms, soulignés en pointillé ; le survol
  *                     montre ce qui a été envoyé. La table vient du serveur
@@ -19,6 +21,7 @@ import { S } from './state.js';
 import { wsBase } from './dom.js';
 import { icon } from './icons.js';
 import { showToast } from './toast.js';
+import { redactAttachment } from './redact.js';
 
 let map = {};          // alias → vrai nom
 let re = null;
@@ -99,6 +102,7 @@ export const confidentialFields = () => (isConfidential() ? { confidential: true
 
 export function applyVaultStatus(m) { status = { encrypted: !!m.encrypted, locked: !!m.locked }; render(); }
 
+const readFileAsDataURL = (file) => new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = () => rej(r.error); r.readAsDataURL(file); });
 const post = (u, b) => fetch(`${wsBase}${u}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(b || {}) }).then((r) => r.json());
 
 // ── Une petite boîte de dialogue (même habillage que les confirmations) ──
@@ -148,13 +152,38 @@ export function askUnlock() {
 
 const KINDS = [['client', 'Client'], ['personne', 'Personne'], ['lieu', 'Lieu'], ['projet', 'Projet'], ['partenaire', 'Partenaire'], ['autre', 'Autre']];
 /**
- * Avant l'envoi d'un message confidentiel : coffre déverrouillé, puis l'alerte
- * sur les noms possibles que le coffre ne connaît pas. → true pour envoyer.
+ * Avant l'envoi d'un message confidentiel : coffre déverrouillé, l'alerte sur
+ * les noms possibles que le coffre ne connaît pas, puis le masquage des images
+ * et PDF joints. → false (rien n'est envoyé) ou { replaced: Map(pièce jointe →
+ * images masquées à envoyer à sa place) }.
  */
-export async function preSendCheck(text) {
-  if (!isConfidential()) return true;
+export async function preSendCheck(text, atts = []) {
+  const replaced = new Map();
+  if (!isConfidential()) return { replaced };
   if (status.locked && !(await askUnlock())) return false;
-  if (!text) return true;
+  if (text && !(await namesCheck(text))) return false;
+  for (const a of atts) {
+    const pdf = /pdf/i.test(a.mediaType) || /\.pdf$/i.test(a.name);
+    if (!a.isImage && !pdf) continue;
+    if (pdf && !(await askPdfAsImage(a.name))) continue;      // as pseudonymised text, server-side
+    const dataUrl = await readFileAsDataURL(a.file).catch(() => null);
+    if (!dataUrl) return false;
+    const out = await redactAttachment({ name: a.name, mediaType: a.mediaType || (pdf ? 'application/pdf' : 'image/png'), dataUrl });
+    if (!out) return false;
+    replaced.set(a, out);
+  }
+  return { replaced };
+}
+
+/** Un PDF joint : document (texte pseudonymisé) ou plan / P&ID (image masquée) ? → true = image */
+function askPdfAsImage(name) {
+  return dialog((card, done) => {
+    head(card, `PDF joint : ${name}`, 'Un document (offre, rapport) part en texte pseudonymisé. Un plan, un P&ID ou un schéma part en image : tu masques ce qu\'il faut, et seuls des pixels sont envoyés.');
+    buttons(card, [['Texte pseudonymisé', 'btn-deny', () => done(false)], ['Plan / image masquée', 'btn-allow', () => done(true)]]);
+  }).then((v) => v === true);
+}
+
+async function namesCheck(text) {
   let r = await post('/api/vault/preview', { text }).catch(() => null);
   if (r?.locked) { if (!(await askUnlock())) return false; r = await post('/api/vault/preview', { text }).catch(() => null); }
   if (!r?.ok || !r.unknown?.length) return true;   // the server still masks what it knows

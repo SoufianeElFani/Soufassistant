@@ -18,6 +18,7 @@ import { lastFrame, browserAvailable } from './browser.js';
 import { decoratedSessions, sessionToMarkdown } from './session-tools.js';
 import { parseSession } from './sessions.js';
 import * as vault from './vault.js';
+import * as redact from './redact.js';
 import { readFileSync, statSync as statS, readdirSync as readdirS } from 'fs';
 
 const json = express.json({ limit: '1mb' });
@@ -117,7 +118,7 @@ export function registerHubRoutes(app) {
 const vaultChanged = (r) => { broadcast({ type: 'vault_map', map: vault.revealMap() }); return r; };
 const statusChanged = (r) => { broadcast({ type: 'vault_status', ...vault.vaultStatus() }); return vaultChanged(r); };
 export function registerVaultRoutes(app) {
-  app.get('/api/vault', wrap(() => ({ ok: true, ...vault.vaultStatus(), entities: vault.listEntities(), exempt: vault.exemptList(), reels: vault.listReels(), ignored: vault.isLocked() ? [] : vault.ignoredList() })));
+  app.get('/api/vault', wrap(() => ({ ok: true, ...vault.vaultStatus(), entities: vault.listEntities(), exempt: vault.exemptList(), reels: vault.listReels(), ignored: vault.isLocked() ? [] : vault.ignoredList(), images: vault.imagesToCheck(workspaceRoot()) })));
   // encryption: the passphrase only ever travels browser → server, and is never stored
   app.post('/api/vault/unlock', json, wrap((req) => (vault.unlock(String(req.body?.pass || '')) ? statusChanged({ ok: true }) : { ok: false, error: 'Phrase de passe incorrecte.' })));
   app.post('/api/vault/lock', json, wrap(() => statusChanged((vault.lock(), { ok: true }))));
@@ -127,6 +128,16 @@ export function registerVaultRoutes(app) {
   }));
   // the pre-send check: what looks like a name and is not in the vault (nothing is learnt or sent)
   app.post('/api/vault/preview', json, wrap((req) => (vault.isLocked() ? { ok: true, locked: true } : { ok: true, ...vault.suspects(String(req.body?.text || '')) })));
+  // the redaction editor: pages + proposed boxes, computed here (the original never reaches the model)
+  app.post('/api/vault/redact', express.json({ limit: '80mb' }), wrap((req) => redact.analyze(req.body || {})));
+  app.post('/api/vault/redact/save', express.json({ limit: '80mb' }), wrap((req) => {
+    const rel = String(req.body?.path || '');
+    if (!inWorkspace(rel)) return { ok: false, error: 'Bad path.' };
+    const out = vault.saveRedacted(workspaceRoot(), rel, Buffer.from(String(req.body?.data || '').replace(/^data:image\/png;base64,/, ''), 'base64'));
+    if (!out) return { ok: false, error: 'Fichier introuvable.' };
+    broadcast({ type: 'workspace', entries: listWorkspaceEntries() });
+    return { ok: true, path: out };
+  }));
   app.post('/api/vault/ignore', json, wrap((req) => ((Array.isArray(req.body?.list) ? vault.setIgnored(req.body.list) : vault.addIgnored([].concat(req.body?.words || []))), { ok: true })));
   app.post('/api/vault/entity', json, wrap((req) => vaultChanged({ ok: !!vault.addEntity(req.body || {}) })));
   app.post('/api/vault/entity/delete', json, wrap((req) => vaultChanged({ ok: vault.removeEntity(req.body?.alias) })));

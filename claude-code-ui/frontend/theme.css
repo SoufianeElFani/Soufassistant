@@ -486,4 +486,13 @@ kbd {
 .conf-row b { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .conf-row select { max-width: 52%; }
 .conf-err { color: var(--error, #c62828); font-size: 13px; min-height: 1em; }
+.redact-overlay { z-index: 1200; }
+.redact-wait { background: var(--surface, #fff); color: var(--text); padding: 18px 22px; border-radius: 10px; font-size: 14px; }
+.redact-card { background: var(--surface, #fff); color: var(--text); border-radius: 12px; width: min(1200px, 96vw); height: min(900px, 94vh); display: flex; flex-direction: column; padding: 12px; gap: 8px; box-shadow: 0 10px 40px rgba(0,0,0,.35); }
+.redact-top b { font-size: 15px; overflow-wrap: anywhere; }
+.redact-info { font-size: 12.5px; color: var(--text-muted, #666); margin-top: 2px; }
+.redact-stage { flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; overflow: hidden; background: repeating-conic-gradient(#e9ebef 0 25%, #f6f7f9 0 50%) 50% / 18px 18px; border-radius: 8px; }
+.redact-canvas { touch-action: none; cursor: crosshair; max-width: 100%; max-height: 100%; box-shadow: 0 1px 6px rgba(0,0,0,.25); }
+.redact-bar { flex-wrap: wrap; justify-content: flex-end; }
+.redact-nav { min-width: 40px; }
 .hub-body > .scheduled-form-input, .hub-body > .scheduled-form-textarea { margin: 4px 14px; width: calc(100% - 28px); }

@@ -317,6 +317,44 @@ export function suspects(text) {
   return { auto, unknown: [...out.values()].slice(0, 40) };
 }
 
+/**
+ * Où sont les données sensibles dans une ligne de texte (OCR d'une image, texte
+ * d'un plan) : pour masquer des zones de pixels. Rien n'est appris ni envoyé.
+ * `sure` : coffre, motifs, URL, adresse, société avec forme juridique, personne
+ * avec civilité — masqué d'office ; sinon une suggestion (noms possibles).
+ * → [{ start, end, sure, why }]
+ */
+const URL_RE = /\bhttps?:\/\/[^\s<>"']+|\bwww\.[^\s<>"']+|\b[\w-]+(?:\.[\w-]+)*\.(?:be|com|eu|net|org|fr|nl|lu|de|io|cloud)(?:\/[^\s<>"']*)?(?![\w@])/gi;
+// code postal + localité (pas « XV-2003 Open », pas « 3456 Site: »), rue, et les valeurs des champs d'un cartouche ou d'un formulaire
+const POSTAL_RE = /(?<![\p{L}\p{N}_./-])[1-9]\d{3}\s+\p{Lu}\p{Ll}[\p{L}'’-]*(?:[\s-]\p{Lu}\p{Ll}[\p{L}'’-]*)?(?![\p{L}:])/gu;
+const STREET_RE = /\b(?:rue|avenue|av\.|chaussée|boulevard|bd|place|quai|chemin|allée|street|road)\s+[^,;\n]{2,40}|\b\p{L}+(?:straat|laan|steenweg|weg|plein|lei|dreef|kaai)\b(?:\s+\d+\w?)?/giu;
+const DWG_RE = /\b(?:dwg|drawing|plan|tekening|doc(?:ument)?)\s*(?:n[o°º.]*|nr\.?|number|num[ée]ro|#)\s*[:#]?\s*([A-Z0-9][^\n]{1,40}?)(?=\s+rev\b|\s*$)/giu;
+const LABEL_WORD = /^(?:dwg|drawing|plan|tekening|rev|client|project|projet|site|scale|[ée]chelle|schaal|date|datum|sheet|feuille|blad)\b/i;
+const LABEL_RE = /\b(?:client|klant|customer|owner|ma[îi]tre d['’]ouvrage|bouwheer|opdrachtgever|project|projet|site|location|lieu|adresse|address|adres|drawing(?:\s+n[o°º.]*)?|dwg(?:\s+n[o°º.]*)?|plan\s+n[o°º.]*|tekening(?:\s*nr\.?)?|r[ée]f(?:[ée]rence)?|contract|contrat|order|commande|bestelling|po|approved|checked|drawn|designed|dessin[ée]|v[ée]rifi[ée]|approuv[ée]|getekend|gecontroleerd|signature|signed|handtekening)\s*[:#]\s*([^\n]{1,80})/giu;
+export function sensitiveSpans(text) {
+  const t = String(text || '');
+  const out = [];
+  const add = (start, end, sure, why) => { if (end > start) out.push({ start, end, sure, why }); };
+  const c = compile();
+  const s = load();
+  const exempt = (v) => s.exempt.some((x) => norm(x) === norm(v));
+  const exemptAll = (v) => exempt(v) || isAliasLike(v);
+  if (c.mask) for (const m of t.matchAll(c.mask)) add(m.index, m.index + m[0].length, true, 'coffre');
+  for (const [kind, re] of PATTERNS) for (const m of t.matchAll(re)) if (!isAliasLike(m[0])) add(m.index, m.index + m[0].length, true, kind);
+  for (const m of t.matchAll(URL_RE)) add(m.index, m.index + m[0].length, true, 'url');
+  for (const re of [POSTAL_RE, STREET_RE]) for (const m of t.matchAll(re)) add(m.index, m.index + m[0].length, true, 'adresse');
+  for (const m of t.matchAll(DWG_RE)) add(m.index + m[0].length - m[1].length, m.index + m[0].length, true, 'n° de plan');
+  for (const m of t.matchAll(LABEL_RE)) { const v = m[1].trim(); const i = m.index + m[0].length - m[1].length + (m[1].length - m[1].trimStart().length); if (v && !exemptAll(v)) add(i, i + v.length, true, 'champ'); }
+  for (const m of t.matchAll(LEGAL)) if (!exempt(m[1])) add(m.index, m.index + m[0].length, true, 'société');
+  for (const m of t.matchAll(TITLED)) if (!exempt(m[1])) add(m.index, m.index + m[0].length, true, 'personne');
+  for (const u of suspects(t).unknown) {
+    if (/\d/.test(u.real) || /^\p{Lu}{1,4}$/u.test(u.real) || /[:#]$/.test(u.real)) continue;     // repères d'équipement (PT-101), sigles courts, libellés « CLIENT: »
+    if (LABEL_WORD.test(u.real)) continue;
+    for (let i = t.indexOf(u.real); i >= 0; i = t.indexOf(u.real, i + 1)) if (!/^\s*[:#]/.test(t.slice(i + u.real.length))) add(i, i + u.real.length, false, 'nom possible');
+  }
+  return out;
+}
+
 export function reveal(text) {
   const c = compile();
   return c.reveal && text ? String(text).replace(c.reveal, (a) => c.byAlias.get(a)?.real ?? a) : text;
@@ -520,6 +558,26 @@ export async function anonymizeTree(root, rel, { dryRun = false } = {}) {
   return report;
 }
 
+// ── Images du workspace laissées « à vérifier » par l'anonymisation ──────────
+export function imagesToCheck(root) {
+  if (isLocked()) return [];
+  return load().files.filter((f) => f.how === 'image (à vérifier)' && f.masked && existsSync(path.join(root, f.masked))).map((f) => f.masked);
+}
+/** Remplacer une image du workspace par sa version masquée (PNG) ; l'original va au coffre. → nouveau chemin */
+export function saveRedacted(root, rel, png) {
+  const s = load();
+  const abs = path.resolve(root, rel);
+  if (!abs.startsWith(path.resolve(root) + path.sep) || !existsSync(abs)) return null;
+  const f = s.files.find((x) => x.masked === rel);
+  putReal('orig', (f?.orig || rel) + ' (avant masquage)', readFileSync(abs));
+  const relPng = rel.replace(/\.[^./]+$/, '') + '.png';
+  writeFileSync(path.join(root, relPng), png);
+  if (relPng !== rel) rmSync(abs, { force: true });
+  if (f) { f.masked = relPng; f.how = 'image masquée'; f.at = Date.now(); } else s.files.push({ orig: rel, masked: relPng, how: 'image masquée', at: Date.now() });
+  save();
+  return relPng;
+}
+
 // ── La garde : l'agent n'atteint jamais le coffre ─────────────────────────────
 const PARENTS = ['/', '/data', DATA_DIR, path.dirname(VAULT_DIR)].map((p) => p.replace(/\/+$/, '') || '/');
 // in command position only (start, after ; & | ( or $( , sudo, xargs): « du » or « find » in a sentence is not a command
@@ -563,7 +621,7 @@ export function strictGuard(roots, cwd = '/') {
     let allowed;
     try { allowed = [...roots(), '/tmp']; } catch (e) { return deny(e.message); }
     const where = allowed.filter((r) => r !== '/tmp').join(', ') || 'aucun dossier anonymisé pour l\'instant (Hub › Confidentiel › Anonymiser)';
-    const ok = (abs, extra = []) => [...allowed, ...extra].some((d) => inside(abs, d));
+    const ok = (abs, extra = []) => safeFiles.has(path.resolve(abs)) || [...allowed, ...extra].some((d) => inside(abs, d));
     if (NET_TOOLS.has(tool)) return deny('pas de web : ce qui en revient ne serait pas pseudonymisé.');
     if (tool.startsWith('mcp__') && !MCP_OK.has(tool)) return deny('pas de connecteur ni de navigateur : leurs réponses ne seraient pas pseudonymisées.');
     if (READ_TOOLS.has(tool)) {
@@ -598,11 +656,16 @@ export function strictGuard(roots, cwd = '/') {
 }
 
 // ── Pièces jointes et invite d'un message confidentiel ───────────────────────
+// Attachments already pseudonymised / masked: the strict guard lets the agent read exactly these.
+const safeFiles = new Set();
+export const markSafe = (p) => safeFiles.add(path.resolve(p));
+
 export async function maskAttachments(saved) {
   const notes = [];
   for (const a of saved) {
     const k = ext(a.path);
-    if (a.isImage) { notes.push(`image non pseudonymisable : ${a.name}`); continue; }
+    if (a.isImage && a.redacted) { a.name = mask(a.name, { learn: false }); markSafe(a.path); continue; }   // masked by the user (redact.js), re-encoded PNG
+    if (a.isImage) { notes.push(`image non masquée : ${a.name}`); continue; }
     if (TEXT_EXT.has(k) || OFFICE[k] || k === 'pdf') {
       const r = await maskFile(a.path, a.path + '.masq' + path.extname(a.path));
       if (r.ok) {
@@ -610,6 +673,7 @@ export async function maskAttachments(saved) {
         const final = r.how === 'pdf→texte' ? a.path + '.txt' : a.path;
         renameSync(r.dst, final);
         a.path = final;
+        markSafe(final);
         a.name = mask(a.name, { learn: false });
       }
     } else notes.push(`fichier non pseudonymisable : ${a.name}`);
@@ -627,4 +691,5 @@ export const CONFIDENTIAL_PROMPT = [
   'Strict mode is on: you may only read the anonymised workspace folders (and /tmp); the web, connectors, the browser, Home Assistant',
   'and files elsewhere are refused, because what comes back from them is not pseudonymised. Start every Bash command with',
   'cd "<an anonymised folder>" and use absolute paths inside it. If a refusal blocks the task, say so and suggest turning the shield off.',
+  'Attached pictures and plans were masked by the user before sending (black boxes): never try to guess what is under them.',
 ].join(' ');

@@ -57,7 +57,8 @@ inputForm.onsubmit = async (e) => {
 
   // Confidential mode: unlock the vault if needed, then flag names it does not know.
   // Cancelling leaves the draft in the box, nothing sent.
-  if (!(await preSendCheck(text))) { promptInput.focus(); return; }
+  const check = await preSendCheck(text, attachments.slice());
+  if (!check) { promptInput.focus(); return; }
 
   // Read the attachments to base64 for upload + the message bubble thumbnails.
   const pending = attachments.slice();
@@ -65,6 +66,14 @@ inputForm.onsubmit = async (e) => {
   let bubbleAtts = [];
   let readFailed = 0;
   for (const a of pending) {
+    // masked in the redaction editor: its painted PNG(s) go instead of the original
+    if (check.replaced.has(a)) {
+      for (const r of check.replaced.get(a)) {
+        payload.push({ name: r.name, mediaType: 'image/png', data: r.dataUrl, redacted: true });
+        bubbleAtts.push({ name: r.name, isImage: true, dataUrl: r.dataUrl });
+      }
+      continue;
+    }
     let dataUrl = null;
     try { dataUrl = await fileToDataURL(a.file, a.isImage); } catch { dataUrl = null; }
     if (!dataUrl) { readFailed++; continue; }

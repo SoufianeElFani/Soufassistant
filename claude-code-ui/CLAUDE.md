@@ -937,6 +937,25 @@ Sharing (0.9.0): `POST /api/skills/import` (raw .zip or SKILL.md;
 `GET /api/skills/shared` + `POST /api/skills/import-shared` (install a zip
 from that folder — so a Drive folder becomes a skill library).
 
+**1.5.0 — redaction of pictures and plans (`server/lib/redact.js`, `frontend/js/redact.js`).**
+`POST /api/vault/redact` → `redact.analyze()`: an image is OCR'd as is
+(tesseract TSV, every word kept even at low confidence, `parseTsv`); a PDF is
+rendered by pdftoppm (≤ 200 dpi, longest side ≤ 7000 px, ≤ 10 pages) and its
+words come from `pdftotext -bbox-layout` (`parseBbox`, points → px), with OCR
+only for a page without text. Lines → `vault.sensitiveSpans()` (dictionary,
+PATTERNS, URL, postal code + town, street, `LABEL_RE` title-block / form
+fields, `DWG_RE`, legal forms, titles; `suspects()` as non-sure suggestions,
+minus tags with digits / short acronyms / labels) → `boxesFor()` (union of the
+overlapping words, padded). The browser editor (`redactAttachment`) paints the
+boxes on canvases and exports PNG: one picture, or a 1568 px overview + 1800 px
+tiles with 80 px overlap (≤ 60 pictures). `preSendCheck(text, atts)` returns
+`{ replaced: Map }`, the composer sends those PNGs with `redacted: true`;
+`maskAttachments` masks their names and `markSafe()`s every masked / redacted
+attachment path, the only uploads `strictGuard` lets the agent read.
+`imagesToCheck()` / `saveRedacted()` + `/api/vault/redact/save` mask workspace
+pictures in place (original → vault). Tesseract (fra, eng, nld) is in the
+Dockerfile; the real-tool tests skip without poppler / tesseract.
+
 **1.4.0 — encrypted vault, strict mode, pre-send check (`vault.js`, `confidential.js`).**
 Encryption: `coffre.enc` = { scrypt params, salt, `wrapped` (the random data key
 sealed by the passphrase key), `state` (the table sealed by the data key) };

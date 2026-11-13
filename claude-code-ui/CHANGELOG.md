@@ -1,3 +1,10 @@
+## 1.5.0
+**Confidential mode: pictures and plans too.**
+- **A redaction editor.** With the shield on, a picture or a PDF you attach (a screenshot, a P&ID, a plan) opens an editor before anything is sent. Your Home Assistant finds what to mask: the vault's names, e-mails, phones, URLs, addresses, companies, people, drawing numbers and the fields of a title block (CLIENT:, PROJECT:, DWG No…). It reads the text of a vector PDF directly and runs a local OCR (Tesseract, French / English / Dutch) on screenshots and scans. Solid zones are masked and dotted ones are suggestions: tap a zone to switch it, drag to draw one, and *Cartouche* covers the bottom-right corner. Only the painted picture leaves, re-encoded as PNG: no text layer, no hidden layers, no metadata.
+- **Plans stay readable.** A PDF is rendered at up to 200 dpi; a large page goes as an overview plus overlapping tiles. For each PDF you choose between pseudonymised text (an offer, a report) and a masked picture (a plan).
+- **Pictures in an anonymised folder** are listed in Hub › Confidentiel › *Images à masquer*: mask them in place, and the original goes to the vault.
+- An attachment you did not mask is not readable by Claude in strict mode. A masked or pseudonymised one is, which also fixes 1.4.0: in strict mode, Claude could not read the attachments at all.
+
 ## 1.4.0
 **Confidential mode, locked down.**
 - **An encrypted vault.** Hub → Confidentiel → *Chiffrer le coffre*: the name table, the original files and the real versions are encrypted (AES-256-GCM) with a key that only your passphrase unlocks. The passphrase is never stored: after the app restarts the vault is locked, and the shield asks for it at the first confidential message. While it is locked nothing is sent, never the text in clear. *Verrouiller maintenant* and *Changer la phrase* are in the same place. A forgotten passphrase cannot be recovered.

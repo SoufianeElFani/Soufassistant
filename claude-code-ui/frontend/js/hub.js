@@ -15,6 +15,7 @@ import { S } from './state.js';
 import { wsBase, modelSelect } from './dom.js';
 import { registerPanel } from './panels.js';
 import { confirmAction } from './confirm.js';
+import { redactAttachment } from './redact.js';
 import { showToast } from './toast.js';
 import { listAgentsCache } from './toolbox.js';
 
@@ -524,6 +525,21 @@ async function renderConfidential() {
   draw();
 
   // documents réels et exemptions
+  // images left « à vérifier » by an anonymisation: mask them in the editor, in place
+  body.appendChild(el('div', 'usage-section-title', 'Images à masquer'));
+  if (!(v.images || []).length) body.appendChild(note('Aucune : les images d\'un dossier anonymisé apparaissent ici, à masquer (logos, noms, plans) avant que Claude puisse les lire.'));
+  for (const rel of v.images || []) {
+    body.appendChild(row(rel.split('/').pop(), rel, [button('Masquer…', 'Ouvrir l\'éditeur de masquage ; l\'original part au coffre', async () => {
+      const blob = await (await fetch(`${wsBase}/workspace/${rel.split('/').map(encodeURIComponent).join('/')}`)).blob();
+      const dataUrl = await new Promise((res) => { const r = new FileReader(); r.onload = () => res(r.result); r.readAsDataURL(blob); });
+      const out = await redactAttachment({ name: rel.split('/').pop(), mediaType: blob.type || 'image/png', dataUrl }, { single: true });
+      if (!out) return;
+      const r = await api('/api/vault/redact/save', { path: rel, data: out[0].dataUrl });
+      showToast(r.ok ? `Image masquée : ${r.path}` : (r.error || 'Échec.'), r.ok ? {} : { kind: 'error' });
+      render();
+    }, 'find-nav')]));
+  }
+
   body.appendChild(el('div', 'usage-section-title', 'Documents réels (Particulariser)'));
   if (!(v.reels || []).length) body.appendChild(note('Aucun : dans la visionneuse, le bouton « personne » produit la version avec les vrais noms d\'un livrable.'));
   for (const r of v.reels || []) {

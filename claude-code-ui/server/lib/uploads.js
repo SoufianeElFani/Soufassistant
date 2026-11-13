@@ -32,6 +32,7 @@ export function saveAttachments(attachments) {
         path: path.join(UPLOAD_DIR, fname), url: `uploads/${fname}`,
         name: a.name || fname, mediaType: a.mediaType || '',
         isImage: /^image\//.test(a.mediaType || ''),
+        redacted: !!a.redacted,   // painted in the confidential redaction editor
       });
       log('INFO', `attachment saved: ${fname} (${a.mediaType || '?'}, ${Math.round(buf.length / 1024)} KB)`);
     } catch (e) { log('WARN', `attachment save failed: ${e.message}`); }
