@@ -937,6 +937,33 @@ Sharing (0.9.0): `POST /api/skills/import` (raw .zip or SKILL.md;
 `GET /api/skills/shared` + `POST /api/skills/import-shared` (install a zip
 from that folder — so a Drive folder becomes a skill library).
 
+**1.4.0 — encrypted vault, strict mode, pre-send check (`vault.js`, `confidential.js`).**
+Encryption: `coffre.enc` = { scrypt params, salt, `wrapped` (the random data key
+sealed by the passphrase key), `state` (the table sealed by the data key) };
+seal = AES-256-GCM, iv(12)|tag(16)|data. Real files (originals, real versions)
+→ `blobs/<random id>.enc`, listed in `state.blobs`; `putReal()` writes the old
+plain layout when there is no passphrase. `load()` throws `VaultLocked` when
+encrypted without the key, so `mask()` can never fall back to clear text;
+UI getters (`listEntities`, `revealMap`, `listReels`) return empty instead.
+`setPassphrase` migrates a plain vault (then deletes `coffre.json`,
+`originaux/`, `reels/`) or rewraps the key. ws-protocol `prompt` answers
+`vault_locked` (with the text, put back in the box) and runs nothing; the
+socket gets `vault_status` on connect and on lock/unlock. **Strict mode**:
+`strictGuard(roots, cwd)` is added to a run's PreToolUse when `confidential`
+(run-query.js) — read tools only under `protectedRoots()` (folders anonymised,
+from `state.roots` + `state.files`) and /tmp (+ ~/.claude skills/plugins), no
+WebFetch/WebSearch, no MCP but `generate_image`, Bash must start with
+`cd <protected>`, no network commands / `~` / `..` / absolute paths outside
+(system dirs allowed). Pattern-based, documented as such. `CONFIDENTIAL_PROMPT`
+tells the model. **Pre-send check**: `suspects(text)` (capitalised runs and
+acronyms not known, exempt or in `state.ignored`; a lone sentence-initial word
+skipped; kind guessed, `COMPANY` words → client) behind `/api/vault/preview`;
+`preSendCheck()` in the composer's submit, before the bubble. Routes:
+`/api/vault/{unlock,lock,passphrase,preview,ignore}`; `vaultGuard` also denies
+any tool input naming `api/vault`, and `RECURSIVE` only matches in command
+position. Browser tests that need tools turn the shield off with
+`evaluateOnNewDocument` (it is on by default everywhere now).
+
 **1.3.0 — confidential mode (`server/lib/vault.js`, `frontend/js/confidential.js`).**
 Vault = `DATA_DIR/.coffre-souf/` (`coffre.json`: entities {real, alias, kind,
 variants, auto}, exempt list, file index; `originaux/`; `reels/`). `mask()`

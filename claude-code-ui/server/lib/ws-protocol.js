@@ -76,6 +76,7 @@ function greet(ws) {
   send(ws, roles.rolesMessage());
   send(ws, agentsMessage());
   send(ws, { type: 'vault_map', map: vault.revealMap() });
+  send(ws, { type: 'vault_status', ...vault.vaultStatus() });
 
   // Plan limits (5-hour / weekly / extra usage): the last snapshot right away,
   // then a refresh (rate-limited inside plan-usage.js) that broadcasts if newer.
@@ -322,6 +323,8 @@ const handlers = {
     // Confidential mode (vault.js): names become pseudonyms *before* anything
     // reaches the model — the text, and the attachments' contents and names.
     const conf = !!msg.confidential && !msg.steer;
+    // A locked vault cannot mask: nothing is sent (never fall back to the clear text).
+    if (msg.confidential && vault.isLocked()) { send(ws, { type: 'vault_locked', text: msg.text || '' }); return; }
     const before = vault.listEntities().length;
     const saved = Array.isArray(msg.attachments) && msg.attachments.length ? saveAttachments(msg.attachments) : [];
     if (conf) {

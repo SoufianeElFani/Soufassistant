@@ -1,3 +1,11 @@
+## 1.4.0
+**Confidential mode, locked down.**
+- **An encrypted vault.** Hub → Confidentiel → *Chiffrer le coffre*: the name table, the original files and the real versions are encrypted (AES-256-GCM) with a key that only your passphrase unlocks. The passphrase is never stored: after the app restarts the vault is locked, and the shield asks for it at the first confidential message. While it is locked nothing is sent, never the text in clear. *Verrouiller maintenant* and *Changer la phrase* are in the same place. A forgotten passphrase cannot be recovered.
+- **Strict mode.** With the shield on, Claude may only read the anonymised folders (and /tmp): what its tools bring back is not pseudonymised, so the web, the browser, connectors, Home Assistant (`ha-tools`, `curl`) and files elsewhere are refused, and every command has to start in an anonymised folder. For work that is not confidential (the house, for example), turn the shield off.
+- **A check before sending.** Words that look like names (capitalised words, acronyms) and that the vault does not know are listed before the message leaves: protect each one (and pick its kind), let it through this once, or never flag it again (Hub → Confidentiel → *Ne pas signaler*).
+- **The shield is on by default in every mode**, Chat included.
+- The agent can no longer reach the vault through the app's own API, and a French « du » in a command no longer reads as the `du` command.
+
 ## 1.3.2
 - **Artifacts stay in their own conversation.** With several conversations running at once, the files a reply produced could show up in whichever conversation was on screen when it finished. Each file is now filed under the conversation that wrote it: its own file tools first, otherwise the one whose commands or outputs name it. A file no conversation can be sure of is shown in none, instead of in the wrong one. The cards and the Artifacts menu only ever show the conversation's own files.
 

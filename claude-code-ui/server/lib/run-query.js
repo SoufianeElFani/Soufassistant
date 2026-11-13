@@ -44,7 +44,7 @@ import { internalTools } from './internal-tools.js';
 import { disabledOverrides, discoverSkills, invocationName } from './skills.js';
 import { getAgent, agentFor, setSessionAgent, agentPrompt, agentSkillOverrides, agentsMessage } from './agents.js';
 import { knowledgePrompt } from './knowledge.js';
-import { CONFIDENTIAL_PROMPT } from './vault.js';
+import { CONFIDENTIAL_PROMPT, strictGuard, protectedRoots } from './vault.js';
 import { decoratedSessions, recordArtifacts, noteContested, FILE_TOOLS } from './session-tools.js';
 import { attributeArtifacts, addEvidence, RIVAL_MEMORY_MS } from './artifact-attribution.js';
 import { listPreviews } from './previews.js';
@@ -293,6 +293,12 @@ export async function runQuery(ws, { text, permissionMode, model, effort, mode, 
   });
   opts.mcpServers = { ...(opts.mcpServers || {}), soufassistant: internal.server };
   opts.allowedTools = [...(opts.allowedTools || []), ...internal.allowed];
+  // Confidential mode, strict: tool results are not masked, so the agent reads
+  // only the anonymised folders (vault.js strictGuard).
+  if (confidential) {
+    const pre = [...(opts.hooks?.PreToolUse || []), { hooks: [strictGuard(() => protectedRoots(workspaceRoot()), WORK_DIR)] }];
+    opts.hooks = { ...(opts.hooks || {}), PreToolUse: pre };
+  }
   if (mo.coworkDir) {
     const pre = [...(opts.hooks?.PreToolUse || []), { hooks: [coworkWriteGuard(mo.coworkDir, WORK_DIR)] }];
     opts.hooks = { ...(opts.hooks || {}), PreToolUse: pre };

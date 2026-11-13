@@ -28,7 +28,7 @@ import { applyRoles, applyRoleResult, applySessionRoles, resetRolesForNewConvers
 import { applyAgents, applySessionAgent, applyProjects } from './toolbox.js';
 import { applyPublishedApps } from './hub.js';
 import { renderRecents } from './shell.js';
-import { applyVaultMap, applyNotice } from './confidential.js';
+import { applyVaultMap, applyNotice, applyVaultStatus, applyVaultLocked } from './confidential.js';
 import { applyBrowserFrame, skillSuggestionCard } from './artifacts.js';
 import { renderScheduled, showScheduledError } from './scheduled.js';
 import { renderTeam } from './team.js';
@@ -226,6 +226,14 @@ export function handleServerMessage(msg) {
 
     case 'confidential_notice':
       applyNotice(msg);
+      break;
+
+    case 'vault_status':
+      applyVaultStatus(msg);
+      break;
+
+    case 'vault_locked':
+      applyVaultLocked(msg);
       break;
 
     case 'published_apps':

@@ -406,7 +406,48 @@ async function renderConfidential() {
   const v = await api('/api/vault');
   if (tab !== 'confidential') return;
   const es = v.entities || [];
-  body.appendChild(note(`Le mode Confidentiel (bouclier sous la zone de saisie) remplace ces noms par leur pseudonyme avant l'envoi à Claude, et les rétablit à l'affichage. ${es.length} entrée(s) dans le coffre, sur ce Home Assistant uniquement (jamais dans le Drive, illisible pour l'agent).`));
+  body.appendChild(note(`Le mode Confidentiel (bouclier sous la zone de saisie) remplace ces noms par leur pseudonyme avant l'envoi à Claude, et les rétablit à l'affichage. Avec le bouclier, Claude ne lit que les dossiers anonymisés (mode strict). ${es.length} entrée(s) dans le coffre, sur ce Home Assistant uniquement (jamais dans le Drive, illisible pour l'agent).`));
+
+  // chiffrement
+  body.appendChild(el('div', 'usage-section-title', 'Chiffrement du coffre'));
+  const pass = (ph) => { const i = input('', ph); i.type = 'password'; i.autocomplete = 'new-password'; return i; };
+  if (v.locked) {
+    body.appendChild(note('Coffre chiffré et verrouillé (après un redémarrage de l\'app). Le bouclier n\'enverra rien tant qu\'il n\'est pas déverrouillé.'));
+    const p1 = pass('Phrase de passe'); p1.autocomplete = 'current-password';
+    body.append(p1, button('Déverrouiller', null, async () => {
+      const r = await api('/api/vault/unlock', { pass: p1.value });
+      if (!r.ok) { showToast(r.error || 'Échec.', { kind: 'error' }); return; }
+      render();
+    }));
+    return;
+  }
+  if (!v.encrypted) {
+    body.appendChild(note('Le coffre est en clair sur ce Home Assistant (et dans ses sauvegardes). Chiffre-le avec une phrase de passe : elle n\'est jamais enregistrée, il faudra la saisir après chaque redémarrage de l\'app. Phrase oubliée = coffre perdu (les documents du workspace restent, pseudonymisés).'));
+    const p1 = pass('Phrase de passe (8 caractères minimum)'), p2 = pass('La même, une 2e fois');
+    body.append(p1, p2, button('Chiffrer le coffre', null, async () => {
+      if (p1.value !== p2.value) { showToast('Les deux phrases ne sont pas identiques.', { kind: 'error' }); return; }
+      if (!(await confirmAction({ title: 'Chiffrer le coffre ?', body: 'La table des noms, les originaux et les versions réelles sont chiffrés, puis leurs copies en clair supprimées. Sans la phrase de passe, rien ne pourra être récupéré.', confirm: 'Chiffrer', cancel: 'Annuler' }))) return;
+      const r = await api('/api/vault/passphrase', { pass: p1.value });
+      if (!r.ok) { showToast(r.error || 'Échec.', { kind: 'error' }); return; }
+      showToast(`Coffre chiffré (${r.files} fichier(s) réel(s) chiffré(s)).`);
+      render();
+    }));
+  } else {
+    body.appendChild(note('Coffre chiffré (AES-256), déverrouillé jusqu\'au prochain redémarrage de l\'app.'));
+    const o = pass('Phrase actuelle'), n1 = pass('Nouvelle phrase'), n2 = pass('Nouvelle phrase, 2e fois');
+    o.autocomplete = 'current-password';
+    const bar0 = el('div', 'hub-bar');
+    bar0.append(button('Verrouiller maintenant', 'Le coffre redevient illisible jusqu\'à la prochaine saisie de la phrase', async () => { await api('/api/vault/lock', {}); render(); }),
+      button('Changer la phrase…', null, () => { chg.classList.toggle('hidden'); }));
+    const chg = el('div', 'hidden');
+    chg.append(o, n1, n2, button('Changer', null, async () => {
+      if (n1.value !== n2.value) { showToast('Les deux nouvelles phrases ne sont pas identiques.', { kind: 'error' }); return; }
+      const r = await api('/api/vault/passphrase', { pass: n1.value, old: o.value });
+      showToast(r.ok ? 'Phrase de passe changée.' : (r.error || 'Échec.'), r.ok ? {} : { kind: 'error' });
+      if (r.ok) render();
+    }));
+    body.append(bar0, chg);
+  }
 
   // ajout
   const real = input('', 'Nom réel (ex. Société X SA)');
@@ -494,4 +535,8 @@ async function renderConfidential() {
   body.appendChild(el('div', 'usage-section-title', 'Jamais pseudonymisés'));
   const ex = area((v.exempt || []).join('\n'), 4);
   body.append(ex, button('Enregistrer', null, async () => { await api('/api/vault/exempt', { list: ex.value.split('\n') }); showToast('Exemptions enregistrées.'); }));
+  body.appendChild(el('div', 'usage-section-title', 'Ne pas signaler avant l\'envoi'));
+  body.appendChild(note('Mots en majuscule que l\'alerte avant envoi ne propose plus de protéger (produits, sigles techniques…). Une ligne par mot.'));
+  const ig = area((v.ignored || []).join('\n'), 4);
+  body.append(ig, button('Enregistrer', null, async () => { await api('/api/vault/ignore', { list: ig.value.split('\n') }); showToast('Liste enregistrée.'); }));
 }

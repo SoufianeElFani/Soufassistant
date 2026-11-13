@@ -115,8 +115,19 @@ export function registerHubRoutes(app) {
 
 // ── Confidential mode (vault.js) — every answer here goes to the browser only, never to the model ──
 const vaultChanged = (r) => { broadcast({ type: 'vault_map', map: vault.revealMap() }); return r; };
+const statusChanged = (r) => { broadcast({ type: 'vault_status', ...vault.vaultStatus() }); return vaultChanged(r); };
 export function registerVaultRoutes(app) {
-  app.get('/api/vault', wrap(() => ({ ok: true, entities: vault.listEntities(), exempt: vault.exemptList(), reels: vault.listReels() })));
+  app.get('/api/vault', wrap(() => ({ ok: true, ...vault.vaultStatus(), entities: vault.listEntities(), exempt: vault.exemptList(), reels: vault.listReels(), ignored: vault.isLocked() ? [] : vault.ignoredList() })));
+  // encryption: the passphrase only ever travels browser → server, and is never stored
+  app.post('/api/vault/unlock', json, wrap((req) => (vault.unlock(String(req.body?.pass || '')) ? statusChanged({ ok: true }) : { ok: false, error: 'Phrase de passe incorrecte.' })));
+  app.post('/api/vault/lock', json, wrap(() => statusChanged((vault.lock(), { ok: true }))));
+  app.post('/api/vault/passphrase', json, wrap((req) => {
+    const r = vault.setPassphrase(String(req.body?.pass || ''), String(req.body?.old || ''));
+    return r.ok ? statusChanged(r) : r;
+  }));
+  // the pre-send check: what looks like a name and is not in the vault (nothing is learnt or sent)
+  app.post('/api/vault/preview', json, wrap((req) => (vault.isLocked() ? { ok: true, locked: true } : { ok: true, ...vault.suspects(String(req.body?.text || '')) })));
+  app.post('/api/vault/ignore', json, wrap((req) => ((Array.isArray(req.body?.list) ? vault.setIgnored(req.body.list) : vault.addIgnored([].concat(req.body?.words || []))), { ok: true })));
   app.post('/api/vault/entity', json, wrap((req) => vaultChanged({ ok: !!vault.addEntity(req.body || {}) })));
   app.post('/api/vault/entity/delete', json, wrap((req) => vaultChanged({ ok: vault.removeEntity(req.body?.alias) })));
   app.post('/api/vault/exempt', json, wrap((req) => vaultChanged((vault.setExempt(req.body?.list || []), { ok: true }))));
@@ -153,10 +164,10 @@ export function registerVaultRoutes(app) {
     return r.ok ? { ok: true, reels: vault.listReels() } : { ok: false, error: `Cannot produce a real version of this kind of file (${r.how}).` };
   }));
   app.get('/api/vault/reel', (req, res) => {
-    const p = vault.reelPath(req.query.id);
-    if (!p) { res.status(404).end(); return; }
+    const f = vault.reelFile(req.query.id);
+    if (!f) { res.status(404).end(); return; }
     res.setHeader('Cache-Control', 'no-store');
-    res.download(p);
+    res.attachment(f.name).send(f.data);
   });
 }
 

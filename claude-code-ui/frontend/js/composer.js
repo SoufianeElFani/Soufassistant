@@ -6,7 +6,7 @@ import { currentModeFields } from './modes.js';
 import { currentRoleIds } from './roles.js';
 import { voiceFields } from './voice.js';
 import { toolboxFields, afterSend } from './toolbox.js';
-import { confidentialFields } from './confidential.js';
+import { confidentialFields, preSendCheck } from './confidential.js';
 import { S } from './state.js';
 import { attachments, clearAttachments, fileToDataURL } from './attachments.js';
 import { SEND_ICON, STOP_ICON, UI_COMMANDS, clearScreen, hideCmdMenu, showHelp, showUsage } from './commands.js';
@@ -54,6 +54,10 @@ inputForm.onsubmit = async (e) => {
 
   // Sent while Claude is working: added to the turn in progress, not a restart.
   const steer = S.isRunning;
+
+  // Confidential mode: unlock the vault if needed, then flag names it does not know.
+  // Cancelling leaves the draft in the box, nothing sent.
+  if (!(await preSendCheck(text))) { promptInput.focus(); return; }
 
   // Read the attachments to base64 for upload + the message bubble thumbnails.
   const pending = attachments.slice();

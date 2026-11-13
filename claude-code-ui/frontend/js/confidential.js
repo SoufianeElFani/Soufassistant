@@ -3,8 +3,11 @@
  *
  *   bouton bouclier   sous la zone de saisie : allumé = le message et ses pièces
  *                     jointes sont pseudonymisés par le serveur avant l'envoi.
- *                     Allumé par défaut en Code et Cowork, éteint en Chat ; un clic
- *                     le bascule pour le mode courant (mémorisé).
+ *                     Allumé par défaut dans tous les modes ; un clic le bascule
+ *                     pour le mode courant (mémorisé).
+ *   avant l'envoi     coffre chiffré et verrouillé → demande de la phrase de passe ;
+ *                     puis l'alerte : les mots qui ressemblent à des noms et que le
+ *                     coffre ne connaît pas (protéger / ne plus signaler / laisser).
  *   démasquage        les pseudonymes (Client-A, Personne-03…) des réponses sont
  *                     affichés avec les vrais noms, soulignés en pointillé ; le survol
  *                     montre ce qui a été envoyé. La table vient du serveur
@@ -19,7 +22,8 @@ import { showToast } from './toast.js';
 
 let map = {};          // alias → vrai nom
 let re = null;
-const DEFAULT_ON = { code: true, cowork: true, chat: false };
+const DEFAULT_ON = { code: true, cowork: true, chat: true };
+let status = { encrypted: false, locked: false };
 
 const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 function compile() {
@@ -75,6 +79,8 @@ function render() {
   btn.setAttribute('aria-pressed', on ? 'true' : 'false');
   btn.title = on ? 'Confidentiel : les noms sont pseudonymisés avant l\'envoi (cliquer pour désactiver)'
     : 'Confidentiel désactivé : le message part tel quel (cliquer pour activer)';
+  if (on && status.locked) btn.title = 'Confidentiel : coffre verrouillé — la phrase de passe sera demandée à l\'envoi';
+  btn.classList.toggle('locked', on && status.locked);
   btn.setAttribute('aria-label', btn.title);
   document.body.classList.toggle('conf-on', on);
 }
@@ -90,6 +96,99 @@ new MutationObserver(render).observe(document.body, { attributes: true, attribut
 render();
 
 export const confidentialFields = () => (isConfidential() ? { confidential: true } : {});
+
+export function applyVaultStatus(m) { status = { encrypted: !!m.encrypted, locked: !!m.locked }; render(); }
+
+const post = (u, b) => fetch(`${wsBase}${u}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(b || {}) }).then((r) => r.json());
+
+// ── Une petite boîte de dialogue (même habillage que les confirmations) ──
+function dialog(build) {
+  return new Promise((resolve) => {
+    const ov = document.createElement('div');
+    ov.className = 'permission-overlay conf-dialog';
+    const card = document.createElement('div');
+    card.className = 'permission-card confirm-card';
+    ov.appendChild(card);
+    const done = (v) => { ov.remove(); document.removeEventListener('keydown', esc); resolve(v); };
+    const esc = (e) => { if (e.key === 'Escape') { e.preventDefault(); done(null); } };
+    ov.onclick = (e) => { e.stopPropagation(); if (e.target === ov) done(null); };
+    document.addEventListener('keydown', esc);
+    build(card, done);
+    document.body.appendChild(ov);
+    card.querySelector('input, select, button.btn-allow')?.focus();
+  });
+}
+const h = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
+function head(card, title, body) {
+  const hd = h('div', 'card-head');
+  hd.appendChild(h('h3', 'perm-title', title));
+  card.append(hd, h('p', 'confirm-body', body));
+}
+function buttons(card, list) {
+  const bar = h('div', 'perm-buttons');
+  for (const [label, cls, fn] of list) { const b = h('button', `btn ${cls}`, label); b.type = 'button'; b.onclick = fn; bar.appendChild(b); }
+  card.appendChild(bar);
+}
+
+/** Demander la phrase de passe et déverrouiller le coffre. → true si déverrouillé */
+export function askUnlock() {
+  return dialog((card, done) => {
+    head(card, 'Coffre verrouillé', 'Le coffre du mode Confidentiel est chiffré. Saisis ta phrase de passe pour pseudonymiser ce message. Elle n\'est jamais enregistrée ; le coffre se reverrouille au redémarrage de l\'app.');
+    const inp = h('input', 'scheduled-form-input'); inp.type = 'password'; inp.autocomplete = 'current-password'; inp.id = 'conf-pass';
+    const err = h('div', 'conf-err');
+    card.append(inp, err);
+    const go = async () => {
+      const r = await post('/api/vault/unlock', { pass: inp.value }).catch(() => ({ ok: false, error: 'Serveur injoignable.' }));
+      if (r.ok) { status.locked = false; render(); done(true); } else { err.textContent = r.error || 'Échec.'; inp.select(); }
+    };
+    inp.onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); go(); } };
+    buttons(card, [['Annuler', 'btn-deny', () => done(false)], ['Déverrouiller', 'btn-allow', go]]);
+  });
+}
+
+const KINDS = [['client', 'Client'], ['personne', 'Personne'], ['lieu', 'Lieu'], ['projet', 'Projet'], ['partenaire', 'Partenaire'], ['autre', 'Autre']];
+/**
+ * Avant l'envoi d'un message confidentiel : coffre déverrouillé, puis l'alerte
+ * sur les noms possibles que le coffre ne connaît pas. → true pour envoyer.
+ */
+export async function preSendCheck(text) {
+  if (!isConfidential()) return true;
+  if (status.locked && !(await askUnlock())) return false;
+  if (!text) return true;
+  let r = await post('/api/vault/preview', { text }).catch(() => null);
+  if (r?.locked) { if (!(await askUnlock())) return false; r = await post('/api/vault/preview', { text }).catch(() => null); }
+  if (!r?.ok || !r.unknown?.length) return true;   // the server still masks what it knows
+  const choice = await dialog((card, done) => {
+    head(card, 'Noms possibles non protégés', 'Ces mots ressemblent à des noms et ne sont pas dans le coffre : ils partiraient tels quels. Choisis pour chacun.');
+    const rows = h('div', 'conf-rows');
+    const sels = r.unknown.map((c) => {
+      const row = h('div', 'conf-row');
+      const sel = h('select', 'scheduled-form-input');
+      for (const [k, l] of KINDS) sel.appendChild(new Option(`Protéger · ${l}`, k));
+      sel.appendChild(new Option('Laisser passer (cette fois)', 'pass'));
+      sel.appendChild(new Option('Ne plus signaler', 'ignore'));
+      sel.value = c.kind;
+      row.append(h('b', null, c.real), sel);
+      rows.appendChild(row);
+      return [c, sel];
+    });
+    card.appendChild(rows);
+    buttons(card, [['Annuler', 'btn-deny', () => done(null)], ['Envoyer', 'btn-allow', () => done(sels.map(([c, s]) => [c, s.value]))]]);
+  });
+  if (!choice) return false;
+  for (const [c, v] of choice) if (v !== 'pass' && v !== 'ignore') await post('/api/vault/entity', { real: c.real, kind: v });
+  const ign = choice.filter(([, v]) => v === 'ignore').map(([c]) => c.real);
+  if (ign.length) await post('/api/vault/ignore', { words: ign });
+  return true;
+}
+
+/** Le serveur a refusé (coffre verrouillé entre-temps) : rien n'est parti. */
+export function applyVaultLocked(msg) {
+  status.locked = true; render();
+  showToast('Coffre verrouillé : rien n\'a été envoyé. Déverrouille-le puis renvoie le message.', { kind: 'error', timeout: 12000, action: { label: 'Déverrouiller', fn: () => askUnlock() } });
+  const box = document.getElementById('prompt-input');
+  if (box && !box.value && msg.text) box.value = msg.text;
+}
 
 export function applyNotice(msg) {
   showToast(`Confidentiel — ${msg.notes.join(' · ')}`, { kind: 'error', timeout: 12000 });

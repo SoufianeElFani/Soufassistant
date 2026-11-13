@@ -478,4 +478,12 @@ kbd {
 .hub-conf-add { padding: 6px 14px 0; }
 .hub-conf-out { padding: 0 14px 8px; display: flex; flex-direction: column; gap: 4px; }
 .hub-cand { font-size: 13px; color: var(--text); }
+.conf-btn.locked { color: var(--warning, #c58a00); }
+.conf-dialog .confirm-body { margin-bottom: 8px; }
+.conf-dialog input[type=password] { width: 100%; margin: 4px 0 8px; }
+.conf-rows { display: flex; flex-direction: column; gap: 6px; max-height: 46vh; overflow: auto; margin: 4px 0 10px; }
+.conf-row { display: flex; align-items: center; gap: 8px; font-size: 13.5px; }
+.conf-row b { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.conf-row select { max-width: 52%; }
+.conf-err { color: var(--error, #c62828); font-size: 13px; min-height: 1em; }
 .hub-body > .scheduled-form-input, .hub-body > .scheduled-form-textarea { margin: 4px 14px; width: calc(100% - 28px); }

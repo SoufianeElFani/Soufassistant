@@ -53,6 +53,7 @@ describe('the chat UI', { skip: executablePath ? false : 'no Chrome found (set C
       args: ['--no-sandbox', '--disable-dev-shm-usage'],
     });
     page = await browser.newPage();
+    await page.evaluateOnNewDocument(() => { try { localStorage.setItem('confidential', JSON.stringify({ code: false, cowork: false, chat: false })); } catch { /* about:blank, sandboxed frames */ } });
     consoleErrors = [];
     page.on('console', (m) => { if (m.type() === 'error') consoleErrors.push(m.text()); });
     page.on('pageerror', (e) => consoleErrors.push(String(e)));
@@ -156,6 +157,7 @@ describe('the layout on a phone', { skip: executablePath ? false : 'no Chrome fo
     h = await startServer({ scenario: { runs: [] } });
     browser = await puppeteer.launch({ executablePath, args: ['--no-sandbox', '--disable-dev-shm-usage'] });
     page = await browser.newPage();
+    await page.evaluateOnNewDocument(() => { try { localStorage.setItem('confidential', JSON.stringify({ code: false, cowork: false, chat: false })); } catch { /* about:blank, sandboxed frames */ } });
     await page.setViewport({ width: 390, height: 844, isMobile: true, hasTouch: true });
     await page.goto(h.baseUrl, { waitUntil: 'networkidle0' });
   });
@@ -211,6 +213,7 @@ describe('the layout inside the ingress iframe', { skip: executablePath ? false 
     h = await startServer({ scenario: { runs: [{ steps: [{ text: 'a\n'.repeat(200) }] }] } });
     browser = await puppeteer.launch({ executablePath, args: ['--no-sandbox', '--disable-dev-shm-usage'] });
     page = await browser.newPage();
+    await page.evaluateOnNewDocument(() => { try { localStorage.setItem('confidential', JSON.stringify({ code: false, cowork: false, chat: false })); } catch { /* about:blank, sandboxed frames */ } });
     consoleErrors = [];
     page.on('console', (m) => { if (m.type() === 'error') consoleErrors.push(m.text()); });
     page.on('pageerror', (e) => consoleErrors.push(String(e)));

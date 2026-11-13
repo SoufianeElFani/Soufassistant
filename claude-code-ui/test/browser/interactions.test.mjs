@@ -28,6 +28,7 @@ const bash = (id, cmd) => ({ tool: { name: 'Bash', input: { command: cmd }, id, 
 async function launch(harness) {
   const browser = await puppeteer.launch({ executablePath, args: ['--no-sandbox', '--disable-dev-shm-usage'] });
   const page = await browser.newPage();
+  await page.evaluateOnNewDocument(() => { try { localStorage.setItem('confidential', JSON.stringify({ code: false, cowork: false, chat: false })); } catch { /* about:blank, sandboxed frames */ } });
   const errors = [];
   page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
   page.on('pageerror', (e) => errors.push(String(e)));

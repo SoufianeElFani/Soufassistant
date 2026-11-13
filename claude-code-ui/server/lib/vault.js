@@ -13,12 +13,20 @@
  *                 paragraphe, mise en forme gardée), xlsx (chaînes), pdf (→ texte)
  *   anonymizeWorkspace      originaux → coffre, copies anonymes à leur place
  *
- * Ce n'est pas du chiffrement : le coffre est sur la même machine que l'agent.
- * La garde empêche l'agent de l'atteindre (chemin cité, ou recherche récursive
- * dans un dossier parent) ; elle protège contre l'accident, pas contre un attaquant.
+ * Chiffrement (1.4.0) : avec une phrase de passe, le coffre est `coffre.enc`
+ * (AES-256-GCM). Une clé de données aléatoire chiffre la table et chaque fichier
+ * (originaux, versions réelles : `blobs/<id>.enc`, noms opaques) ; elle est
+ * elle-même chiffrée par une clé dérivée de la phrase (scrypt). La phrase n'est
+ * jamais écrite : après un redémarrage le coffre est verrouillé, et mask() refuse
+ * de travailler (le message n'est pas envoyé) tant qu'on ne l'a pas déverrouillé.
+ * Sans phrase de passe (anciens coffres), `coffre.json` en clair, comme avant.
+ * La garde empêche l'agent d'atteindre le coffre (chemin cité, API, recherche
+ * récursive dans un dossier parent) ; elle protège contre l'accident.
  */
 import { execFile } from 'child_process';
-import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'fs';
+import { createCipheriv, createDecipheriv, randomBytes, scryptSync } from 'crypto';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'fs';
+import os from 'os';
 import path from 'path';
 import { DATA_DIR } from './config.js';
 import { writeFileAtomic } from './atomic.js';
@@ -31,23 +39,145 @@ const VAULT_FILE = () => path.join(VAULT_DIR, 'coffre.json');
 export const VAULT_MARK = path.basename(VAULT_DIR);           // le nom que la garde cherche
 export const KINDS = { client: 'Client', personne: 'Personne', lieu: 'Lieu', projet: 'Projet', partenaire: 'Partenaire', ref: 'REF', email: 'email', tel: 'tel', iban: 'iban', tva: 'tva', autre: 'Donnee' };
 
+const ENC_FILE = () => path.join(VAULT_DIR, 'coffre.enc');
+const BLOB_DIR = () => path.join(VAULT_DIR, 'blobs');
+// Mots souvent en majuscule qui ne sont pas des noms à protéger (alerte avant envoi)
+const DEFAULT_IGNORED = ['Claude', 'Anthropic', 'Home Assistant', 'Google', 'Google Drive', 'Drive', 'Word', 'Excel', 'PowerPoint', 'PDF', 'HTML', 'CSV', 'API', 'HA', 'OK', 'FR', 'EN', 'NL', 'BE', 'EUR', 'HTVA', 'TVA', 'PoC', 'KPI', 'ROI', 'IA', 'AI', 'Soufassistant', 'Hub', 'Chat', 'Code', 'Cowork', 'Markdown', 'Python', 'GitHub', 'SaaS', 'BMS', 'EMS', 'SCADA', 'PLC', 'GTC', 'MQTT', 'SLA'];
+
 let state = null;
+let dek = null;          // clé de données, en mémoire seulement (coffre déverrouillé)
+
+export class VaultLocked extends Error {
+  constructor() { super('Coffre verrouillé : déverrouille-le (Hub › Confidentiel) avant d\'envoyer en mode Confidentiel.'); this.code = 'VAULT_LOCKED'; }
+}
+export const isEncrypted = () => existsSync(ENC_FILE());
+export const isLocked = () => isEncrypted() && !dek;
+export function vaultStatus() { return { encrypted: isEncrypted(), locked: isLocked() }; }
+
+// ── Chiffrement ─────────────────────────────────────────────────────────────
+const SCRYPT = { N: 2 ** 15, r: 8, p: 1, maxmem: 96 * 1024 * 1024 };
+const kek = (pass, salt) => scryptSync(String(pass).normalize('NFC'), salt, 32, SCRYPT);
+function seal(key, buf) {
+  const iv = randomBytes(12);
+  const c = createCipheriv('aes-256-gcm', key, iv);
+  const data = Buffer.concat([c.update(buf), c.final()]);
+  return Buffer.concat([iv, c.getAuthTag(), data]);       // iv(12) | tag(16) | données
+}
+function unseal(key, box) {
+  const d = createDecipheriv('aes-256-gcm', key, box.subarray(0, 12));
+  d.setAuthTag(box.subarray(12, 28));
+  return Buffer.concat([d.update(box.subarray(28)), d.final()]);
+}
+const readEnc = () => JSON.parse(readFileSync(ENC_FILE(), 'utf8'));
 
 function load() {
   if (state) return state;
-  try { state = JSON.parse(readFileSync(VAULT_FILE(), 'utf8')); } catch { state = {}; }
+  if (isEncrypted()) {
+    if (!dek) throw new VaultLocked();
+    const enc = readEnc();
+    state = enc.state ? JSON.parse(unseal(dek, Buffer.from(enc.state, 'base64')).toString('utf8')) : {};
+  } else {
+    try { state = JSON.parse(readFileSync(VAULT_FILE(), 'utf8')); } catch { state = {}; }
+  }
   state.entities ||= [];
   state.exempt ||= ['Equans', 'Equans Digital', 'Equans NV', 'Equans SA', 'Equans NV/SA', 'Soufiane EL FANI', 'Soufiane'];
   state.files ||= [];
   state.counters ||= {};
+  state.blobs ||= [];      // { id, type: 'orig' | 'reel', name, at, size }
+  state.roots ||= [];      // dossiers du workspace anonymisés (mode strict)
+  state.ignored ||= [...DEFAULT_IGNORED];
   return state;
 }
 function save() {
   mkdirSync(VAULT_DIR, { recursive: true });
-  writeFileAtomic(VAULT_FILE(), JSON.stringify(state, null, 1));
+  if (dek) {
+    const enc = readEnc();
+    enc.state = seal(dek, Buffer.from(JSON.stringify(state))).toString('base64');
+    writeFileAtomic(ENC_FILE(), JSON.stringify(enc));
+  } else {
+    writeFileAtomic(VAULT_FILE(), JSON.stringify(state, null, 1));
+  }
   compiled = null;
 }
-export function reset() { state = null; compiled = null; }
+export function reset() { state = null; compiled = null; dek = null; }
+
+/** Déverrouiller avec la phrase de passe. → true, ou false si elle est fausse. */
+export function unlock(pass) {
+  if (!isEncrypted()) return true;
+  const enc = readEnc();
+  let key;
+  try { key = unseal(kek(pass || '', Buffer.from(enc.salt, 'base64')), Buffer.from(enc.wrapped, 'base64')); } catch { return false; }
+  dek = key; state = null; compiled = null;
+  load();
+  log('INFO', 'vault: déverrouillé');
+  return true;
+}
+export function lock() { if (!isEncrypted()) return; dek = null; state = null; compiled = null; log('INFO', 'vault: verrouillé'); }
+
+function wrapKey(pass, key) {
+  const salt = randomBytes(16);
+  return { v: 1, kdf: 'scrypt', N: SCRYPT.N, r: SCRYPT.r, p: SCRYPT.p, salt: salt.toString('base64'), wrapped: seal(kek(pass, salt), key).toString('base64') };
+}
+
+/** Garder un fichier réel : chiffré sous un nom opaque, ou en clair sans phrase de passe. */
+function putReal(type, name, buf) {
+  const s = load();
+  if (!dek) {
+    const dst = type === 'orig' ? path.join(VAULT_DIR, 'originaux', name) : path.join(VAULT_DIR, 'reels', new Date().toISOString().slice(0, 10), name);
+    mkdirSync(path.dirname(dst), { recursive: true });
+    writeFileSync(dst, buf);
+    return null;
+  }
+  const id = randomBytes(9).toString('hex');
+  mkdirSync(BLOB_DIR(), { recursive: true });
+  writeFileSync(path.join(BLOB_DIR(), id + '.enc'), seal(dek, buf));
+  const e = { id, type, name, at: Date.now(), size: buf.length };
+  s.blobs.push(e);
+  return e;
+}
+
+/**
+ * Activer le chiffrement (1re fois : la table, `originaux/` et `reels/` sont
+ * chiffrés puis les versions en clair supprimées) ou changer la phrase de passe.
+ */
+export function setPassphrase(pass, oldPass) {
+  if (String(pass || '').length < 8) return { ok: false, error: 'Phrase de passe trop courte (8 caractères minimum).' };
+  if (isEncrypted()) {
+    if (!unlock(oldPass)) return { ok: false, error: 'Ancienne phrase de passe incorrecte.' };
+    writeFileAtomic(ENC_FILE(), JSON.stringify({ ...wrapKey(pass, dek), state: readEnc().state }));
+    log('INFO', 'vault: phrase de passe changée');
+    return { ok: true };
+  }
+  const s = load();
+  dek = randomBytes(32);
+  mkdirSync(VAULT_DIR, { recursive: true });
+  writeFileAtomic(ENC_FILE(), JSON.stringify({ ...wrapKey(pass, dek), state: '' }));
+  // les fichiers en clair du coffre → fichiers chiffrés aux noms opaques
+  let n = 0;
+  for (const [sub, type] of [['originaux', 'orig'], ['reels', 'reel']]) {
+    const dir = path.join(VAULT_DIR, sub);
+    const walk = (d) => { for (const x of (existsSync(d) ? readdirSync(d) : [])) { const p = path.join(d, x); if (statSync(p).isDirectory()) walk(p); else { putReal(type, type === 'reel' ? x : path.relative(dir, p), readFileSync(p)); n++; } } };
+    walk(dir);
+  }
+  save();
+  for (const sub of ['originaux', 'reels', 'tmp-apprentissage']) rmSync(path.join(VAULT_DIR, sub), { recursive: true, force: true });
+  rmSync(VAULT_FILE(), { force: true });
+  log('INFO', `vault: chiffré (${s.entities.length} entrées, ${n} fichiers)`);
+  return { ok: true, files: n };
+}
+
+/** La liste « ne plus signaler » de l'alerte avant envoi. */
+export const ignoredList = () => load().ignored;
+export function setIgnored(list) { load().ignored = [...new Set(list.map((x) => String(x).trim()).filter(Boolean))]; save(); }
+export function addIgnored(words) { const s = load(); for (const w of words) if (w && !s.ignored.some((x) => norm(x) === norm(w))) s.ignored.push(String(w).trim()); save(); }
+
+/** Les dossiers anonymisés, en chemins absolus (le mode strict n'autorise qu'eux). */
+export function protectedRoots(root) {
+  const s = load();
+  const rels = new Set(s.roots);
+  for (const f of s.files) if (f.masked) rels.add(f.masked.split('/')[0]);
+  return [...rels].filter(Boolean).map((r) => path.join(root, r));
+}
 
 // ── Pseudonymes ─────────────────────────────────────────────────────────────
 const letters = (n) => { let s = ''; n += 1; while (n > 0) { s = String.fromCharCode(65 + ((n - 1) % 26)) + s; n = Math.floor((n - 1) / 26); } return s; };
@@ -70,8 +200,8 @@ const norm = (s) => String(s).toLowerCase().replace(/[\s_-]+/g, ' ').trim();
 const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const B = '(?<![\\p{L}\\p{N}@.])', E = '(?![\\p{L}\\p{N}])';
 
-export function listEntities() { return load().entities; }
-export function exemptList() { return load().exempt; }
+export function listEntities() { return isLocked() ? [] : load().entities; }
+export function exemptList() { return isLocked() ? [] : load().exempt; }
 
 /** Ajouter (ou compléter) une entité. → l'entité. */
 export function addEntity({ real, kind = 'autre', variants = [], alias, auto = false }) {
@@ -155,13 +285,45 @@ export function mask(text, { learn = true } = {}) {
   return c.mask ? String(text).replace(c.mask, (m) => c.byVariant.get(norm(m))?.alias ?? m) : String(text);
 }
 
+/**
+ * Alerte avant envoi : ce qui ressemble à un nom (mots en majuscule, sigles) et
+ * que le coffre ne connaît pas — ni entité, ni exemption, ni « ne plus signaler ».
+ * Un mot seul en début de phrase n'est pas retenu (« Prépare… »).
+ * → { auto: [{real, kind}] protégés d'office par detect(), unknown: [{real, kind}] }
+ */
+const CAP = /(?<![\p{L}\p{N}@./\\_-])((?:\p{Lu}[\p{L}\p{N}'’&-]*)(?:[ \t]+(?:(?:de|des|du|van|der|den|la|le|von|&)[ \t]+)?\p{Lu}[\p{L}\p{N}'’&-]*){0,4})(?![\p{L}\p{N}@])/gu;
+const COMPANY = /\b(Industries|Industrie|Group|Groupe|Groep|Holding|Energy|Energie|Solutions|Services|Systems|Technologies|Tech|Corp|Corporation|Company|Bank|Banque|Partners|Consulting|International|Engineering|Logistics|Pharma|Hospital|Hôpital|Ziekenhuis|Université|Universiteit|University|Invest|Capital|Immo|Real Estate|Ville|Stad|Gemeente|Commune|Province|Provincie|Région|Regio)\b/u;
+export function suspects(text) {
+  const s = load();
+  const t = String(text || '');
+  const auto = detect(t);
+  const c = compile();
+  const known = (v) => c.byVariant.has(norm(v)) || isAliasLike(v) || s.exempt.some((x) => norm(x) === norm(v)) || s.ignored.some((x) => norm(x) === norm(v))
+    || auto.some((a) => norm(a.real).includes(norm(v)));
+  const masked = c.mask ? t.replace(c.mask, ' ') : t;     // ce qui est déjà protégé ne compte plus
+  const out = new Map();
+  for (const m of masked.matchAll(CAP)) {
+    let v = m[1].replace(/[-'’&]+$/, '');
+    const words = v.split(/\s+/);
+    const before = masked.slice(0, m.index).replace(/[ \t«"“(\[*_>-]+$/, '');
+    const startOfSentence = !before || /[.!?:;\n]$/.test(before);
+    if (words.length === 1 && startOfSentence && !/^\p{Lu}{2,}/u.test(v)) continue;
+    // un mot de début de phrase suivi d'un nom : garder seulement le nom
+    if (startOfSentence && words.length > 1 && !/^\p{Lu}{2,}/u.test(words[0])) { words.shift(); v = words.join(' '); }
+    if (v.length < 2 || /^\p{Lu}$/u.test(v) || /^\d/.test(v) || known(v) || words.every((w) => known(w))) continue;
+    const kind = !COMPANY.test(v) && words.length >= 2 && words.every((w) => /^\p{Lu}[\p{Ll}'’-]+$|^\p{Lu}{2,}$/u.test(w)) && words.length <= 3 && !words.some((w) => /^\p{Lu}{2,}$/u.test(w) && w.length > 3) ? 'personne' : 'client';
+    if (!out.has(norm(v))) out.set(norm(v), { real: v, kind });
+  }
+  return { auto, unknown: [...out.values()].slice(0, 40) };
+}
+
 export function reveal(text) {
   const c = compile();
   return c.reveal && text ? String(text).replace(c.reveal, (a) => c.byAlias.get(a)?.real ?? a) : text;
 }
 
 /** Pour l'affichage dans le navigateur (jamais envoyé au modèle). */
-export function revealMap() { return Object.fromEntries(load().entities.map((e) => [e.alias, e.real])); }
+export function revealMap() { return isLocked() ? {} : Object.fromEntries(load().entities.map((e) => [e.alias, e.real])); }
 
 // ── Fichiers ────────────────────────────────────────────────────────────────
 /** Un JPEG sans ses métadonnées (EXIF / XMP en APP1, IPTC en APP13, commentaires) — l'image est intacte. */
@@ -240,27 +402,43 @@ export const revealFile = (src, dst) => transformFile(src, dst, reveal);
 
 /** Version réelle d'un livrable (dans le coffre). → chemin dans le coffre */
 export async function particularize(abs, rel) {
-  const outDir = path.join(VAULT_DIR, 'reels', new Date().toISOString().slice(0, 10));
-  const dst = path.join(outDir, reveal(path.basename(rel)).replace(/\s+/g, '-'));
-  const r = await revealFile(abs, dst);
-  if (r.ok && ['docx', 'pptx', 'xlsx'].includes(ext(abs)) && ext(abs) !== 'xlsx') {
-    // et son PDF, si c'est un document
-    await run('soffice', ['--headless', '--convert-to', 'pdf', '--outdir', outDir, r.dst]).catch(() => {});
-  }
-  return r;
+  load();
+  // produit dans un dossier temporaire, puis gardé au coffre (chiffré s'il y a une phrase de passe)
+  const tmp = mkdtempSync(path.join(os.tmpdir(), 'reel-'));
+  try {
+    const dst = path.join(tmp, reveal(path.basename(rel)).replace(/\s+/g, '-'));
+    const r = await revealFile(abs, dst);
+    if (r.ok && ['docx', 'pptx'].includes(ext(abs))) {
+      // et son PDF, si c'est un document
+      await run('soffice', ['--headless', '--convert-to', 'pdf', '--outdir', tmp, r.dst]).catch(() => {});
+    }
+    if (r.ok) {
+      for (const n of readdirSync(tmp)) putReal('reel', n, readFileSync(path.join(tmp, n)));
+      save();
+    }
+    return r;
+  } finally { rmSync(tmp, { recursive: true, force: true }); }
 }
 
 export function listReels() {
+  if (isLocked()) return [];
+  const out = load().blobs.filter((b) => b.type === 'reel').map((b) => ({ name: b.name, id: 'b:' + b.id, size: b.size, mtime: b.at }));
   const dir = path.join(VAULT_DIR, 'reels');
-  const out = [];
   const walk = (d) => { for (const n of (existsSync(d) ? readdirSync(d) : [])) { const p = path.join(d, n); if (statSync(p).isDirectory()) walk(p); else out.push({ name: n, id: path.relative(dir, p), size: statSync(p).size, mtime: statSync(p).mtimeMs }); } };
   walk(dir);
   return out.sort((a, b) => b.mtime - a.mtime);
 }
-export function reelPath(id) {
+/** Une version réelle, pour le téléchargement. → { name, data } ou null */
+export function reelFile(id) {
+  id = String(id || '');
+  if (isLocked()) return null;
+  if (id.startsWith('b:')) {
+    const b = load().blobs.find((x) => x.type === 'reel' && x.id === id.slice(2));
+    return b && dek ? { name: b.name, data: unseal(dek, readFileSync(path.join(BLOB_DIR(), b.id + '.enc'))) } : null;
+  }
   const dir = path.join(VAULT_DIR, 'reels');
-  const p = path.resolve(dir, String(id || ''));
-  return p.startsWith(dir + path.sep) && existsSync(p) ? p : null;
+  const p = path.resolve(dir, id);
+  return p.startsWith(dir + path.sep) && existsSync(p) ? { name: path.basename(p), data: readFileSync(p) } : null;
 }
 
 /**
@@ -299,9 +477,7 @@ export async function anonymizeTree(root, rel, { dryRun = false } = {}) {
     const r1 = mask(r0, { learn: false });
     const k = ext(p);
     if (dryRun) { if (r1 !== r0) report.renommes++; continue; }
-    const orig = path.join(VAULT_DIR, 'originaux', r0);
-    mkdirSync(path.dirname(orig), { recursive: true });
-    copyFileSync(p, orig);
+    putReal('orig', r0, readFileSync(p));
     const dst = path.join(root, r1);
     if (TEXT_EXT.has(k) || OFFICE[k] || k === 'pdf') {
       const res = await maskFile(p, dst + '.anon-tmp' + path.extname(dst));
@@ -338,7 +514,7 @@ export async function anonymizeTree(root, rel, { dryRun = false } = {}) {
   }
   // dossiers vides laissés par les renommages
   const prune = (d) => { if (!existsSync(d)) return; for (const n of readdirSync(d)) { const p = path.join(d, n); if (statSync(p).isDirectory()) prune(p); } if (d !== base && !readdirSync(d).length) rmSync(d, { recursive: true }); };
-  if (!dryRun) { prune(base); save(); }
+  if (!dryRun) { prune(base); const top = String(rel).split('/')[0]; if (top && !state.roots.includes(top)) state.roots.push(top); save(); }
   report.entites_apres = load().entities.length;
   log('INFO', `vault: ${rel} — ${report.fichiers} fichiers, ${report.anonymises} anonymisés${dryRun ? ' (essai)' : ''}`);
   return report;
@@ -346,14 +522,15 @@ export async function anonymizeTree(root, rel, { dryRun = false } = {}) {
 
 // ── La garde : l'agent n'atteint jamais le coffre ─────────────────────────────
 const PARENTS = ['/', '/data', DATA_DIR, path.dirname(VAULT_DIR)].map((p) => p.replace(/\/+$/, '') || '/');
-const RECURSIVE = /\b(grep|rg|ag|find|fd|ls\s+-[a-zA-Z]*R|tree|du|tar|zip|rsync|cp\s+-[a-zA-Z]*r|scp|locate)\b/;
+// in command position only (start, after ; & | ( or $( , sudo, xargs): « du » or « find » in a sentence is not a command
+const RECURSIVE = /(?:^|[;&|`(\n]|\$\()\s*(?:(?:sudo|xargs|nice|timeout\s+\S+)\s+)*(?:grep|rg|ag|find|fd|ls\s+-[a-zA-Z]*R|tree|du|tar|zip|rsync|cp\s+-[a-zA-Z]*r|scp|locate)\b/;
 
 export function vaultGuard(input) {
   const tool = input?.tool_name || '';
   const ti = input?.tool_input ?? {};
   const blob = JSON.stringify(ti);
   const deny = (why) => ({ continue: true, hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: why } });
-  if (blob.includes(VAULT_MARK) || blob.includes(VAULT_DIR)) return deny('Le coffre du mode Confidentiel est inaccessible à l\'agent (données réelles). Travaille sur les fichiers pseudonymisés du workspace.');
+  if (blob.includes(VAULT_MARK) || blob.includes(VAULT_DIR) || /api\/vault/i.test(blob)) return deny('Le coffre du mode Confidentiel est inaccessible à l\'agent (données réelles). Travaille sur les fichiers pseudonymisés du workspace.');
   const raw = String(ti.path || ti.file_path || '');
   const target = raw ? (raw.replace(/\/+$/, '') || '/') : null;
   if ((tool === 'Grep' || tool === 'Glob') && target && PARENTS.includes(target)) return deny(`Recherche trop large (${target}) : elle traverserait le coffre du mode Confidentiel. Cible un dossier plus précis.`);
@@ -361,6 +538,63 @@ export function vaultGuard(input) {
     return deny('Commande récursive sur un dossier parent du coffre du mode Confidentiel : cible un dossier plus précis.');
   }
   return { continue: true };
+}
+
+// ── Le mode strict : avec le bouclier, l'agent ne lit que les dossiers anonymisés ──
+// Les résultats d'outils ne passent pas par mask() : ce que l'agent lit ailleurs
+// (fichiers, web, connecteurs, Home Assistant) partirait en clair. Le mode strict
+// le lui refuse. C'est une garde par motifs (un script peut toujours ouvrir un
+// autre fichier) : elle évite l'accident, elle ne remplace pas un bac à sable.
+const READ_TOOLS = new Set(['Read', 'Grep', 'Glob', 'Edit', 'MultiEdit', 'NotebookEdit', 'LS']);
+const NET_TOOLS = new Set(['WebFetch', 'WebSearch']);
+const MCP_OK = new Set(['mcp__soufassistant__generate_image']);
+const SYSTEM_DIRS = ['/usr', '/bin', '/sbin', '/lib', '/lib64', '/opt', '/data/tools', '/dev/null', '/tmp'];
+const NET_CMD = /(^|[\s;&|(`'"])(curl|wget|ha-tools|ssh|scp|sftp|nc|ncat|telnet|rclone|gh|ftp|sqlite3)(\s|$|;)|\bha\s+(core|apps?|addons?|supervisor|host|backups?|os|network)\b|\bgit\s+(clone|fetch|pull|push|ls-remote)\b|\bpython[\d.]*\s+-m\s+http\b/;
+const inside = (p, d) => p === d || p.startsWith(d.replace(/\/+$/, '') + '/');
+
+/** PreToolUse pour un message confidentiel. `roots()` → dossiers autorisés (absolus). */
+export function strictGuard(roots, cwd = '/') {
+  const home = os.homedir();
+  const readOnly = [path.join(home, '.claude', 'skills'), path.join(home, '.claude', 'plugins')];
+  const deny = (why) => ({ continue: true, hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: `Mode Confidentiel strict : ${why} Si ce travail n'est pas confidentiel, l'utilisateur peut éteindre le bouclier (sous la zone de saisie).` } });
+  return async (input) => {
+    const tool = input?.tool_name || '';
+    const ti = input?.tool_input ?? {};
+    let allowed;
+    try { allowed = [...roots(), '/tmp']; } catch (e) { return deny(e.message); }
+    const where = allowed.filter((r) => r !== '/tmp').join(', ') || 'aucun dossier anonymisé pour l\'instant (Hub › Confidentiel › Anonymiser)';
+    const ok = (abs, extra = []) => [...allowed, ...extra].some((d) => inside(abs, d));
+    if (NET_TOOLS.has(tool)) return deny('pas de web : ce qui en revient ne serait pas pseudonymisé.');
+    if (tool.startsWith('mcp__') && !MCP_OK.has(tool)) return deny('pas de connecteur ni de navigateur : leurs réponses ne seraient pas pseudonymisées.');
+    if (READ_TOOLS.has(tool)) {
+      const targets = [ti.file_path, ti.notebook_path, ti.path].filter(Boolean);
+      if (!targets.length && (tool === 'Grep' || tool === 'Glob' || tool === 'LS')) targets.push(cwd);
+      if (tool === 'Glob' && path.isAbsolute(String(ti.pattern || ''))) targets.push(String(ti.pattern).replace(/[*?[{].*$/, '') || '/');
+      for (const t of targets) {
+        const abs = path.resolve(cwd, String(t));
+        if (!ok(abs, readOnly)) return deny(`lecture limitée aux dossiers anonymisés (${where}) — refusé : ${abs}.`);
+      }
+      return { continue: true };
+    }
+    if (tool === 'Bash') {
+      const cmd = String(ti.command || '');
+      if (NET_CMD.test(cmd)) return deny('pas de commande réseau ni d\'accès à Home Assistant (curl, ha-tools, ssh, git fetch…) : leurs résultats ne seraient pas pseudonymisés.');
+      if (/(^|[\s'"=:])~(\/|\s|$)|\$\{?HOME\b|(^|[\s/'"=])\.\.(\/|\s|$|['"])/.test(cmd)) return deny('pas de ~, $HOME ni de « .. » dans les commandes : utilise des chemins absolus dans les dossiers anonymisés.');
+      const first = cmd.match(/^\s*cd\s+(?:"([^"]+)"|'([^']+)'|([^\s;&|]+))\s*(?:&&|;|\n|$)/);
+      const start = first && (first[1] || first[2] || first[3]);
+      if (!start || !ok(path.resolve(cwd, start))) return deny(`une commande doit commencer par cd "<dossier anonymisé>" (${where}).`);
+      for (const m of cmd.matchAll(/(?:^|[\s;&|(])cd\s+(?:"([^"]+)"|'([^']+)'|([^\s;&|)]+))/g)) {
+        const d = m[1] || m[2] || m[3];
+        if (!path.isAbsolute(d) || !ok(d)) return deny(`cd hors des dossiers anonymisés : ${d}.`);
+      }
+      for (const m of cmd.matchAll(/(?:^|[\s'"=:(<>|,])(\/[^\s'";|&)<>,`]*)/g)) {
+        const p = m[1].replace(/\/+$/, '') || '/';
+        if (!ok(p, SYSTEM_DIRS) && !SYSTEM_DIRS.some((d) => inside(p, d))) return deny(`chemin hors des dossiers anonymisés : ${p}.`);
+      }
+      return { continue: true };
+    }
+    return { continue: true };
+  };
 }
 
 // ── Pièces jointes et invite d'un message confidentiel ───────────────────────
@@ -390,4 +624,7 @@ export const CONFIDENTIAL_PROMPT = [
   'Use them exactly as written — in text, file names and documents — and never try to guess the real identities.',
   'The user sees the real names on their screen and can produce the real version of a deliverable locally ("Particulariser").',
   'Never try to read the confidential vault.',
+  'Strict mode is on: you may only read the anonymised workspace folders (and /tmp); the web, connectors, the browser, Home Assistant',
+  'and files elsewhere are refused, because what comes back from them is not pseudonymised. Start every Bash command with',
+  'cd "<an anonymised folder>" and use absolute paths inside it. If a refusal blocks the task, say so and suggest turning the shield off.',
 ].join(' ');

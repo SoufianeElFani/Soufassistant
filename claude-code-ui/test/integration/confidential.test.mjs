@@ -15,6 +15,7 @@ describe('confidential mode', () => {
     h = await startServer({ scenario: { runs: [
       { steps: [{ text: 'Ok' }] },
       { steps: [{ tool: { name: 'Bash', input: { command: 'cat /data/.coffre-souf/coffre.json' }, id: 'v' } }, { text: 'done' }] },
+      { steps: [{ tool: { name: 'Read', input: { file_path: '/config/configuration.yaml' }, id: 's1' } }, { tool: { name: 'WebFetch', input: { url: 'https://example.com' }, id: 's2' } }, { text: 'done' }] },
     ] } });
     ws = path.join(h.dataDir, 'workspace');
     mkdirSync(path.join(ws, 'Travail', 'Offre_Zeta-Corp'), { recursive: true });
@@ -55,5 +56,46 @@ describe('confidential mode', () => {
     assert.equal(p.ok, true);
     const real = await (await fetch(`${h.baseUrl}/api/vault/reel?id=${encodeURIComponent(p.reels[0].id)}`)).text();
     assert.match(real, /Zeta Corp SA/);
+  });
+
+  test('mode strict : avec le bouclier, lecture hors des dossiers anonymisés et web refusés', async () => {
+    const c = await h.connect();
+    await c.waitFor('history');
+    c.send({ type: 'new_session' });
+    c.send({ type: 'prompt', text: 'lis la config', mode: 'code', confidential: true, permissionMode: 'bypass' });
+    await c.waitFor((m) => m.type === 'result' || m.type === 'done');
+    const d = h.records('tool_decision');
+    for (const id of ['s1', 's2']) {
+      const x = d.find((r) => r.id === id);
+      assert.equal(x?.outcome.behavior, 'deny', id);
+      assert.match(x.outcome.message, /strict/);
+    }
+    assert.match(h.records('query').at(-1).options.systemPromptText, /Strict mode is on/);
+  });
+
+  test('coffre chiffré et verrouillé : rien n\'est envoyé, puis déverrouillage', async () => {
+    const post = (u, b) => fetch(`${h.baseUrl}${u}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(b) }).then((r) => r.json());
+    assert.equal((await post('/api/vault/passphrase', { pass: 'phrase de test' })).ok, true);
+    assert.equal((await post('/api/vault/lock', {})).ok, true);
+    const v = await (await fetch(`${h.baseUrl}/api/vault`)).json();
+    assert.equal(v.locked, true);
+    assert.deepEqual(v.entities, []);
+    const c = await h.connect();
+    const st = await c.waitFor('vault_status');
+    assert.equal(st.locked, true);
+    const queries = h.records('query').length;
+    c.send({ type: 'prompt', text: 'Offre pour Zeta Corp SA', mode: 'code', confidential: true, permissionMode: 'bypass' });
+    const l = await c.waitFor('vault_locked');
+    assert.equal(l.text, 'Offre pour Zeta Corp SA');
+    await new Promise((r) => setTimeout(r, 300));
+    assert.equal(h.records('query').length, queries, 'nothing reached the model');
+    assert.equal((await post('/api/vault/preview', { text: 'x' })).locked, true);
+    assert.equal((await post('/api/vault/unlock', { pass: 'faux' })).ok, false);
+    assert.equal((await post('/api/vault/unlock', { pass: 'phrase de test' })).ok, true);
+    const pv = await post('/api/vault/preview', { text: 'Offre pour Zeta Corp et Globex Industries' });
+    assert.deepEqual(pv.unknown.map((x) => x.real), ['Globex Industries']);
+    const vdir = readdirSync(h.dataDir).find((n) => n.startsWith('.coffre'));
+    const files = readdirSync(path.join(h.dataDir, vdir));
+    assert.ok(files.includes('coffre.enc') && !files.includes('coffre.json'));
   });
 });

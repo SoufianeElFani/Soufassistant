@@ -85,4 +85,105 @@ describe('vault', () => {
   test('la table pour l\'écran', () => {
     assert.equal(V.revealMap()['Client-A'], 'Acme Brewing');
   });
+  test('la garde : l\'API du coffre, et « du » dans une phrase n\'est pas la commande du', () => {
+    const g = (tool, ti) => V.vaultGuard({ tool_name: tool, tool_input: ti }).hookSpecificOutput?.permissionDecision || 'allow';
+    assert.equal(g('Bash', { command: 'curl -s http://127.0.0.1:8099/api/vault' }), 'deny');
+    assert.equal(g('Bash', { command: `cd /data/dev && python x.py "le texte du message" ${tmp}/y` }), 'allow');
+    assert.equal(g('Bash', { command: `ls && du -sh ${tmp}` }), 'deny');
+  });
+});
+
+describe('vault — alerte avant envoi', () => {
+  test('noms inconnus signalés, connus / exemptés / débuts de phrase ignorés', () => {
+    const r = V.suspects('Prépare la relance pour Acme Brewing et Globex Industries, avec Jean Dupont. Equans signe. Merci à KUL et à Claude.');
+    const names = r.unknown.map((x) => x.real);
+    assert.ok(names.includes('Globex Industries'), names.join('|'));
+    assert.ok(names.includes('Jean Dupont'));
+    assert.ok(names.includes('KUL'));
+    assert.ok(!names.some((n) => /Acme|Prépare|Equans|Claude|Merci/.test(n)), names.join('|'));
+    assert.equal(r.unknown.find((x) => x.real === 'Jean Dupont').kind, 'personne');
+    assert.equal(r.unknown.find((x) => x.real === 'Globex Industries').kind, 'client');
+    V.addIgnored(['KUL']);
+    assert.ok(!V.suspects('Voir KUL demain').unknown.some((x) => x.real === 'KUL'));
+  });
+});
+
+describe('vault — mode strict', () => {
+  const ws = path.join(tmp, 'ws');
+  const G = V.strictGuard(() => [path.join(ws, 'T')], '/config');
+  const g = async (tool, ti) => (await G({ tool_name: tool, tool_input: ti })).hookSpecificOutput?.permissionDecision || 'allow';
+  test('lecture : seulement les dossiers anonymisés et /tmp', async () => {
+    assert.equal(await g('Read', { file_path: path.join(ws, 'T', 'note.md') }), 'allow');
+    assert.equal(await g('Read', { file_path: '/tmp/x.txt' }), 'allow');
+    assert.equal(await g('Read', { file_path: '/config/automations.yaml' }), 'deny');
+    assert.equal(await g('Read', { file_path: 'automations.yaml' }), 'deny', 'relative = cwd /config');
+    assert.equal(await g('Grep', { pattern: 'x' }), 'deny', 'no path = cwd');
+    assert.equal(await g('Glob', { pattern: '/config/**/*.yaml' }), 'deny');
+    assert.equal(await g('Write', { file_path: '/config/out.md', content: 'x' }), 'allow', 'writing leaks nothing');
+  });
+  test('web, connecteurs, navigateur refusés ; image permise', async () => {
+    assert.equal(await g('WebFetch', { url: 'https://x' }), 'deny');
+    assert.equal(await g('WebSearch', { query: 'x' }), 'deny');
+    assert.equal(await g('mcp__google__gmail_search', {}), 'deny');
+    assert.equal(await g('mcp__soufassistant__browser_open', {}), 'deny');
+    assert.equal(await g('mcp__soufassistant__generate_image', {}), 'allow');
+    assert.equal(await g('TodoWrite', {}), 'allow');
+  });
+  test('Bash : cd dans un dossier anonymisé, pas de réseau ni de chemin ailleurs', async () => {
+    const T = path.join(ws, 'T');
+    assert.equal(await g('Bash', { command: `cd "${T}" && /data/tools/pyenv/bin/python build.py` }), 'allow');
+    assert.equal(await g('Bash', { command: `cd "${T}" && ls -la /tmp && cat /usr/share/dict/x` }), 'allow');
+    assert.equal(await g('Bash', { command: 'ls' }), 'deny', 'no cd');
+    assert.equal(await g('Bash', { command: 'cd /config && cat automations.yaml' }), 'deny');
+    assert.equal(await g('Bash', { command: `cd "${T}" && cat /config/secrets.yaml` }), 'deny');
+    assert.equal(await g('Bash', { command: `cd "${T}" && cat ../../x` }), 'deny');
+    assert.equal(await g('Bash', { command: `cd "${T}" && cat ~/.claude/x` }), 'deny');
+    assert.equal(await g('Bash', { command: `cd "${T}" && curl https://x` }), 'deny');
+    assert.equal(await g('Bash', { command: `cd "${T}" && ha-tools state sun.sun` }), 'deny');
+    assert.equal(await g('Bash', { command: `cd "${T}" && cd /config && ls` }), 'deny');
+  });
+});
+
+describe('vault — chiffrement', () => {
+  test('chiffrer : table et originaux illisibles sur le disque, puis verrouiller / déverrouiller', async () => {
+    const { existsSync, readdirSync } = await import('fs');
+    const n = V.listEntities().length;
+    assert.equal(V.setPassphrase('court').ok, false);
+    const r = V.setPassphrase('une phrase de passe');
+    assert.equal(r.ok, true);
+    assert.ok(r.files >= 1, 'the original note was encrypted');
+    const D = process.env.VAULT_DIR;
+    assert.equal(existsSync(path.join(D, 'coffre.json')), false);
+    assert.equal(existsSync(path.join(D, 'originaux')), false);
+    const disk = [readFileSync(path.join(D, 'coffre.enc'), 'latin1'), ...readdirSync(path.join(D, 'blobs')).map((f) => readFileSync(path.join(D, 'blobs', f), 'latin1'))].join(' ');
+    assert.doesNotMatch(disk, /Acme|Gent|Client-A/);
+    assert.equal(V.listEntities().length, n, 'still unlocked');
+    V.lock();
+    assert.equal(V.isLocked(), true);
+    assert.throws(() => V.mask('Acme Brewing'), (e) => e.code === 'VAULT_LOCKED');
+    assert.deepEqual(V.revealMap(), {});
+    assert.equal(V.unlock('mauvaise phrase'), false);
+    assert.equal(V.isLocked(), true);
+    V.reset();                                      // as after a restart
+    assert.equal(V.isLocked(), true);
+    assert.equal(V.unlock('une phrase de passe'), true);
+    assert.equal(V.mask('Acme Brewing', { learn: false }), 'Client-A');
+  });
+  test('nouvelles entrées et versions réelles chiffrées ; changer la phrase', async () => {
+    V.addEntity({ real: 'Initech', kind: 'client' });
+    const ws = path.join(tmp, 'ws');
+    writeFileSync(path.join(ws, 'T', 'r.md'), 'Client-A et ' + V.mask('Initech', { learn: false }));
+    const r = await V.particularize(path.join(ws, 'T', 'r.md'), 'T/r.md');
+    assert.equal(r.ok, true);
+    const reel = V.listReels()[0];
+    assert.match(reel.id, /^b:/);
+    assert.equal(V.reelFile(reel.id).data.toString(), 'Acme Brewing et Initech');
+    assert.equal(V.setPassphrase('nouvelle phrase !', 'faux').ok, false);
+    assert.equal(V.setPassphrase('nouvelle phrase !', 'une phrase de passe').ok, true);
+    V.reset();
+    assert.equal(V.unlock('une phrase de passe'), false);
+    assert.equal(V.unlock('nouvelle phrase !'), true);
+    assert.equal(V.reelFile(reel.id).data.toString(), 'Acme Brewing et Initech');
+    assert.ok(V.protectedRoots(ws).includes(path.join(ws, 'T')));
+  });
 });
