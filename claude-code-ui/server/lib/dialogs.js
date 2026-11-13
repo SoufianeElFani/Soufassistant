@@ -18,6 +18,7 @@
  * one still waiting.
  */
 import { randomUUID } from 'crypto';
+import * as vault from './vault.js';
 import { broadcast } from './broadcast.js';
 import { notify, clearAttention } from './notify.js';
 
@@ -55,7 +56,7 @@ export function askQuestion(toolInput, signal, run = null) {
     const id = randomUUID();
     // Which conversation is asking — a tab showing another one says so.
     const from = run ? { sid: run.key, conversation: run.title || null } : {};
-    pendingDialogs.set(id, { payload: toolInput, resolve, ...from });
+    pendingDialogs.set(id, { payload: toolInput, resolve, confidential: !!run?.confidential, ...from });
     broadcast({ type: 'user_dialog', id, dialogKind: 'askUserQuestion', payload: toolInput, ...from });
     notify('question', {
       title: 'Claude has a question',
@@ -80,8 +81,28 @@ export function answerDialog(id, result) {
   pendingDialogs.delete(id);
   broadcast({ type: 'user_dialog_cancelled', id });   // close it on every other tab
   if (!pendingDialogs.size) clearAttention();
-  entry.resolve(result || null);
+  entry.resolve(entry.confidential ? maskAnswer(result) : (result || null));
   return true;
+}
+
+/**
+ * Confidential mode: what the user typed in a question's "Other" box goes through
+ * the vault like a message does (the options themselves are Claude's own,
+ * already pseudonymous text). A locked vault cannot mask: nothing is passed on.
+ */
+function maskAnswer(result) {
+  if (!result) return null;
+  const before = vault.listEntities().length;
+  let out;
+  try {
+    const m = (v) => (typeof v === 'string' ? vault.mask(v) : Array.isArray(v) ? v.map(m) : v && typeof v === 'object' ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, m(x)])) : v);
+    out = m(result);
+  } catch (e) {
+    if (e.code !== 'VAULT_LOCKED') throw e;
+    return null;   // read as "no answer": never the clear text
+  }
+  if (vault.listEntities().length !== before) broadcast({ type: 'vault_map', map: vault.revealMap() });
+  return out;
 }
 
 /**

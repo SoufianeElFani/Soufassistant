@@ -244,6 +244,8 @@ export async function runQuery(ws, { text, permissionMode, model, effort, mode, 
   // model default applies.
   if (effort && EFFORT_LEVELS.has(effort)) opts.effort = effort;
 
+  // read by dialogs.js: a free-text answer of a confidential run is pseudonymised too
+  run.confidential = !!confidential;
   const hooks = hooksFor(run.permissionMode, run);
   if (hooks) opts.hooks = hooks;
 

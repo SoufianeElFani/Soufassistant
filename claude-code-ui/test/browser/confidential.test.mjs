@@ -23,7 +23,8 @@ describe('confidential shield in the browser', { skip }, () => {
   const errors = [];
   const post = (u, b) => fetch(`${h.baseUrl}${u}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(b) }).then((r) => r.json());
   before(async () => {
-    h = await startServer({ scenario: { runs: [{ steps: [{ text: 'Ok 1' }] }, { steps: [{ text: 'Ok 2' }] }, { steps: [{ text: 'Ok 3' }] }] } });
+    h = await startServer({ scenario: { runs: [{ steps: [{ text: 'Ok 1' }] }, { steps: [{ text: 'Ok 2' }] }, { steps: [{ text: 'Ok 3' }] },
+      { steps: [{ tool: { name: 'AskUserQuestion', input: { questions: [{ header: 'Client-A', question: 'On relance Client-A ?', options: [{ label: 'Oui, Client-A', description: 'Mail à Client-A' }, { label: 'Non' }] }] }, id: 'qa' } }] }] } });
     browser = await puppeteer.launch({ executablePath, args: ['--no-sandbox', '--disable-dev-shm-usage'] });
     page = await browser.newPage();
     page.on('pageerror', (e) => errors.push(String(e)));
@@ -111,5 +112,22 @@ describe('confidential shield in the browser', { skip }, () => {
     assert.deepEqual(pixels.inside, [0, 0, 0], 'the zone is painted black');
     assert.deepEqual(pixels.outside, [255, 255, 255]);
     assert.deepEqual(errors, []);
+  });
+
+  test('a question shows the real names; the answer sent back keeps the pseudonym', async () => {
+    await page.waitForFunction(() => !document.querySelector('#send-btn.stop'), { timeout: 8000 });
+    await page.select('#perm-mode', 'default').catch(() => {});
+    await send('pose-moi la question');
+    await page.waitForSelector('#dialog-overlay:not(.hidden) .dialog-q-text', { timeout: 10000 });
+    const shown = await page.$eval('#dialog-overlay', (o) => o.innerText);
+    assert.match(shown, /On relance Globex Industries \?/);
+    assert.match(shown, /Oui, Globex Industries/);
+    assert.doesNotMatch(shown, /Client-A/, 'no pseudonym left on screen');
+    assert.match(await page.$eval('#dialog-overlay .dialog-q-text .pii', (s) => s.title), /Client-A/, 'hover shows what Claude wrote');
+    await page.evaluate(() => document.querySelector('#dialog-overlay .dialog-option input').click());
+    await page.click('#dialog-submit');
+    const d = await h.waitForRecord((r) => r.kind === 'tool_decision' && r.id === 'qa', { timeout: 8000 });
+    assert.match(d.outcome.message, /Oui, Client-A/);
+    assert.doesNotMatch(d.outcome.message, /Globex/);
   });
 });

@@ -1,3 +1,7 @@
+## 1.5.4
+- **Claude's questions show the real names.** In confidential mode, the question pop-ups and the permission cards now show the real names instead of the pseudonyms (dotted underline; hover to see what Claude wrote). The answer you pick goes back to Claude as Claude wrote it, with the pseudonym.
+- **What you type in a question's "Other" box is pseudonymised**, like a message. Until now it reached Claude as typed. If the vault is locked, the typed answer is not passed on.
+
 ## 1.5.3
 - **In the Home Assistant app, the Hub no longer disappears under the keyboard.** The app's frame keeps its full height when the keyboard opens, and the panels stayed glued to its bottom, under the keyboard. They now sit on top of the keyboard, and the field you are typing in stays in view without moving Home Assistant's page.
 

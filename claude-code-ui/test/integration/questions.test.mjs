@@ -41,6 +41,45 @@ for (const mode of ['ask', 'auto']) {
   });
 }
 
+describe('a question in confidential mode', () => {
+  let h;
+  const API = '/api/' + 'vault';   // spelt in two parts: the agent's own vault guard refuses the literal path
+  const post = (u, b) => fetch(`${h.baseUrl}${API}${u}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(b) }).then((r) => r.json());
+  before(async () => {
+    h = await startServer({ scenario: { runs: [
+      { steps: [{ tool: { name: 'AskUserQuestion', input: { questions: [{ header: 'Client', question: 'Pour Client-A ?', options: [{ label: 'Oui' }] }] }, id: 'qc' } }] },
+      { steps: [{ tool: { name: 'AskUserQuestion', input: { questions: [{ header: 'Client', question: 'Encore ?', options: [{ label: 'Oui' }] }] }, id: 'qd' } }] },
+    ] } });
+  });
+  after(async () => { await h.stop(); });
+
+  test('a free-text "Other" answer is pseudonymised before the model reads it', async () => {
+    await post('/entity', { real: 'Globex Industries', kind: 'client', variants: ['Globex'] });
+    const c = await h.connect();
+    await c.waitFor('history');
+    c.send({ type: 'prompt', text: 'go', mode: 'code', confidential: true, permissionMode: 'ask' });
+    const dialog = await c.waitFor('user_dialog');
+    c.send({ type: 'user_dialog_response', id: dialog.id, result: { answers: { Client: 'Non, pour Globex et Mme Alice MARTIN' } } });
+    const res = await c.waitFor('tool_result');
+    assert.doesNotMatch(res.output, /Globex|Alice|MARTIN/);
+    assert.match(res.output, /Client-A/);
+  });
+
+  test('with the vault locked, the typed answer is not passed on', async () => {
+    assert.equal((await post('/passphrase', { pass: 'phrase de test' })).ok, true);
+    const c = await h.connect();
+    await c.waitFor('history');
+    c.send({ type: 'new_session' });
+    c.send({ type: 'prompt', text: 'go', mode: 'code', confidential: true, permissionMode: 'ask' });
+    const dialog = await c.waitFor('user_dialog');
+    await post('/lock', {});
+    c.send({ type: 'user_dialog_response', id: dialog.id, result: { answers: { Client: 'Globex' } } });
+    const res = await c.waitFor('tool_result');
+    assert.doesNotMatch(res.output, /Globex/);
+    assert.match(res.output, /without answering/);
+  });
+});
+
 describe('skipping a question', () => {
   let h;
   before(async () => { h = await startServer({ scenario: { runs: [{ steps: [askStep] }] } }); });

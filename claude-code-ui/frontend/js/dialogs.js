@@ -6,6 +6,7 @@
  * forces a guess; the strip above the composer is the way back to either.
  */
 import { S } from './state.js';
+import { revealDom } from './confidential.js';
 import { dialogBack, dialogBody, dialogLater, dialogOverlay, dialogProgress, dialogSkip, dialogSubmit, dialogTitle, permAllow, permAlways, permAlwaysHint, permDeny, permInputEl, permLater, permOverlay, permTitle, permToolChip, questionStrip, questionStripOpen, questionStripText } from './dom.js';
 
 // ── Things waiting on you ────────────────────────────────────────────────────
@@ -89,6 +90,8 @@ export function openPermission() {
   permTitle.textContent = title || `Allow ${toolName}?`;
   const raw = JSON.stringify(input, null, 2);
   permInputEl.textContent = raw.length > 600 ? raw.slice(0, 600) + '\n…' : raw;
+  revealDom(permTitle);
+  revealDom(permInputEl);
   // "Always" is only offered when the SDK supplied rules that would stop it
   // asking again; the label shows exactly what's being allowed from now on.
   permAlways.classList.toggle('hidden', !canAlways);
@@ -255,6 +258,11 @@ export function buildDialog(id, questions) {
     pages.push(page);
     dialogBody.appendChild(page);
   });
+
+  // Confidential mode: the real names on screen (dotted, hover = what Claude wrote);
+  // the answer sent back is still the option as Claude wrote it (`o.label`).
+  revealDom(dialogTitle);
+  revealDom(dialogBody);
 
   dialogBuild = { id, controls, pages, index: 0 };
   renderDialogPage();
