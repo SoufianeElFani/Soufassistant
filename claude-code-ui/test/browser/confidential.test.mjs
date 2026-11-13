@@ -87,6 +87,8 @@ describe('confidential shield in the browser', { skip }, () => {
     const queries = h.records('query').length;
     await send('regarde cette capture');
     await page.waitForSelector('.redact-card canvas', { timeout: 20000 });
+    // the first draw sizes the canvas (next animation frame): measure after it
+    await page.waitForFunction(() => /zone/.test(document.querySelector('.redact-info')?.textContent || ''), { timeout: 5000 });
     assert.equal(h.records('query').length, queries, 'nothing sent while the editor is open');
     // draw a zone over the red square (canvas coordinates → page coordinates)
     const box = await page.$eval('.redact-canvas', (c) => { const r = c.getBoundingClientRect(); return { x: r.left, y: r.top, k: r.width / 400 }; });
