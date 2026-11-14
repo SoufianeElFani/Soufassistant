@@ -1,3 +1,6 @@
+## 1.5.7
+- **Erase the vault.** Hub › Confidentiel › *Effacer le coffre*: the name table, the originals, the real versions and the passphrase are deleted for good (type EFFACER to confirm). It works with the vault locked too, the only way out of a forgotten passphrase. The documents of the workspace stay as they are, and the next pseudonyms start again at Client-A.
+
 ## 1.5.6
 - **Old formats too.** `.doc`, `.xls`, `.ppt`, as well as `.rtf`, `.odt`, `.ods` and `.odp`, are converted on your Home Assistant (LibreOffice) to `.docx`, `.xlsx` or `.pptx`, then pseudonymised like the others, pictures included. The pseudonymised copy is in the new format. If a conversion fails, the file is not sent, and when a folder is anonymised it stays in the vault only, never in clear in the workspace.
 - **The pictures of an anonymised folder's documents.** Hub › Confidentiel › *Documents avec images* lists the Word, Excel and PowerPoint files whose pictures have not been checked yet. For each one: *Vérifier…* (picture by picture in the redaction editor), *Tout masquer*, or *Rien de sensible*. The anonymisation report says how many documents are waiting.

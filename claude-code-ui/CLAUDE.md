@@ -937,6 +937,10 @@ Sharing (0.9.0): `POST /api/skills/import` (raw .zip or SKILL.md;
 `GET /api/skills/shared` + `POST /api/skills/import-shared` (install a zip
 from that folder — so a Drive folder becomes a skill library).
 
+**1.5.7 — erase the vault.** `vault.wipe()` removes VAULT_DIR whole (works locked);
+the `wipe` route needs `{ confirm: 'EFFACER' }`; Hub `wipeSection()` (also shown
+when locked).
+
 **1.5.6 — old formats, documents with pictures (`vault.js`).**
 `LEGACY` (doc/rtf/odt → docx, xls/ods → xlsx, ppt/odp → pptx): `convertLegacy()`
 runs soffice with its own `-env:UserInstallation` profile and caches the result by

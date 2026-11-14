@@ -121,6 +121,8 @@ export function registerVaultRoutes(app) {
   app.get('/api/vault', wrap(() => ({ ok: true, ...vault.vaultStatus(), entities: vault.listEntities(), exempt: vault.exemptList(), reels: vault.listReels(), ignored: vault.isLocked() ? [] : vault.ignoredList(), images: vault.imagesToCheck(workspaceRoot()), docs: vault.docsToCheck(workspaceRoot()) })));
   // encryption: the passphrase only ever travels browser → server, and is never stored
   app.post('/api/vault/unlock', json, wrap((req) => (vault.unlock(String(req.body?.pass || '')) ? statusChanged({ ok: true }) : { ok: false, error: 'Phrase de passe incorrecte.' })));
+  // erasing everything needs the word typed in the Hub (an accidental call does nothing)
+  app.post('/api/vault/wipe', json, wrap((req) => (req.body?.confirm === 'EFFACER' ? statusChanged({ ok: vault.wipe() }) : { ok: false, error: 'Confirmation manquante.' })));
   app.post('/api/vault/lock', json, wrap(() => statusChanged((vault.lock(), { ok: true }))));
   app.post('/api/vault/passphrase', json, wrap((req) => {
     const r = vault.setPassphrase(String(req.body?.pass || ''), String(req.body?.old || ''));

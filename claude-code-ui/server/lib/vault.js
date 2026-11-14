@@ -114,6 +114,19 @@ export function unlock(pass) {
 }
 export function lock() { if (!isEncrypted()) return; dek = null; state = null; compiled = null; log('INFO', 'vault: verrouillé'); }
 
+/**
+ * Erase the whole vault: the name table, the originals, the real versions, the
+ * passphrase. Works locked too (a forgotten passphrase). Starting from scratch,
+ * the next pseudonyms begin again at Client-A.
+ */
+export function wipe() {
+  rmSync(VAULT_DIR, { recursive: true, force: true });
+  state = null; compiled = null; dek = null;
+  mediaCount.clear();
+  log('INFO', 'vault: effacé');
+  return true;
+}
+
 function wrapKey(pass, key) {
   const salt = randomBytes(16);
   return { v: 1, kdf: 'scrypt', N: SCRYPT.N, r: SCRYPT.r, p: SCRYPT.p, salt: salt.toString('base64'), wrapped: seal(kek(pass, salt), key).toString('base64') };

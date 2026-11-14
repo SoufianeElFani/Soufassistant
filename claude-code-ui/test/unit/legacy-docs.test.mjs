@@ -89,3 +89,17 @@ describe('pictures of the documents of an anonymised folder', () => {
     assert.equal(V.saveDocMedia(root, '../x.pptx'), false);
   });
 });
+
+describe('erasing the vault', () => {
+  test('names, originals, passphrase: all gone, even locked; pseudonyms start again', () => {
+    assert.ok(V.listEntities().length > 0);
+    assert.equal(V.setPassphrase('phrase de test').ok, true);
+    V.lock();
+    assert.equal(V.isLocked(), true);
+    assert.equal(V.wipe(), true);
+    assert.deepEqual(V.vaultStatus(), { encrypted: false, locked: false });
+    assert.deepEqual(V.listEntities(), []);
+    assert.equal(existsSync(process.env.VAULT_DIR), false);
+    assert.equal(V.addEntity({ real: 'Nouveau Client', kind: 'client' }).alias, 'Client-A');
+  });
+});

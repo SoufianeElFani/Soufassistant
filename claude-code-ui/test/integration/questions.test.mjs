@@ -78,6 +78,16 @@ describe('a question in confidential mode', () => {
     assert.doesNotMatch(res.output, /Globex/);
     assert.match(res.output, /without answering/);
   });
+
+  test('erasing the vault needs the typed word', async () => {
+    assert.equal((await post('/wipe', {})).ok, false);
+    const before = await (await fetch(`${h.baseUrl}${API}`)).json();
+    assert.equal(before.encrypted, true);
+    assert.equal((await post('/wipe', { confirm: 'EFFACER' })).ok, true);
+    const after = await (await fetch(`${h.baseUrl}${API}`)).json();
+    assert.equal(after.encrypted, false);
+    assert.deepEqual(after.entities, []);
+  });
 });
 
 describe('skipping a question', () => {

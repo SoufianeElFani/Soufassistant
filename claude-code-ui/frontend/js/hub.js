@@ -404,6 +404,20 @@ export const shareConversation = (id, title) => publish('/api/shares/conversatio
 // ── Confidentiel (vault.js) — tout reste dans le navigateur et sur Home Assistant ──
 const KIND_LABEL = { client: 'Client', personne: 'Personne', lieu: 'Lieu', projet: 'Projet', partenaire: 'Partenaire', ref: 'Référence', email: 'E-mail', tel: 'Téléphone', iban: 'IBAN', tva: 'TVA', autre: 'Autre' };
 let confFilter = '';
+// Erase the whole vault (names, originals, real versions, passphrase): typed confirmation.
+function wipeSection() {
+  body.appendChild(el('div', 'usage-section-title', 'Effacer le coffre'));
+  body.appendChild(note('Supprime définitivement la table des noms, les originaux, les versions réelles et la phrase de passe. Les documents du workspace restent tels quels (pseudonymisés). Fonctionne aussi coffre verrouillé. Tape EFFACER pour confirmer.'));
+  const w = input('', 'EFFACER');
+  body.append(w, button('Effacer le coffre', null, async () => {
+    if (w.value.trim() !== 'EFFACER') { showToast('Tape EFFACER pour confirmer.', { kind: 'error' }); return; }
+    if (!(await confirmAction({ title: 'Effacer tout le coffre ?', body: 'La table des noms, les originaux et les versions réelles seront supprimés définitivement. Les prochains pseudonymes repartiront de Client-A.', confirm: 'Effacer', cancel: 'Annuler' }))) return;
+    const r = await api('/api/vault/wipe', { confirm: 'EFFACER' });
+    showToast(r.ok ? 'Coffre effacé.' : (r.error || 'Échec.'), r.ok ? {} : { kind: 'error' });
+    render();
+  }));
+}
+
 async function renderConfidential() {
   const v = await api('/api/vault');
   if (tab !== 'confidential') return;
@@ -421,6 +435,7 @@ async function renderConfidential() {
       if (!r.ok) { showToast(r.error || 'Échec.', { kind: 'error' }); return; }
       render();
     }));
+    wipeSection();   // a forgotten passphrase: the only way out
     return;
   }
   if (!v.encrypted) {
@@ -579,6 +594,7 @@ async function renderConfidential() {
   body.appendChild(el('div', 'usage-section-title', 'Jamais pseudonymisés'));
   const ex = area((v.exempt || []).join('\n'), 4);
   body.append(ex, button('Enregistrer', null, async () => { await api('/api/vault/exempt', { list: ex.value.split('\n') }); showToast('Exemptions enregistrées.'); }));
+  wipeSection();
   body.appendChild(el('div', 'usage-section-title', 'Ne pas signaler avant l\'envoi'));
   body.appendChild(note('Mots en majuscule que l\'alerte avant envoi ne propose plus de protéger (produits, sigles techniques…). Une ligne par mot.'));
   const ig = area((v.ignored || []).join('\n'), 4);
