@@ -487,6 +487,7 @@ kbd {
 .conf-rows { display: flex; flex-direction: column; gap: 6px; max-height: 46vh; overflow: auto; margin: 4px 0 10px; }
 .conf-row { display: flex; align-items: center; gap: 8px; font-size: 13.5px; }
 .conf-row b { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.conf-row .conf-group { font-weight: normal; color: var(--text-muted, #666); }
 .conf-row select { max-width: 52%; }
 .conf-err { color: var(--error, #c62828); font-size: 13px; min-height: 1em; }
 .redact-overlay { z-index: 1200; }

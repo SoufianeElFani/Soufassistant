@@ -937,6 +937,13 @@ Sharing (0.9.0): `POST /api/skills/import` (raw .zip or SKILL.md;
 `GET /api/skills/shared` + `POST /api/skills/import-shared` (install a zip
 from that folder — so a Drive folder becomes a skill library).
 
+**1.5.8 — pre-send check.** `suspects()` runs `CAP` on the original text (not the
+masked one): no sentence-start exception any more, only `STARTERS` (FR/EN/NL openers,
+days, months) are dropped from the start of a run; at a sentence / line start, a first
+word followed by a particle or by a protected name is split off and asked alone. A run
+containing a protected variant plus other capitalised words is proposed whole with
+`group` (the alias), same kind; the alert shows « groupe avec … ».
+
 **1.5.7 — erase the vault.** `vault.wipe()` removes VAULT_DIR whole (works locked);
 the `wipe` route needs `{ confirm: 'EFFACER' }`; Hub `wipeSection()` (also shown
 when locked).

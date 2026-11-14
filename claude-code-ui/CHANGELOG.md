@@ -1,3 +1,8 @@
+## 1.5.8
+- **The pre-send check no longer skips the first word.** A name opening a sentence, or alone on its line (a list of clients, one per line), is flagged like any other. These used to reach Claude unmasked. Only the usual sentence starters and a few common business nouns are left out (Je, Bonjour, Merci, Prépare, Peux-tu…, Offre, Contrat, Projet, Devis…, in French, English and Dutch). Anything else is asked about once, and *Ne plus signaler* remembers your answer. Expect more questions at first and fewer afterwards.
+- **Groups of words.** A protected name with more capitalised words around it ("X Service", "Groupe X Belgium") is proposed whole, as a new name with its own pseudonym. The longer name is masked first.
+- A capitalised common noun opening a sentence ("Commande de …", "Contrat …") is asked about on its own instead of sticking to the name after it.
+
 ## 1.5.7
 - **Erase the vault.** Hub › Confidentiel › *Effacer le coffre*: the name table, the originals, the real versions and the passphrase are deleted for good (type EFFACER to confirm). It works with the vault locked too, the only way out of a forgotten passphrase. The documents of the workspace stay as they are, and the next pseudonyms start again at Client-A.
 

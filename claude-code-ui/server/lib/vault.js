@@ -306,26 +306,79 @@ export function mask(text, { learn = true } = {}) {
  */
 const CAP = /(?<![\p{L}\p{N}@./\\_-])((?:\p{Lu}[\p{L}\p{N}'’&-]*)(?:[ \t]+(?:(?:de|des|du|van|der|den|la|le|von|&)[ \t]+)?\p{Lu}[\p{L}\p{N}'’&-]*){0,4})(?![\p{L}\p{N}@])/gu;
 const COMPANY = /\b(Industries|Industrie|Group|Groupe|Groep|Holding|Energy|Energie|Solutions|Services|Systems|Technologies|Tech|Corp|Corporation|Company|Bank|Banque|Partners|Consulting|International|Engineering|Logistics|Pharma|Hospital|Hôpital|Ziekenhuis|Université|Universiteit|University|Invest|Capital|Immo|Real Estate|Ville|Stad|Gemeente|Commune|Province|Provincie|Région|Regio)\b/u;
+// Words that open a sentence or a request and are never names (FR / EN / NL): not asked about.
+// Everything else that starts with a capital is, once — « Ne plus signaler » remembers the answer.
+const STARTERS = new Set(`
+je j' tu il elle on nous vous ils elles le la les l' un une des du de d' ce c' cet cette ces ça cela ceci
+mon ma mes ton ta tes son sa ses notre nos votre vos leur leurs moi toi lui eux y en
+bonjour bonsoir salut hello coucou merci cordialement bien oui non ok okay d'accord parfait super
+pour par avec sans sur sous dans chez entre vers selon après avant depuis pendant et ou mais donc car puis ensuite enfin alors aussi si
+est-ce peux-tu pouvez-vous peux pouvez fais faites fait prépare préparez calcule calculez donne donnez écris écrivez rédige rédigez
+envoie envoyez relance relancez demande demandez dis dites montre montrez regarde regardez vérifie vérifiez explique expliquez
+crée créez ajoute ajoutez supprime supprimez enlève enlevez retire retirez corrige corrigez lis lisez résume résumez traduis traduisez
+analyse analysez compare comparez propose proposez trouve trouvez cherche cherchez mets mettez garde gardez passe passez vas va
+quel quelle quels quelles qui que qu' quoi quand comment pourquoi où combien voici voilà attention note remarque objet question réponse
+offre offres contrat contrats commande commandes devis facture factures projet projets réunion réunions rapport rapports
+mail mails e-mail message document documents fichier fichiers client clients total montant prix budget compte-rendu planning
+offer contract order quote invoice project meeting report offerte contract bestelling factuur vergadering verslag
+the a an this that these those my your our their i you he she it we they hi dear thanks thank yes no please
+can could would should will let make prepare write send check find show give tell add remove fix
+het een dit dat deze die mijn jouw onze hun ik jij hij zij wij jullie hallo dag bedankt dank ja nee graag kun kunt wil maak schrijf stuur
+lundi mardi mercredi jeudi vendredi samedi dimanche janvier février mars avril mai juin juillet août septembre octobre novembre décembre
+monday tuesday wednesday thursday friday saturday sunday january february march april may june july august september october november december
+`.split(/\s+/).filter(Boolean));
+const PARTICLE = /^(?:de|des|du|van|der|den|la|le|von|&)$/i;
+const starter = (w) => STARTERS.has(String(w).toLowerCase().replace(/’/g, "'"));
 export function suspects(text) {
   const s = load();
   const t = String(text || '');
   const auto = detect(t);
   const c = compile();
-  const known = (v) => c.byVariant.has(norm(v)) || isAliasLike(v) || s.exempt.some((x) => norm(x) === norm(v)) || s.ignored.some((x) => norm(x) === norm(v))
+  const listed = (v) => isAliasLike(v) || s.exempt.some((x) => norm(x) === norm(v)) || s.ignored.some((x) => norm(x) === norm(v))
     || auto.some((a) => norm(a.real).includes(norm(v)));
-  const masked = c.mask ? t.replace(c.mask, ' ') : t;     // ce qui est déjà protégé ne compte plus
+  const known = (v) => c.byVariant.has(norm(v)) || listed(v);
   const out = new Map();
-  for (const m of masked.matchAll(CAP)) {
-    let v = m[1].replace(/[-'’&]+$/, '');
-    const words = v.split(/\s+/);
-    const before = masked.slice(0, m.index).replace(/[ \t«"“(\[*_>-]+$/, '');
-    const startOfSentence = !before || /[.!?:;\n]$/.test(before);
-    if (words.length === 1 && startOfSentence && !/^\p{Lu}{2,}/u.test(v)) continue;
-    // un mot de début de phrase suivi d'un nom : garder seulement le nom
-    if (startOfSentence && words.length > 1 && !/^\p{Lu}{2,}/u.test(words[0])) { words.shift(); v = words.join(' '); }
-    if (v.length < 2 || /^\p{Lu}$/u.test(v) || /^\d/.test(v) || known(v) || words.every((w) => known(w))) continue;
+  const add = (v, kind, group) => { if (!out.has(norm(v))) out.set(norm(v), group ? { real: v, kind, group } : { real: v, kind }); };
+  const runs = [];
+  for (const m of t.matchAll(CAP)) {
+    let words = m[1].replace(/[-'’&]+$/, '').split(/\s+/);
+    const before = t.slice(0, m.index).replace(/[ \t«"“(\[*_>•–-]+$/, '');
+    const atStart = !before || /[.!?:;\n]$/.test(before);
+    // « Prépare », « Bonjour »… at the start of a run are not names; the first word otherwise
+    // counts like any other — a list of names, one per line, is flagged too
+    let shifted = false;
+    while (words.length && starter(words[0])) { words.shift(); shifted = true; }
+    if (!words.length) continue;
+    // a capitalised common noun opening the sentence sticks to the name after it
+    // (« Commande de L'Oréal », « Contrat Acme Service »): asked about on its own
+    if (atStart && !shifted && words.length >= 2) {
+      const rest = words.slice(1);
+      const restText = rest.join(' ');
+      if (PARTICLE.test(rest[0]) || (c.mask && new RegExp(c.mask.source, 'iu').test(restText))) {
+        runs.push([words[0]]);
+        while (rest.length && PARTICLE.test(rest[0])) rest.shift();
+        words = rest;
+        if (!words.length) continue;
+      }
+    }
+    runs.push(words);
+  }
+  for (const words of runs) {
+    const v = words.join(' ');
+    if (v.length < 2 || /^\p{Lu}$/u.test(v) || /^\d/.test(v) || known(v)) continue;
+    // a protected name with more capitalised words around it is a name of its own (« X Service »):
+    // proposed whole, as a new entry of the same kind
+    const inner = c.mask ? [...v.matchAll(c.mask)] : [];
+    if (inner.length) {
+      const rest = v.replace(c.mask, ' ').trim().split(/\s+/).filter(Boolean);
+      if (!rest.length || rest.every((w) => starter(w) || known(w) || PARTICLE.test(w))) continue;
+      const e = c.byVariant.get(norm(inner[0][0]));
+      add(v, e?.kind || 'client', e?.alias || true);
+      continue;
+    }
+    if (words.every((w) => known(w))) continue;
     const kind = !COMPANY.test(v) && words.length >= 2 && words.every((w) => /^\p{Lu}[\p{Ll}'’-]+$|^\p{Lu}{2,}$/u.test(w)) && words.length <= 3 && !words.some((w) => /^\p{Lu}{2,}$/u.test(w) && w.length > 3) ? 'personne' : 'client';
-    if (!out.has(norm(v))) out.set(norm(v), { real: v, kind });
+    add(v, kind);
   }
   return { auto, unknown: [...out.values()].slice(0, 40) };
 }

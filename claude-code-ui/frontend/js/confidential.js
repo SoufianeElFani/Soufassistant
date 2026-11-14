@@ -255,7 +255,10 @@ async function namesCheck(text) {
       sel.appendChild(new Option('Laisser passer (cette fois)', 'pass'));
       sel.appendChild(new Option('Ne plus signaler', 'ignore'));
       sel.value = c.kind;
-      row.append(h('b', null, c.real), sel);
+      const name = h('b', null, c.real);
+      // a group around a protected name: shown with that name's real form (local table)
+      if (c.group) name.appendChild(h('small', 'conf-group', typeof c.group === 'string' ? ` — groupe avec « ${reveal(c.group)} », protégé à part` : ' — groupe de mots'));
+      row.append(name, sel);
       rows.appendChild(row);
       return [c, sel];
     });
