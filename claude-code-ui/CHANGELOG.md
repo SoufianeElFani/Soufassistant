@@ -1,3 +1,21 @@
+## 1.5.9
+**The shield reads the whole message before it leaves.** Everything below runs on your Home Assistant: nothing is sent anywhere to be analysed.
+- **Names without a capital.** A word that no dictionary of the message's language knows is flagged, with or without a capital, so a client written in lowercase is caught. The French, English and Dutch word lists are in the app. A French message is read with French and English only, so a Latin word that Dutch happens to know is still flagged. Technical terms and typos are asked about once, then *Ne plus signaler* remembers them.
+- **E-mails and minutes.** The people in the headers (De, À, Cc), the greeting ("Bonjour Marc,") and the signature are flagged, even when their name is also a common word.
+- **Sensitive passages.** A sentence touching on GDPR or business confidentiality is flagged with its category:
+  - health, sick leave;
+  - HR: salary, appraisal, dismissal;
+  - special categories: religion, trade union, origin, orientation, criminal record;
+  - identifiers: national register number, date of birth, ID card;
+  - private address;
+  - margins, discounts, strategy, NDA;
+  - amounts;
+  - security: passwords, incidents.
+
+  For each passage you choose: replace it by a neutral mention (« [information de santé masquée] »), rewrite it, or send it as it is. The message shown in the conversation is the one that was sent.
+- **Fail closed.** If the check cannot run, nothing is sent.
+- Rules recognise words, not meaning: a sensitive sentence without any telltale word can still get through. A local AI model (on a PC of your network) can come later.
+
 ## 1.5.8
 - **The pre-send check no longer skips the first word.** A name opening a sentence, or alone on its line (a list of clients, one per line), is flagged like any other. These used to reach Claude unmasked. Only the usual sentence starters and a few common business nouns are left out (Je, Bonjour, Merci, Prépare, Peux-tu…, Offre, Contrat, Projet, Devis…, in French, English and Dutch). Anything else is asked about once, and *Ne plus signaler* remembers your answer. Expect more questions at first and fewer afterwards.
 - **Groups of words.** A protected name with more capitalised words around it ("X Service", "Groupe X Belgium") is proposed whole, as a new name with its own pseudonym. The longer name is masked first.

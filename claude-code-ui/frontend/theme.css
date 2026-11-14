@@ -488,6 +488,11 @@ kbd {
 .conf-row { display: flex; align-items: center; gap: 8px; font-size: 13.5px; }
 .conf-row b { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .conf-row .conf-group { font-weight: normal; color: var(--text-muted, #666); }
+.conf-section { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--text-muted, #666); margin-top: 6px; }
+.conf-passage { display: flex; flex-direction: column; gap: 4px; padding: 6px 0; border-bottom: 1px solid var(--border, #ddd); font-size: 13.5px; }
+.conf-quote { border-left: 3px solid var(--warning, #c58a00); padding-left: 8px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.conf-passage .conf-group { color: var(--text-muted, #666); }
+.conf-rewrite { width: 100%; }
 .conf-row select { max-width: 52%; }
 .conf-err { color: var(--error, #c62828); font-size: 13px; min-height: 1em; }
 .redact-overlay { z-index: 1200; }

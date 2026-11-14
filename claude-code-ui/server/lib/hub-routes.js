@@ -19,6 +19,8 @@ import { decoratedSessions, sessionToMarkdown } from './session-tools.js';
 import { parseSession } from './sessions.js';
 import * as vault from './vault.js';
 import * as redact from './redact.js';
+import { sensitivePassages } from './sensitive.js';
+import * as lexicon from './lexicon.js';
 import { readFileSync, statSync as statS, readdirSync as readdirS } from 'fs';
 
 const json = express.json({ limit: '1mb' });
@@ -129,7 +131,13 @@ export function registerVaultRoutes(app) {
     return r.ok ? statusChanged(r) : r;
   }));
   // the pre-send check: what looks like a name and is not in the vault (nothing is learnt or sent)
-  app.post('/api/vault/preview', json, wrap((req) => (vault.isLocked() ? { ok: true, locked: true } : { ok: true, ...vault.suspects(String(req.body?.text || '')) })));
+  app.post('/api/vault/preview', express.json({ limit: '5mb' }), wrap(async (req) => {
+    if (vault.isLocked()) return { ok: true, locked: true };
+    await lexicon.ready();   // the dictionaries (loaded in the background at boot)
+    const text = String(req.body?.text || '');
+    // names the vault does not know, and the sentences touching GDPR or business confidentiality
+    return { ok: true, ...vault.suspects(text), passages: sensitivePassages(text) };
+  }));
   // the redaction editor: pages + proposed boxes, computed here (the original never reaches the model)
   app.post('/api/vault/redact', express.json({ limit: '80mb' }), wrap((req) => redact.analyze(req.body || {})));
   app.post('/api/vault/redact/save', express.json({ limit: '80mb' }), wrap((req) => {
@@ -208,5 +216,7 @@ export function registerVaultRoutes(app) {
 }
 
 export function startHub() {
+  // the pre-send check's dictionaries, loaded in the background so the first message does not wait
+  setTimeout(() => lexicon.ready().catch(() => {}), 10000).unref?.();
   apps.startApps((name) => projectDir(name));
 }

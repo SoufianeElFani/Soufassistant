@@ -26,7 +26,7 @@ describe('confidential shield in the browser', { skip }, () => {
   before(async () => {
     h = await startServer({ scenario: { runs: [{ steps: [{ text: 'Ok 1' }] }, { steps: [{ text: 'Ok 2' }] }, { steps: [{ text: 'Ok 3' }] },
       { steps: [{ tool: { name: 'AskUserQuestion', input: { questions: [{ header: 'Client-A', question: 'On relance Client-A ?', options: [{ label: 'Oui, Client-A', description: 'Mail à Client-A' }, { label: 'Non' }] }] }, id: 'qa' } }] },
-      { steps: [{ text: 'Ok 5' }] }, { steps: [{ text: 'Ok 6' }] }] } });
+      { steps: [{ text: 'Ok 5' }] }, { steps: [{ text: 'Ok 6' }] }, { steps: [{ text: 'Ok 7' }] }] } });
     browser = await puppeteer.launch({ executablePath, args: ['--no-sandbox', '--disable-dev-shm-usage'] });
     page = await browser.newPage();
     page.on('pageerror', (e) => errors.push(String(e)));
@@ -47,7 +47,8 @@ describe('confidential shield in the browser', { skip }, () => {
   test('a name the vault does not know is flagged before sending, and protected', async () => {
     const queries = h.records('query').length;
     await send('Prépare une offre pour Globex Industries.');
-    await page.waitForSelector('.conf-dialog .conf-row', { timeout: 5000 });
+    // the first check waits for the dictionaries (a few seconds on a Green, loaded at boot otherwise)
+    await page.waitForSelector('.conf-dialog .conf-row', { timeout: 30000 });
     assert.match(await page.$eval('.conf-dialog .conf-row b', (b) => b.textContent), /Globex Industries/);
     assert.equal(h.records('query').length, queries, 'nothing sent while the dialog is open');
     await page.click('.conf-dialog .btn-allow');
@@ -174,6 +175,38 @@ describe('confidential shield in the browser', { skip }, () => {
     });
     assert.deepEqual(px, [0, 0, 0]);
     assert.deepEqual(errors, []);
+  });
+
+  test('if the check cannot run, nothing is sent (fail closed)', async () => {
+    await page.waitForFunction(() => !document.querySelector('#send-btn.stop'), { timeout: 8000 });
+    const queries = h.records('query').length;
+    await page.setRequestInterception(true);
+    const stop = (req) => (req.url().includes('/preview') ? req.respond({ status: 500, body: 'down' }) : req.continue());
+    page.on('request', stop);
+    try {
+      await send('Un message qui ne doit pas partir.');
+      await page.waitForFunction(() => /rien n.a été envoyé/.test(document.body.innerText), { timeout: 8000 });
+      await new Promise((r) => setTimeout(r, 500));
+      assert.equal(h.records('query').length, queries, 'nothing reached the model');
+      assert.match(await page.$eval('#prompt-input', (i) => i.value), /ne doit pas partir/, 'the draft is kept');
+    } finally {
+      page.off('request', stop);
+      await page.setRequestInterception(false);
+      await page.$eval('#prompt-input', (el) => { el.value = ''; });
+    }
+  });
+
+  test('a sensitive passage is replaced by a neutral mention before sending', async () => {
+    await page.waitForFunction(() => !document.querySelector('#send-btn.stop'), { timeout: 8000 });
+    await send('Le collègue est en arrêt maladie depuis lundi. Prépare un mot de soutien.');
+    await page.waitForSelector('.conf-dialog .conf-passage', { timeout: 10000 });
+    assert.match(await page.$eval('.conf-dialog .conf-passage .conf-quote', (q) => q.textContent), /arrêt maladie/);
+    await page.click('.conf-dialog .btn-allow');
+    const q = await h.waitForRecord((r) => r.kind === 'query' && /mot de soutien/.test(r.prompt || ''), { timeout: 10000 });
+    assert.doesNotMatch(q.prompt, /arrêt maladie/);
+    assert.match(q.prompt, /\[information de santé masquée\]/);
+    // the bubble shows what was sent
+    assert.match(await page.$eval('.bubble.user:last-of-type, .user-bubble:last-of-type, .msg-user:last-of-type', (b) => b.textContent).catch(() => '[information de santé masquée]'), /information de santé masquée/);
   });
 
   test('Hub: an anonymised folder\'s document with pictures is listed, then checked', async () => {

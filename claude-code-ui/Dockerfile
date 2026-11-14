@@ -48,6 +48,12 @@ RUN apt-get update \
         tesseract-ocr tesseract-ocr-fra tesseract-ocr-eng tesseract-ocr-nld \
     && rm -rf /var/lib/apt/lists/*
 
+# Confidential mode's pre-send check (server/lib/lexicon.js): the French, English and Dutch
+# word lists, so a client written in lowercase (not a word of the message's language) is caught.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends wfrench wamerican wbritish wdutch \
+    && rm -rf /var/lib/apt/lists/*
+
 # The browser agent (server/lib/browser.js) drives this Chromium headless
 # through puppeteer-core (no browser download of its own).
 RUN apt-get update \

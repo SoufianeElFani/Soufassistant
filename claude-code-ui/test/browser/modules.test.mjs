@@ -43,6 +43,8 @@ describe('the rest of the UI', { skip: executablePath ? false : 'no Chrome found
     });
     browser = await puppeteer.launch({ executablePath, args: ['--no-sandbox', '--disable-dev-shm-usage'] });
     page = await browser.newPage();
+    // the confidential shield (on by default) would make every send wait for its dictionaries: off here
+    await page.evaluateOnNewDocument(() => { try { localStorage.setItem('confidential', JSON.stringify({ code: false, cowork: false, chat: false })); } catch { /* about:blank */ } });
     consoleErrors = [];
     page.on('console', (m) => { if (m.type() === 'error') consoleErrors.push(m.text()); });
     page.on('pageerror', (e) => consoleErrors.push(String(e)));

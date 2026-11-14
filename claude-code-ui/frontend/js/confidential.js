@@ -176,7 +176,8 @@ export async function preSendCheck(text, atts = []) {
   const extra = new Map();     // attachment → fields sent with it (an Office file's repainted pictures)
   if (!isConfidential()) return { replaced, extra };
   if (status.locked && !(await askUnlock())) return false;
-  if (text && !(await namesCheck(text))) return false;
+  let sendText = text;
+  if (text) { sendText = await namesCheck(text); if (sendText === false) return false; }
   for (const a of atts) {
     if (OFFICE_RE.test(a.name)) {
       const f = await officePictures(a);
@@ -193,7 +194,7 @@ export async function preSendCheck(text, atts = []) {
     if (!out) return false;
     replaced.set(a, out);
   }
-  return { replaced, extra };
+  return { replaced, extra, text: sendText };
 }
 
 // old formats too: the server converts them (LibreOffice) before listing their pictures
@@ -241,35 +242,77 @@ function askPdfAsImage(name) {
   }).then((v) => v === true);
 }
 
+/**
+ * The pre-send check: names the vault does not know (capitalised or not, from e-mail
+ * headers, greetings and signatures too) and the sentences that touch GDPR or business
+ * confidentiality. Nothing leaves before every line has an answer.
+ * → false (cancelled) or the text to send (passages masked or rewritten).
+ */
 async function namesCheck(text) {
   let r = await post('/api/vault/preview', { text }).catch(() => null);
   if (r?.locked) { if (!(await askUnlock())) return false; r = await post('/api/vault/preview', { text }).catch(() => null); }
-  if (!r?.ok || !r.unknown?.length) return true;   // the server still masks what it knows
+  // fail closed: without the check, nothing leaves (the user can retry, or turn the shield off)
+  if (!r?.ok) { showToast('Vérification avant envoi impossible : rien n\'a été envoyé. Réessaie dans un instant.', { kind: 'error', timeout: 10000 }); return false; }
+  const names = r.unknown || [], passages = r.passages || [];
+  if (!names.length && !passages.length) return text;
   const choice = await dialog((card, done) => {
-    head(card, 'Noms possibles non protégés', 'Ces mots ressemblent à des noms et ne sont pas dans le coffre : ils partiraient tels quels. Choisis pour chacun.');
+    head(card, 'Avant l\'envoi', `${names.length ? `${names.length} nom(s) possible(s) que le coffre ne connaît pas` : ''}${names.length && passages.length ? ' et ' : ''}${passages.length ? `${passages.length} passage(s) sensible(s) (RGPD, confidentialité)` : ''} : ils partiraient tels quels. Choisis pour chacun.`);
     const rows = h('div', 'conf-rows');
-    const sels = r.unknown.map((c) => {
-      const row = h('div', 'conf-row');
-      const sel = h('select', 'scheduled-form-input');
-      for (const [k, l] of KINDS) sel.appendChild(new Option(`Protéger · ${l}`, k));
-      sel.appendChild(new Option('Laisser passer (cette fois)', 'pass'));
-      sel.appendChild(new Option('Ne plus signaler', 'ignore'));
-      sel.value = c.kind;
-      const name = h('b', null, c.real);
-      // a group around a protected name: shown with that name's real form (local table)
-      if (c.group) name.appendChild(h('small', 'conf-group', typeof c.group === 'string' ? ` — groupe avec « ${reveal(c.group)} », protégé à part` : ' — groupe de mots'));
-      row.append(name, sel);
-      rows.appendChild(row);
-      return [c, sel];
-    });
+    let sels = [], pas = [];
+    if (names.length) {
+      rows.appendChild(h('div', 'conf-section', 'Noms'));
+      sels = names.map((c) => {
+        const row = h('div', 'conf-row');
+        const sel = h('select', 'scheduled-form-input');
+        for (const [k, l] of KINDS) sel.appendChild(new Option(`Protéger · ${l}`, k));
+        sel.appendChild(new Option('Laisser passer (cette fois)', 'pass'));
+        sel.appendChild(new Option('Ne plus signaler', 'ignore'));
+        sel.value = c.kind;
+        const name = h('b', null, c.real);
+        // a group around a protected name: shown with that name's real form (local table)
+        if (c.group) name.appendChild(h('small', 'conf-group', typeof c.group === 'string' ? ` — groupe avec « ${reveal(c.group)} », protégé à part` : ' — groupe de mots'));
+        else if (c.why) name.appendChild(h('small', 'conf-group', ` — ${c.why}`));
+        row.append(name, sel);
+        rows.appendChild(row);
+        return [c, sel];
+      });
+    }
+    if (passages.length) {
+      rows.appendChild(h('div', 'conf-section', 'Passages sensibles'));
+      pas = passages.map((p) => {
+        const box = h('div', 'conf-passage');
+        const q = h('div', 'conf-quote', p.text);
+        const lab = h('small', 'conf-group', p.label);
+        const sel = h('select', 'scheduled-form-input');
+        sel.appendChild(new Option(`Remplacer par « ${p.mention} »`, 'mask'));
+        sel.appendChild(new Option('Réécrire…', 'rewrite'));
+        sel.appendChild(new Option('Envoyer tel quel', 'keep'));
+        const ta = h('textarea', 'scheduled-form-textarea conf-rewrite hidden');
+        ta.rows = 2; ta.value = p.text;
+        ta.addEventListener('keydown', (e) => e.stopPropagation());
+        sel.onchange = () => ta.classList.toggle('hidden', sel.value !== 'rewrite');
+        box.append(q, lab, sel, ta);
+        rows.appendChild(box);
+        return [p, sel, ta];
+      });
+    }
     card.appendChild(rows);
-    buttons(card, [['Annuler', 'btn-deny', () => done(null)], ['Envoyer', 'btn-allow', () => done(sels.map(([c, s]) => [c, s.value]))]]);
+    buttons(card, [['Annuler', 'btn-deny', () => done(null)], ['Envoyer', 'btn-allow', () => done({
+      names: sels.map(([c, sl]) => [c, sl.value]),
+      passages: pas.map(([p, sl, ta]) => [p, sl.value, ta.value]),
+    })]]);
   });
   if (!choice) return false;
-  for (const [c, v] of choice) if (v !== 'pass' && v !== 'ignore') await post('/api/vault/entity', { real: c.real, kind: v });
-  const ign = choice.filter(([, v]) => v === 'ignore').map(([c]) => c.real);
+  for (const [c, v] of choice.names) if (v !== 'pass' && v !== 'ignore') await post('/api/vault/entity', { real: c.real, kind: v });
+  const ign = choice.names.filter(([, v]) => v === 'ignore').map(([c]) => c.real);
   if (ign.length) await post('/api/vault/ignore', { words: ign });
-  return true;
+  // passages, from the last to the first so the offsets stay right
+  let out = text;
+  for (const [p, v, rewritten] of [...choice.passages].sort((a, b) => b[0].start - a[0].start)) {
+    if (v === 'keep') continue;
+    out = out.slice(0, p.start) + (v === 'mask' ? p.mention : rewritten.trim()) + out.slice(p.end);
+  }
+  return out;
 }
 
 /** Le serveur a refusé (coffre verrouillé entre-temps) : rien n'est parti. */

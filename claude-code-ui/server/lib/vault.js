@@ -33,6 +33,7 @@ import { writeFileAtomic } from './atomic.js';
 import { readZip, makeZip } from './zip.js';
 import { leafElements, partParagraphs, setPartParagraphs } from './office-edit.js';
 import { log } from './log.js';
+import { unknownWords } from './lexicon.js';
 
 export const VAULT_DIR = process.env.VAULT_DIR || path.join(DATA_DIR, '.coffre-souf');
 const VAULT_FILE = () => path.join(VAULT_DIR, 'coffre.json');
@@ -319,6 +320,9 @@ crée créez ajoute ajoutez supprime supprimez enlève enlevez retire retirez co
 analyse analysez compare comparez propose proposez trouve trouvez cherche cherchez mets mettez garde gardez passe passez vas va
 quel quelle quels quelles qui que qu' quoi quand comment pourquoi où combien voici voilà attention note remarque objet question réponse
 offre offres contrat contrats commande commandes devis facture factures projet projets réunion réunions rapport rapports
+comme suite concernant ci-joint ci-dessous ci-dessus veuillez veuille afin vu étant n'hésitez n'hésite également toutefois cependant néanmoins sinon ainsi voir
+following regarding attached please kindly also however hereby
+zoals betreft bijgevoegd gelieve graag echter verder
 mail mails e-mail message document documents fichier fichiers client clients total montant prix budget compte-rendu planning
 offer contract order quote invoice project meeting report offerte contract bestelling factuur vergadering verslag
 the a an this that these those my your our their i you he she it we they hi dear thanks thank yes no please
@@ -335,10 +339,25 @@ export function suspects(text) {
   const auto = detect(t);
   const c = compile();
   const listed = (v) => isAliasLike(v) || s.exempt.some((x) => norm(x) === norm(v)) || s.ignored.some((x) => norm(x) === norm(v))
-    || auto.some((a) => norm(a.real).includes(norm(v)));
+    // already caught as a company (legal form) or a titled person; an e-mail address that
+    // contains a name does not cover that name written out next to it
+    || auto.some((a) => (a.kind === 'client' || a.kind === 'personne') && norm(a.real).includes(norm(v)));
   const known = (v) => c.byVariant.has(norm(v)) || listed(v);
   const out = new Map();
-  const add = (v, kind, group) => { if (!out.has(norm(v))) out.set(norm(v), group ? { real: v, kind, group } : { real: v, kind }); };
+  const add = (v, kind, group, why) => { if (!out.has(norm(v))) out.set(norm(v), { real: v, kind, ...(group ? { group } : {}), ...(why ? { why } : {}) }); };
+  // e-mails: the people in the headers, the greeting and the signature — even when their name is
+  // also a common word (« Jean », « Marc »)
+  for (const m of t.matchAll(MAIL_HEADER)) {
+    for (let part of m[1].split(/[;,]/)) {
+      part = part.replace(/<[^>]*>|\[[^\]]*\]|["'“”]/g, '').trim();
+      if (part.length >= 2 && /\p{L}/u.test(part) && !/@/.test(part) && !known(part) && !part.split(/\s+/).every((w) => known(w))) add(part, 'personne');
+    }
+  }
+  for (const m of t.matchAll(GREETING)) { const v = m[1].trim(); if (!known(v) && !starter(v)) add(v, 'personne'); }
+  for (const m of t.matchAll(SIGN_OFF)) {
+    const line = (m[1] || '').trim();
+    if (line && line.length <= 60 && !/[@\d]/.test(line) && !known(line) && !line.split(/\s+/).every((w) => known(w) || starter(w.replace(/[,.!]$/, '')))) add(line, 'personne');
+  }
   const runs = [];
   for (const m of t.matchAll(CAP)) {
     let words = m[1].replace(/[-'’&]+$/, '').split(/\s+/);
@@ -380,8 +399,14 @@ export function suspects(text) {
     const kind = !COMPANY.test(v) && words.length >= 2 && words.every((w) => /^\p{Lu}[\p{Ll}'’-]+$|^\p{Lu}{2,}$/u.test(w)) && words.length <= 3 && !words.some((w) => /^\p{Lu}{2,}$/u.test(w) && w.length > 3) ? 'personne' : 'client';
     add(v, kind);
   }
-  return { auto, unknown: [...out.values()].slice(0, 40) };
+  // lowercase words no dictionary of the message's language knows: a client written « fortis »
+  for (const w of unknownWords(t, (x) => known(x) || starter(x) || c.byVariant.has(norm(x)))) add(w.real, 'client', null, 'mot inconnu du dictionnaire');
+  return { auto, unknown: [...out.values()].slice(0, 150) };
 }
+
+const MAIL_HEADER = /^[ \t>]*(?:de|from|van|à|a|to|aan|cc|cci|bcc)[ \t]*:[ \t]*(.+)$/gimu;
+const GREETING = /^[ \t>]*(?:bonjour|bonsoir|salut|coucou|hello|hi|hey|dear|cher|chère|beste|dag|hallo|geachte)[ \t]+(?:(?:m\.|mr\.?|mme|madame|monsieur|mevrouw|meneer|heer)[ \t]+)?([\p{L}'’-]+(?:[ \t]+[\p{Lu}][\p{L}'’-]+)?)[ \t]*[,!:]/gimu;
+const SIGN_OFF = /^[ \t>]*(?:cordialement|bien cordialement|bien à (?:vous|toi)|salutations(?: distinguées)?|bonne journée|merci d'avance|regards|kind regards|best regards|best|cheers|met vriendelijke groet(?:en)?|vriendelijke groet(?:en)?|mvg|groeten)[ \t]*[,.!]?[ \t]*\r?\n+[ \t>]*([^\n]+)/gimu;
 
 /**
  * Où sont les données sensibles dans une ligne de texte (OCR d'une image, texte

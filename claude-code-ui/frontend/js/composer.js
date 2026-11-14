@@ -37,7 +37,7 @@ sendBtn.onclick = (e) => {
 inputForm.onsubmit = async (e) => {
   e.preventDefault();
   hideCmdMenu();
-  const text = promptInput.value.trim();
+  let text = promptInput.value.trim();
   const hasAtt = attachments.length > 0;
   if ((!text && !hasAtt) || !S.isConnected) return;
 
@@ -59,6 +59,8 @@ inputForm.onsubmit = async (e) => {
   // Cancelling leaves the draft in the box, nothing sent.
   const check = await preSendCheck(text, attachments.slice());
   if (!check) { promptInput.focus(); return; }
+  // the check may have masked or rewritten sensitive passages: that is what is shown and sent
+  if (typeof check.text === 'string') text = check.text;
 
   // Read the attachments to base64 for upload + the message bubble thumbnails.
   const pending = attachments.slice();

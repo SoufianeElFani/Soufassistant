@@ -937,6 +937,20 @@ Sharing (0.9.0): `POST /api/skills/import` (raw .zip or SKILL.md;
 `GET /api/skills/shared` + `POST /api/skills/import-shared` (install a zip
 from that folder — so a Drive folder becomes a skill library).
 
+**1.5.9 — screening of the whole message (`lexicon.js`, `sensitive.js`).**
+`lexicon.js`: /usr/share/dict word lists (wfrench, wamerican, wbritish, wdutch in the
+Dockerfile) loaded by `ready()` in chunks (setImmediate every 20k lines: ~6 s on a Green
+without blocking), warmed 10 s after boot (hub-routes `startHub`), awaited by the
+`preview` route; `languages()` by function words picks the lists (dominant + English);
+`unknownWords()` = lowercase tokens (code, URLs, e-mails blanked) no list knows.
+`suspects()` adds mail headers / greeting / signature people (before the capitalised
+runs, so they come out as `personne`) and the unknown words (`why`); `auto` covers a
+candidate only for company / person hits (an e-mail containing a name does not).
+`sensitive.js`: `sensitivePassages()` = sentences matching category regexes, with
+offsets and a neutral mention. `namesCheck()` in confidential.js shows names + passages,
+returns the text to send (mask / rewrite / keep), and fails closed when the check errors;
+the composer sends and shows that text.
+
 **1.5.8 — pre-send check.** `suspects()` runs `CAP` on the original text (not the
 masked one): no sentence-start exception any more, only `STARTERS` (FR/EN/NL openers,
 days, months) are dropped from the start of a run; at a sentence / line start, a first
