@@ -937,6 +937,25 @@ Sharing (0.9.0): `POST /api/skills/import` (raw .zip or SKILL.md;
 `GET /api/skills/shared` + `POST /api/skills/import-shared` (install a zip
 from that folder — so a Drive folder becomes a skill library).
 
+**1.6.0 — drop folder, lighter strict mode, shield per conversation (`depot.js`, `vault.js`, `confidential.js`).**
+`depot.js`: `depotDir(root)` = `DEPOT_DIR` or `<parent of the workspace>/Depot_confidentiel` (outside the
+Drive-synced workspace on purpose). `tick(root)` (every 15 s from hub-routes `startHub`, skipped while the
+vault is locked): a file stable for `DEPOT_STABLE_MS` (10 s) is `ingest`ed — names learnt from its name and
+`vault.fileText()`, original → `keepOriginal('Dépôt/<rel>')`, masked copy in place (`state.depot` entry);
+images are renamed / stripped and released at once (`image (à vérifier)`, as after an anonymisation);
+an unsupported or failed file goes to the vault only. A pending file is released (`recordFile`, moved to
+`<workspace>/Confidentiel/<rel>`) when `suspects()` on its name + text finds nothing; otherwise the Hub
+(`depotSection`, `GET /api…/vault` → `depot`) lists the unknown words and `POST …/vault/depot/resolve`
+(`resolve`: protect → addEntity + re-mask in place, ignore → addIgnored, `force`) decides.
+`protectedRoots()` always puts `CONF_DIR` ('Confidentiel') first and creates it. `strictGuard`: a Bash
+command not starting with `cd <absolute allowed dir>` is rewritten to start with `cd <first root>`
+(`updatedInput`, no permission decision, so `canUseTool` still runs — verified with the real SDK);
+relative `cd`s are allowed (no `..`), `cd -` / bare `cd` / pushd / popd denied; read targets are checked
+on their `realpathSync` too. Namespaces (bwrap, unshare) are not available in the app container, so the
+guard stays pattern-based. Front: the shield is per conversation (`confidentialBySession` in localStorage,
+≤ 500); a draft's toggle also sets its mode's default and is handed to the session id when it arrives
+(`shieldForConversation(id, fresh)` from connection.js `sessions`; `shieldNewConversation()` on `cleared`).
+
 **1.5.9 — screening of the whole message (`lexicon.js`, `sensitive.js`).**
 `lexicon.js`: /usr/share/dict word lists (wfrench, wamerican, wbritish, wdutch in the
 Dockerfile) loaded by `ready()` in chunks (setImmediate every 20k lines: ~6 s on a Green

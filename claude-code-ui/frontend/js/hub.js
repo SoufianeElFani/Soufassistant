@@ -16,7 +16,7 @@ import { wsBase, modelSelect } from './dom.js';
 import { registerPanel } from './panels.js';
 import { confirmAction } from './confirm.js';
 import { redactAttachment, blackOut } from './redact.js';
-import { secretField } from './confidential.js';
+import { secretField, reveal } from './confidential.js';
 import { showToast } from './toast.js';
 import { listAgentsCache } from './toolbox.js';
 
@@ -418,6 +418,42 @@ function wipeSection() {
   }));
 }
 
+// the confidential drop folder (server: depot.js) — what waits there, and the user's decision
+function depotSection(dp) {
+  body.appendChild(el('div', 'usage-section-title', 'Dépôt confidentiel'));
+  body.appendChild(note(`Dépose les documents réels dans ${dp.dir || 'Depot_confidentiel'} (réseau : \\\\${location.hostname}\\config\\Depot_confidentiel) — hors du Drive. Ils y sont pseudonymisés (original au coffre), vérifiés comme un message, puis rangés dans le dossier Confidentiel du workspace : le seul que Claude lit avec le bouclier, avec les autres dossiers anonymisés.`));
+  if (dp.waiting) body.appendChild(note(dp.locked ? `${dp.waiting} fichier(s) en attente : déverrouille le coffre pour qu'ils soient traités.` : `${dp.waiting} fichier(s) en cours de traitement (quelques secondes après la fin de la copie).`));
+  for (const f of dp.pending || []) {
+    const box = el('div', 'hub-conf-out');
+    box.appendChild(el('div', 'hub-depot-name', reveal(f.rel)));
+    box.appendChild(note(`${f.unknown.length} mot(s) que le coffre ne connaît pas — cochés : à protéger ; les autres ne seront plus signalés.`));
+    const boxes = f.unknown.map((c) => {
+      const l = el('label', 'doc-check hub-cand');
+      const cb = el('input'); cb.type = 'checkbox'; cb.checked = !c.why;
+      l.append(cb, document.createTextNode(` ${c.real}  `), el('small', null, c.why || KIND_LABEL[c.kind] || c.kind));
+      box.appendChild(l);
+      return [cb, c];
+    });
+    const bar = el('div', 'hub-bar');
+    bar.append(
+      button('Valider', 'Protéger les mots cochés, ne plus signaler les autres, puis ranger le fichier', async () => {
+        const r = await api('/api/vault/depot/resolve', { rel: f.rel, protect: boxes.filter(([cb]) => cb.checked).map(([, c]) => ({ real: c.real, kind: c.kind === 'autre' ? 'client' : c.kind })), ignore: boxes.filter(([cb]) => !cb.checked).map(([, c]) => c.real) });
+        showToast(r.ok ? (r.released ? 'Fichier rangé dans Confidentiel.' : 'Encore des mots à vérifier.') : (r.error || 'Échec.'), r.ok ? {} : { kind: 'error' });
+        render();
+      }),
+      button('Ranger tel quel', 'Sans rien protéger de plus (cette fois)', async () => {
+        if (!(await confirmAction({ title: 'Ranger tel quel ?', body: 'Les mots listés restent en clair dans la copie que Claude pourra lire.', confirm: 'Ranger', cancel: 'Annuler' }))) return;
+        const r = await api('/api/vault/depot/resolve', { rel: f.rel, force: true });
+        if (!r.ok) showToast(r.error || 'Échec.', { kind: 'error' });
+        render();
+      }));
+    box.appendChild(bar);
+    body.appendChild(box);
+  }
+  if (!(dp.pending || []).length && !dp.waiting) body.appendChild(note('Rien en attente.'));
+  for (const r of (dp.recent || []).slice(0, 6)) body.appendChild(note(`${new Date(r.at).toLocaleTimeString()} — ${reveal(r.name)} → ${r.to ? reveal(r.to) : 'coffre seulement'} (${r.how})`));
+}
+
 async function renderConfidential() {
   const v = await api('/api/vault');
   if (tab !== 'confidential') return;
@@ -521,6 +557,8 @@ async function renderConfidential() {
       }));
     }));
   body.append(el('div', 'usage-section-title', 'Dossiers du workspace'), bar, out);
+
+  depotSection(v.depot || {});
 
   // la table
   body.appendChild(el('div', 'usage-section-title', 'Coffre'));

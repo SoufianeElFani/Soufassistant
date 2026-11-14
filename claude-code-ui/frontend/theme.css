@@ -478,6 +478,7 @@ kbd {
 .conf-on .composer { border-color: color-mix(in srgb, var(--accent) 35%, var(--border-strong)); }
 .hub-conf-add { padding: 6px 14px 0; }
 .hub-conf-out { padding: 0 14px 8px; display: flex; flex-direction: column; gap: 4px; }
+.hub-depot-name { font-weight: 600; overflow-wrap: anywhere; padding-top: 6px; }
 .hub-cand { font-size: 13px; color: var(--text); }
 .conf-btn.locked { color: var(--warning, #c58a00); }
 .conf-dialog .confirm-body { margin-bottom: 8px; }

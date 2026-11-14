@@ -28,7 +28,7 @@ import { applyRoles, applyRoleResult, applySessionRoles, resetRolesForNewConvers
 import { applyAgents, applySessionAgent, applyProjects } from './toolbox.js';
 import { applyPublishedApps } from './hub.js';
 import { renderRecents } from './shell.js';
-import { applyVaultMap, applyNotice, applyVaultStatus, applyVaultLocked } from './confidential.js';
+import { applyVaultMap, applyNotice, applyVaultStatus, applyVaultLocked, shieldForConversation, shieldNewConversation } from './confidential.js';
 import { applyBrowserFrame, skillSuggestionCard } from './artifacts.js';
 import { renderScheduled, showScheduledError } from './scheduled.js';
 import { renderTeam } from './team.js';
@@ -172,6 +172,7 @@ export function handleServerMessage(msg) {
       // Opening another conversation restores the mode it was last used in.
       if (S.activeSessionId && S.activeSessionId !== prevActive) {
         applySessionMode(S.activeSessionId);
+        shieldForConversation(S.activeSessionId, !prevActive && S.isRunning);
         applySessionRoles(S.activeSessionId);
         applySessionAgent(S.activeSessionId);
       }
@@ -366,6 +367,8 @@ export function handleServerMessage(msg) {
       resetRolesForNewConversation();
       applySessionAgent(null);
       S.viewKey = null;
+      S.activeSessionId = null;
+      shieldNewConversation();
       setConversationArtifacts([]);
       applyRuns(S.runs);
       S.isRunning = false;

@@ -25,7 +25,7 @@
  */
 import { execFile } from 'child_process';
 import { createCipheriv, createDecipheriv, createHash, randomBytes, scryptSync } from 'crypto';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'fs';
 import os from 'os';
 import path from 'path';
 import { DATA_DIR } from './config.js';
@@ -86,6 +86,7 @@ function load() {
   state.counters ||= {};
   state.blobs ||= [];      // { id, type: 'orig' | 'reel', name, at, size }
   state.roots ||= [];      // dossiers du workspace anonymisés (mode strict)
+  state.depot ||= [];      // fichiers du dépôt pseudonymisés sur place, en attente (depot.js)
   state.ignored ||= [...DEFAULT_IGNORED];
   return state;
 }
@@ -185,13 +186,49 @@ export const ignoredList = () => load().ignored;
 export function setIgnored(list) { load().ignored = [...new Set(list.map((x) => String(x).trim()).filter(Boolean))]; save(); }
 export function addIgnored(words) { const s = load(); for (const w of words) if (w && !s.ignored.some((x) => norm(x) === norm(w))) s.ignored.push(String(w).trim()); save(); }
 
-/** Les dossiers anonymisés, en chemins absolus (le mode strict n'autorise qu'eux). */
+/**
+ * Les dossiers anonymisés, en chemins absolus (le mode strict n'autorise qu'eux).
+ * `Confidentiel` en tête, toujours (créé au besoin) : le dossier de travail par
+ * défaut d'une conversation confidentielle, où arrive ce qui sort du dépôt.
+ */
+export const CONF_DIR = 'Confidentiel';
 export function protectedRoots(root) {
   const s = load();
-  const rels = new Set(s.roots);
+  const rels = new Set([CONF_DIR, ...s.roots]);
   for (const f of s.files) if (f.masked) rels.add(f.masked.split('/')[0]);
+  try { mkdirSync(path.join(root, CONF_DIR), { recursive: true }); } catch {}
   return [...rels].filter(Boolean).map((r) => path.join(root, r));
 }
+
+// ── Le dépôt (depot.js) : ce que la table du coffre en retient ──
+/** L'original d'un fichier déposé, au coffre (chiffré s'il y a une phrase de passe). */
+export function keepOriginal(name, buf) { putReal('orig', name, buf); save(); }
+/** Les fichiers du dépôt déjà pseudonymisés sur place : [{ rel, orig, how, at }]. */
+export const depotEntries = () => load().depot;
+export function depotSet(rel, entry) {
+  const s = load();
+  s.depot = s.depot.filter((d) => d.rel !== rel && d.rel !== entry?.rel);
+  if (entry) s.depot.push(entry);
+  save();
+}
+/** Un fichier sorti du dépôt (ou gardé au coffre seulement) : comme une anonymisation du Hub. */
+export function recordFile(entry) {
+  const s = load();
+  s.files.push({ ...entry, at: Date.now() });
+  const top = entry.masked?.split('/')[0];
+  if (top && !s.roots.includes(top)) s.roots.push(top);
+  save();
+}
+/** Le texte d'un fichier (texte, Office, PDF), pour y chercher des noms ; rien n'est appris. */
+export async function fileText(abs) {
+  const parts = [];
+  const scratch = mkdtempSync(path.join(os.tmpdir(), 'conf-texte-'));
+  try {
+    const r = await transformFile(abs, path.join(scratch, 'x.' + ext(abs)), (t) => { parts.push(t); return t; });
+    return r.ok ? parts.join('\n') : null;
+  } catch { return null; } finally { rmSync(scratch, { recursive: true, force: true }); }
+}
+export { TEXT_EXT, OFFICE, ext as extOf };
 
 // ── Pseudonymes ─────────────────────────────────────────────────────────────
 const letters = (n) => { let s = ''; n += 1; while (n > 0) { s = String.fromCharCode(65 + ((n - 1) % 26)) + s; n = Math.floor((n - 1) / 26); } return s; };
@@ -936,18 +973,26 @@ const SYSTEM_DIRS = ['/usr', '/bin', '/sbin', '/lib', '/lib64', '/opt', '/data/t
 const NET_CMD = /(^|[\s;&|(`'"])(curl|wget|ha-tools|ssh|scp|sftp|nc|ncat|telnet|rclone|gh|ftp|sqlite3)(\s|$|;)|\bha\s+(core|apps?|addons?|supervisor|host|backups?|os|network)\b|\bgit\s+(clone|fetch|pull|push|ls-remote)\b|\bpython[\d.]*\s+-m\s+http\b/;
 const inside = (p, d) => p === d || p.startsWith(d.replace(/\/+$/, '') + '/');
 
-/** PreToolUse pour un message confidentiel. `roots()` → dossiers autorisés (absolus). */
+/**
+ * PreToolUse pour un message confidentiel. `roots()` → dossiers autorisés (absolus),
+ * le premier étant le dossier de travail par défaut. Une commande Bash qui ne commence
+ * pas par `cd <dossier autorisé>` y est placée d'office (`updatedInput`) : chemins
+ * relatifs résolus là, plus de refus pour un `cd` oublié.
+ */
 export function strictGuard(roots, cwd = '/') {
   const home = os.homedir();
   const readOnly = [path.join(home, '.claude', 'skills'), path.join(home, '.claude', 'plugins')];
   const deny = (why) => ({ continue: true, hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: `Mode Confidentiel strict : ${why} Si ce travail n'est pas confidentiel, l'utilisateur peut éteindre le bouclier (sous la zone de saisie).` } });
+  // a symlink inside an allowed folder must not lead elsewhere: the real path is checked too
+  const real = (p) => { try { return realpathSync(p); } catch { return p; } };
   return async (input) => {
     const tool = input?.tool_name || '';
     const ti = input?.tool_input ?? {};
     let allowed;
     try { allowed = [...roots(), '/tmp']; } catch (e) { return deny(e.message); }
-    const where = allowed.filter((r) => r !== '/tmp').join(', ') || 'aucun dossier anonymisé pour l\'instant (Hub › Confidentiel › Anonymiser)';
-    const ok = (abs, extra = []) => safeFiles.has(path.resolve(abs)) || [...allowed, ...extra].some((d) => inside(abs, d));
+    const where = allowed.filter((r) => r !== '/tmp').join(', ') || 'aucun dossier anonymisé';
+    const okRaw = (abs, extra) => safeFiles.has(path.resolve(abs)) || [...allowed, ...extra].some((d) => inside(abs, d));
+    const ok = (abs, extra = []) => okRaw(abs, extra) && okRaw(real(abs), extra);
     if (NET_TOOLS.has(tool)) return deny('pas de web : ce qui en revient ne serait pas pseudonymisé.');
     if (tool.startsWith('mcp__') && !MCP_OK.has(tool)) return deny('pas de connecteur ni de navigateur : leurs réponses ne seraient pas pseudonymisées.');
     if (READ_TOOLS.has(tool)) {
@@ -963,19 +1008,26 @@ export function strictGuard(roots, cwd = '/') {
     if (tool === 'Bash') {
       const cmd = String(ti.command || '');
       if (NET_CMD.test(cmd)) return deny('pas de commande réseau ni d\'accès à Home Assistant (curl, ha-tools, ssh, git fetch…) : leurs résultats ne seraient pas pseudonymisés.');
-      if (/(^|[\s'"=:])~(\/|\s|$)|\$\{?HOME\b|(^|[\s/'"=])\.\.(\/|\s|$|['"])/.test(cmd)) return deny('pas de ~, $HOME ni de « .. » dans les commandes : utilise des chemins absolus dans les dossiers anonymisés.');
+      if (/(^|[\s'"=:])~(\/|\s|$)|\$\{?HOME\b|(^|[\s/'"=])\.\.(\/|\s|$|['"])/.test(cmd)) return deny('pas de ~, $HOME ni de « .. » dans les commandes : utilise des chemins dans les dossiers anonymisés.');
+      // `cd -`, a bare `cd`, pushd/popd would go back to where the shell was before (or $HOME)
+      if (/(?:^|[\s;&|(])(?:pushd|popd)\b|(?:^|[\s;&|(])cd(?:\s+-\S*)?\s*(?:$|[;&|)\n])/.test(cmd)) return deny('pas de « cd » seul, « cd - », pushd ni popd : donne le dossier.');
       const first = cmd.match(/^\s*cd\s+(?:"([^"]+)"|'([^']+)'|([^\s;&|]+))\s*(?:&&|;|\n|$)/);
       const start = first && (first[1] || first[2] || first[3]);
-      if (!start || !ok(path.resolve(cwd, start))) return deny(`une commande doit commencer par cd "<dossier anonymisé>" (${where}).`);
+      const placed = start && path.isAbsolute(start) && ok(start);
+      if (start && path.isAbsolute(start) && !placed) return deny(`cd hors des dossiers anonymisés : ${start}.`);
+      const base = allowed.find((r) => r !== '/tmp');
+      if (!placed && !base) return deny('aucun dossier anonymisé pour l\'instant.');
+      // later cds: an absolute one must stay inside; a relative one (no « .. ») stays under the folder the command starts in
       for (const m of cmd.matchAll(/(?:^|[\s;&|(])cd\s+(?:"([^"]+)"|'([^']+)'|([^\s;&|)]+))/g)) {
         const d = m[1] || m[2] || m[3];
-        if (!path.isAbsolute(d) || !ok(d)) return deny(`cd hors des dossiers anonymisés : ${d}.`);
+        if (path.isAbsolute(d) && !ok(d)) return deny(`cd hors des dossiers anonymisés : ${d}.`);
       }
       for (const m of cmd.matchAll(/(?:^|[\s'"=:(<>|,])(\/[^\s'";|&)<>,`]*)/g)) {
         const p = m[1].replace(/\/+$/, '') || '/';
         if (!ok(p, SYSTEM_DIRS) && !SYSTEM_DIRS.some((d) => inside(p, d))) return deny(`chemin hors des dossiers anonymisés : ${p}.`);
       }
-      return { continue: true };
+      if (placed) return { continue: true };
+      return { continue: true, hookSpecificOutput: { hookEventName: 'PreToolUse', updatedInput: { ...ti, command: `cd ${JSON.stringify(base)} && ${cmd}` } } };
     }
     return { continue: true };
   };
@@ -1023,7 +1075,11 @@ export const CONFIDENTIAL_PROMPT = [
   'The user sees the real names on their screen and can produce the real version of a deliverable locally ("Particulariser").',
   'Never try to read the confidential vault.',
   'Strict mode is on: you may only read the anonymised workspace folders (and /tmp); the web, connectors, the browser, Home Assistant',
-  'and files elsewhere are refused, because what comes back from them is not pseudonymised. Start every Bash command with',
-  'cd "<an anonymised folder>" and use absolute paths inside it. If a refusal blocks the task, say so and suggest turning the shield off.',
+  'and files elsewhere are refused, because what comes back from them is not pseudonymised. Your working folder is the workspace',
+  `folder "${CONF_DIR}": a Bash command that does not start with cd into an anonymised folder runs there; create one sub-folder`,
+  'per client or project in it, named with the pseudonyms (e.g. Client-A_Projet-01). New documents reach it on their own: the user',
+  'drops the real files into the confidential drop folder on Home Assistant (not the Drive), they are pseudonymised locally and moved',
+  `into "${CONF_DIR}" — a file still waiting there needs the user's check in Hub › Confidentiel › Dépôt.`,
+  'If a refusal blocks the task, say so and suggest turning the shield off.',
   'Attached pictures and plans were masked by the user before sending (black boxes): never try to guess what is under them.',
 ].join(' ');

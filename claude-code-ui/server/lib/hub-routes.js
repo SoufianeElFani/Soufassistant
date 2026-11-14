@@ -18,6 +18,7 @@ import { lastFrame, browserAvailable } from './browser.js';
 import { decoratedSessions, sessionToMarkdown } from './session-tools.js';
 import { parseSession } from './sessions.js';
 import * as vault from './vault.js';
+import * as depot from './depot.js';
 import * as redact from './redact.js';
 import { sensitivePassages } from './sensitive.js';
 import * as lexicon from './lexicon.js';
@@ -120,7 +121,14 @@ export function registerHubRoutes(app) {
 const vaultChanged = (r) => { broadcast({ type: 'vault_map', map: vault.revealMap() }); return r; };
 const statusChanged = (r) => { broadcast({ type: 'vault_status', ...vault.vaultStatus() }); return vaultChanged(r); };
 export function registerVaultRoutes(app) {
-  app.get('/api/vault', wrap(() => ({ ok: true, ...vault.vaultStatus(), entities: vault.listEntities(), exempt: vault.exemptList(), reels: vault.listReels(), ignored: vault.isLocked() ? [] : vault.ignoredList(), images: vault.imagesToCheck(workspaceRoot()), docs: vault.docsToCheck(workspaceRoot()) })));
+  app.get('/api/vault', wrap(async () => ({ ok: true, ...vault.vaultStatus(), entities: vault.listEntities(), exempt: vault.exemptList(), reels: vault.listReels(), ignored: vault.isLocked() ? [] : vault.ignoredList(), images: vault.imagesToCheck(workspaceRoot()), docs: vault.docsToCheck(workspaceRoot()), depot: await depot.depotStatus(workspaceRoot()) })));
+  // the drop folder: the user's decision on a file still waiting there (depot.js)
+  app.post('/api/vault/depot/resolve', json, wrap(async (req) => {
+    const b = req.body || {};
+    const r = await depot.resolve(workspaceRoot(), String(b.rel || ''), { protect: [].concat(b.protect || []), ignore: [].concat(b.ignore || []), force: !!b.force });
+    if (r.ok) { vaultChanged(); broadcast({ type: 'workspace', entries: listWorkspaceEntries() }); }
+    return r;
+  }));
   // encryption: the passphrase only ever travels browser → server, and is never stored
   app.post('/api/vault/unlock', json, wrap((req) => (vault.unlock(String(req.body?.pass || '')) ? statusChanged({ ok: true }) : { ok: false, error: 'Phrase de passe incorrecte.' })));
   // erasing everything needs the word typed in the Hub (an accidental call does nothing)
@@ -218,5 +226,10 @@ export function registerVaultRoutes(app) {
 export function startHub() {
   // the pre-send check's dictionaries, loaded in the background so the first message does not wait
   setTimeout(() => lexicon.ready().catch(() => {}), 10000).unref?.();
+  // the confidential drop folder, watched (depot.js): what leaves it shows up in the workspace
+  const watch = () => depot.tick(workspaceRoot()).then((moved) => {
+    if (moved) { vaultChanged(); broadcast({ type: 'workspace', entries: listWorkspaceEntries() }); }
+  }).catch(() => {});
+  setInterval(watch, 15000).unref?.();
   apps.startApps((name) => projectDir(name));
 }

@@ -129,18 +129,39 @@ describe('vault — mode strict', () => {
     assert.equal(await g('mcp__soufassistant__generate_image', {}), 'allow');
     assert.equal(await g('TodoWrite', {}), 'allow');
   });
-  test('Bash : cd dans un dossier anonymisé, pas de réseau ni de chemin ailleurs', async () => {
+  test('Bash : placé d\'office dans le dossier de travail, pas de réseau ni de chemin ailleurs', async () => {
     const T = path.join(ws, 'T');
+    const run = async (command) => (await G({ tool_name: 'Bash', tool_input: { command, description: 'd' } })).hookSpecificOutput;
     assert.equal(await g('Bash', { command: `cd "${T}" && /data/tools/pyenv/bin/python build.py` }), 'allow');
+    assert.equal(await run(`cd "${T}" && ls`), undefined, 'already in place: unchanged');
     assert.equal(await g('Bash', { command: `cd "${T}" && ls -la /tmp && cat /usr/share/dict/x` }), 'allow');
-    assert.equal(await g('Bash', { command: 'ls' }), 'deny', 'no cd');
+    // no cd: run in the first allowed folder, the rest of the input kept
+    const o = await run('ls && cat note.md');
+    assert.equal(o.permissionDecision, undefined);
+    assert.equal(o.updatedInput.command, `cd ${JSON.stringify(T)} && ls && cat note.md`);
+    assert.equal(o.updatedInput.description, 'd');
+    assert.equal((await run('cd sous-dossier && ls')).updatedInput.command, `cd ${JSON.stringify(T)} && cd sous-dossier && ls`);
     assert.equal(await g('Bash', { command: 'cd /config && cat automations.yaml' }), 'deny');
+    assert.equal(await g('Bash', { command: 'cat /config/secrets.yaml' }), 'deny');
     assert.equal(await g('Bash', { command: `cd "${T}" && cat /config/secrets.yaml` }), 'deny');
     assert.equal(await g('Bash', { command: `cd "${T}" && cat ../../x` }), 'deny');
     assert.equal(await g('Bash', { command: `cd "${T}" && cat ~/.claude/x` }), 'deny');
     assert.equal(await g('Bash', { command: `cd "${T}" && curl https://x` }), 'deny');
     assert.equal(await g('Bash', { command: `cd "${T}" && ha-tools state sun.sun` }), 'deny');
     assert.equal(await g('Bash', { command: `cd "${T}" && cd /config && ls` }), 'deny');
+    for (const c of ['cd - && cat secrets.yaml', 'cd && ls', `cd "${T}"; cd; ls`, 'popd && ls', 'pushd /config']) assert.equal(await g('Bash', { command: c }), 'deny', c);
+  });
+  test('un lien symbolique ne fait pas sortir du dossier', async () => {
+    const { mkdirSync, symlinkSync } = await import('fs');
+    const T = path.join(ws, 'T');
+    mkdirSync(T, { recursive: true });
+    symlinkSync('/etc', path.join(T, 'lien'));   // outside every allowed folder (/tmp is allowed)
+    assert.equal(await g('Read', { file_path: path.join(T, 'lien', 'hostname') }), 'deny');
+    assert.equal(await g('Read', { file_path: path.join(T, 'note.md') }), 'allow');
+  });
+  test('Confidentiel est toujours un dossier autorisé, en tête', () => {
+    const r = V.protectedRoots(ws);
+    assert.equal(r[0], path.join(ws, 'Confidentiel'));
   });
 });
 

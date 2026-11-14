@@ -3,8 +3,10 @@
  *
  *   bouton bouclier   sous la zone de saisie : allumé = le message et ses pièces
  *                     jointes sont pseudonymisés par le serveur avant l'envoi.
- *                     Allumé par défaut dans tous les modes ; un clic le bascule
- *                     pour le mode courant (mémorisé).
+ *                     Mémorisé par conversation : rouvrir une conversation remet
+ *                     le bouclier où il était. Une nouvelle conversation prend le
+ *                     réglage par défaut de son mode (allumé, sauf si on l'a éteint
+ *                     dans une nouvelle conversation de ce mode).
  *   avant l'envoi     coffre chiffré et verrouillé → demande de la phrase de passe ;
  *                     puis l'alerte : les mots qui ressemblent à des noms et que le
  *                     coffre ne connaît pas (protéger / ne plus signaler / laisser) ;
@@ -71,11 +73,33 @@ btn.className = 'attach-btn conf-btn';
 btn.innerHTML = '<svg class="ic" viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3 4.5 6v5.5c0 4.6 3.2 8.4 7.5 9.5 4.3-1.1 7.5-4.9 7.5-9.5V6z"/><path class="conf-check" d="m9 12 2.2 2.2L15.5 10"/></svg>';
 left.insertBefore(btn, left.children[1] || null);
 
-const pref = () => { try { return JSON.parse(localStorage.getItem('confidential') || '{}'); } catch { return {}; } };
+const read = (k) => { try { return JSON.parse(localStorage.getItem(k) || '{}'); } catch { return {}; } };
+const pref = () => read('confidential');                  // mode → default for a new conversation
+const bySession = () => read('confidentialBySession');    // session id → on/off
+let draft = null;   // the choice made in a new conversation, until it gets its id
 export function isConfidential() {
-  const p = pref();
-  return p[S.mode] ?? DEFAULT_ON[S.mode] ?? true;
+  const id = S.activeSessionId;
+  const own = id ? bySession()[id] : draft;
+  return own ?? pref()[S.mode] ?? DEFAULT_ON[S.mode] ?? true;
 }
+function remember(id, on) {
+  const m = bySession();
+  m[id] = on;
+  const keys = Object.keys(m);
+  for (const k of keys.slice(0, Math.max(0, keys.length - 500))) delete m[k];   // bounded
+  localStorage.setItem('confidentialBySession', JSON.stringify(m));
+}
+/**
+ * The conversation on screen changed (connection.js). `fresh`: a new conversation
+ * just got its id — it keeps the choice made while it was a draft.
+ */
+export function shieldForConversation(id, fresh = false) {
+  if (id && fresh && draft !== null && bySession()[id] === undefined) remember(id, draft);
+  if (id) draft = null;
+  render();
+}
+/** A new, empty conversation: back to the mode's default. */
+export function shieldNewConversation() { draft = null; render(); }
 function render() {
   const on = isConfidential();
   btn.classList.toggle('active', on);
@@ -89,11 +113,17 @@ function render() {
 }
 btn.onclick = (e) => {
   e.stopPropagation();
-  const p = pref();
-  p[S.mode] = !isConfidential();
-  localStorage.setItem('confidential', JSON.stringify(p));
+  const on = !isConfidential();
+  if (S.activeSessionId) remember(S.activeSessionId, on);
+  else {
+    // a new conversation: this one, and the default of its mode for the next new ones
+    draft = on;
+    const p = pref();
+    p[S.mode] = on;
+    localStorage.setItem('confidential', JSON.stringify(p));
+  }
   render();
-  showToast(p[S.mode] ? 'Confidentiel activé : les noms seront pseudonymisés avant l\'envoi.' : 'Confidentiel désactivé pour ce mode.');
+  showToast(on ? 'Confidentiel activé pour cette conversation : les noms seront pseudonymisés avant l\'envoi.' : 'Confidentiel désactivé pour cette conversation.');
 };
 new MutationObserver(render).observe(document.body, { attributes: true, attributeFilter: ['data-mode'] });
 render();
