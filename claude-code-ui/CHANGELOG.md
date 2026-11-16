@@ -1,3 +1,8 @@
+## 1.6.1
+**Drop confidential files from anywhere.**
+- **Hub › Confidentiel › Dépôt confidentiel › Déposer des fichiers…** (or drag files onto the dashed area) sends real documents straight into `Depot_confidentiel`. This works wherever Home Assistant is reachable, for example from the office through the Tailscale address, not only through the Samba share at home. They are then handled like a file copied there: pseudonymised on Home Assistant, original to the vault, check, then moved to `Confidentiel`.
+- **Nothing more leaves the house.** The file goes from the browser to Home Assistant only. It never goes into a conversation, the workspace or the Drive before it is pseudonymised. The route only writes into the drop folder and never reads anything back. Names are reduced to the bare file name, existing files are never overwritten, and the limit is 100 MB per file.
+
 ## 1.6.0
 **Confidential mode, lighter, with the same protection.**
 - **Drop folder.** Put real documents in `Depot_confidentiel`, next to `Claude_Travail` and outside the Drive (on the network: `\\<HA>\config\Depot_confidentiel`). With the vault unlocked, each file is pseudonymised on Home Assistant within ~15 s: the original goes to the vault and the copy is renamed too. The copy is then checked like a message before it leaves. If no unknown name is found, it moves to `Claude_Travail/Confidentiel`. Otherwise it waits in the drop folder, out of Claude's reach, until you decide in Hub › Confidentiel › Dépôt confidentiel: protect the ticked words and stop flagging the others, or file it as it is. While the vault is locked, nothing is processed. You no longer need to go through Hub › Anonymiser for each new folder.

@@ -38,6 +38,14 @@ function inWorkspace(rel) {
 
 export function registerHubRoutes(app) {
   registerVaultRoutes(app);
+  // ── Confidential drop folder: a file sent from the browser, wherever HA is reachable ──
+  // write-only: it lands in the drop folder (outside the workspace, so outside the Drive),
+  // nothing is read back or sent anywhere; the next tick pseudonymises it
+  app.post('/api/depot/upload', express.raw({ type: '*/*', limit: '100mb' }), wrap(async (req) => {
+    const r = depot.receive(workspaceRoot(), String(req.query.name || ''), req.body);
+    if (r.ok) setImmediate(watchDepot);
+    return r;
+  }));
   // ── Memory ──
   app.get('/api/memory', wrap(() => memory.listMemory()));
   app.post('/api/memory', json, wrap((req) => memory.saveFact(req.body || {})));
@@ -223,13 +231,16 @@ export function registerVaultRoutes(app) {
   });
 }
 
+// the confidential drop folder, watched (depot.js): what leaves it shows up in the workspace
+function watchDepot() {
+  return depot.tick(workspaceRoot()).then((moved) => {
+    if (moved) { vaultChanged(); broadcast({ type: 'workspace', entries: listWorkspaceEntries() }); }
+  }).catch(() => {});
+}
+
 export function startHub() {
   // the pre-send check's dictionaries, loaded in the background so the first message does not wait
   setTimeout(() => lexicon.ready().catch(() => {}), 10000).unref?.();
-  // the confidential drop folder, watched (depot.js): what leaves it shows up in the workspace
-  const watch = () => depot.tick(workspaceRoot()).then((moved) => {
-    if (moved) { vaultChanged(); broadcast({ type: 'workspace', entries: listWorkspaceEntries() }); }
-  }).catch(() => {});
-  setInterval(watch, 15000).unref?.();
+  setInterval(watchDepot, 15000).unref?.();
   apps.startApps((name) => projectDir(name));
 }

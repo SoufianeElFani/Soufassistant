@@ -2,7 +2,8 @@
  * Le dépôt confidentiel — déposer des documents réels sans passer par le Hub.
  *
  * Un dossier hors du workspace, donc hors du Drive (`Depot_confidentiel`, à côté de
- * `Claude_Travail` ; par Samba : \\<HA>\config\Depot_confidentiel). Toutes les 15 s,
+ * `Claude_Travail` ; par Samba : \\<HA>\config\Depot_confidentiel, ou de partout par
+ * Hub › Confidentiel › Déposer, qui l'écrit ici via `receive`). Toutes les 15 s,
  * coffre déverrouillé, chaque fichier stable (10 s sans changement) y est traité
  * comme par Hub › Anonymiser : noms appris (motifs, formes juridiques, civilités),
  * original au coffre, copie pseudonymisée à sa place, nom compris.
@@ -15,7 +16,7 @@
  * Coffre verrouillé : rien n'est traité, les fichiers attendent.
  */
 import path from 'path';
-import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, utimesSync, writeFileSync } from 'fs';
 import * as vault from './vault.js';
 import * as lexicon from './lexicon.js';
 import { log } from './log.js';
@@ -139,6 +140,28 @@ export async function tick(root) {
     }
   } finally { busy = false; }
   return changed;
+}
+
+/**
+ * A file sent from the Hub (from anywhere HA is reachable, not only the LAN's Samba share):
+ * written into the drop folder under a `.part` name, then renamed, with an old mtime so the
+ * next tick takes it at once. Same treatment as a file copied there. → { ok, name }
+ */
+export function receive(root, name, buf) {
+  const dir = depotDir(root);
+  const base = path.basename(String(name || '').replace(/\\/g, '/')).replace(/[\u0000-\u001f<>:"|?*]/g, '_').trim();
+  if (!base || SKIP.test(base) || base.length > 200) return { ok: false, error: 'Nom de fichier refusé.' };
+  if (!Buffer.isBuffer(buf) || !buf.length) return { ok: false, error: 'Fichier vide.' };
+  mkdirSync(dir, { recursive: true });
+  let out = base;
+  for (let i = 2; existsSync(path.join(dir, out)); i++) out = base.replace(/(\.[^.]+)?$/, ` (${i})$1`);
+  const tmp = path.join(dir, `${out}.part`);
+  writeFileSync(tmp, buf);
+  const past = new Date(Date.now() - STABLE_MS - 1000);
+  utimesSync(tmp, past, past);
+  renameSync(tmp, path.join(dir, out));
+  log('INFO', `dépôt: fichier reçu par le Hub (${buf.length} o)`);
+  return { ok: true, name: out };
 }
 
 /** For the Hub (browser only, never the model): what waits, and why. */

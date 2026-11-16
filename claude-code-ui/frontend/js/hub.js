@@ -418,10 +418,43 @@ function wipeSection() {
   }));
 }
 
+// sending real documents to the drop folder from the browser (server: depot.receive) —
+// they go to this Home Assistant only, never into a conversation or the Drive
+async function depotUpload(files) {
+  let sent = 0;
+  for (const f of files) {
+    const r = await api(`/api/depot/upload?name=${encodeURIComponent(f.name)}`, f);
+    if (r.ok) sent++; else showToast(`${f.name} : ${r.error || 'échec'}`, { kind: 'error' });
+  }
+  if (sent) showToast(`${sent} fichier(s) déposé(s) — pseudonymisation en cours.`);
+  render();
+  setTimeout(() => { if (tab === 'confidential' && !panel.classList.contains('hidden')) render(); }, 4000);
+}
+function depotDrop() {
+  const zone = el('div', 'hub-depot-drop');
+  const pick = el('input');
+  pick.type = 'file';
+  pick.multiple = true;
+  pick.hidden = true;
+  pick.onchange = () => { const fs = [...pick.files]; pick.value = ''; if (fs.length) depotUpload(fs); };
+  zone.append(note('Glisse les fichiers ici'), button('Déposer des fichiers…', 'Choisir des documents réels à pseudonymiser', () => pick.click()), pick);
+  ['dragenter', 'dragover'].forEach((ev) => zone.addEventListener(ev, (e) => { e.preventDefault(); e.stopPropagation(); zone.classList.add('dragover'); }));
+  zone.addEventListener('dragleave', () => zone.classList.remove('dragover'));
+  zone.addEventListener('drop', (e) => {
+    e.preventDefault();
+    e.stopPropagation();   // never reaches the composer's own drop (which would attach it to a message)
+    zone.classList.remove('dragover');
+    const fs = [...(e.dataTransfer?.files || [])];
+    if (fs.length) depotUpload(fs);
+  });
+  return zone;
+}
+
 // the confidential drop folder (server: depot.js) — what waits there, and the user's decision
 function depotSection(dp) {
   body.appendChild(el('div', 'usage-section-title', 'Dépôt confidentiel'));
-  body.appendChild(note(`Dépose les documents réels dans ${dp.dir || 'Depot_confidentiel'} (réseau : \\\\${location.hostname}\\config\\Depot_confidentiel) — hors du Drive. Ils y sont pseudonymisés (original au coffre), vérifiés comme un message, puis rangés dans le dossier Confidentiel du workspace : le seul que Claude lit avec le bouclier, avec les autres dossiers anonymisés.`));
+  body.appendChild(note(`Dépose ici les documents réels (de partout où Home Assistant est joignable), ou chez toi par le réseau dans \\\\${location.hostname}\\config\\Depot_confidentiel. Ils restent sur ce Home Assistant, hors du Drive, sans rien envoyer à Claude : pseudonymisés (original au coffre), vérifiés comme un message, puis rangés dans le dossier Confidentiel du workspace — le seul que Claude lit avec le bouclier, avec les autres dossiers anonymisés.`));
+  body.appendChild(depotDrop());
   if (dp.waiting) body.appendChild(note(dp.locked ? `${dp.waiting} fichier(s) en attente : déverrouille le coffre pour qu'ils soient traités.` : `${dp.waiting} fichier(s) en cours de traitement (quelques secondes après la fin de la copie).`));
   for (const f of dp.pending || []) {
     const box = el('div', 'hub-conf-out');

@@ -64,6 +64,20 @@ describe('dépôt confidentiel', () => {
     assert.match(t, /Personne-\d+/);
   });
 
+  test('un fichier envoyé par le Hub : écrit dans le dépôt, traité au passage suivant', async () => {
+    const r = D.receive(root, 'C:\\Users\\x\\note Globex Industries.md', Buffer.from('suivi Globex Industries.\n'));
+    assert.equal(r.ok, true);
+    assert.equal(r.name, 'note Globex Industries.md', 'path stripped, base name only');
+    assert.ok(existsSync(path.join(dir, r.name)));
+    assert.equal(D.receive(root, 'note Globex Industries.md', Buffer.from('bis\n')).name, 'note Globex Industries (2).md', 'never overwrites');
+    for (const bad of ['', '../', '.cache', '~$doc.docx', 'x.part']) assert.equal(D.receive(root, bad, Buffer.from('x')).ok, false, bad);
+    assert.equal(D.receive(root, 'vide.md', Buffer.alloc(0)).ok, false);
+    await D.tick(root);
+    assert.ok(!readdirSync(dir).some((n) => /Globex/.test(n)), readdirSync(dir).join('|'));
+    assert.ok(existsSync(conf('note Client-A.md')), readdirSync(conf()).join('|'));
+    assert.doesNotMatch(readFileSync(conf('note Client-A.md'), 'utf8'), /Globex/);
+  });
+
   test('coffre verrouillé : rien n\'est traité', async () => {
     assert.equal(V.setPassphrase('une phrase de passe').ok, true);
     V.lock();

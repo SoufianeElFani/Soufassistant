@@ -937,6 +937,14 @@ Sharing (0.9.0): `POST /api/skills/import` (raw .zip or SKILL.md;
 `GET /api/skills/shared` + `POST /api/skills/import-shared` (install a zip
 from that folder — so a Drive folder becomes a skill library).
 
+**1.6.1 — upload into the drop folder (`depot.receive`, hub.js `depotDrop`).** `POST /api/depot/upload?name=`
+(raw body, 100 MB) writes the bare base name (no path, `SKIP` names refused, ` (n)` instead of overwriting) into
+`depotDir` as `.part`, backdates its mtime past `DEPOT_STABLE_MS`, renames it, then runs `watchDepot` at once.
+Deliberately **not** under the vault's API prefix: `vaultGuard` denies any tool input mentioning that prefix,
+which would block editing this route — and the route is write-only (it reads nothing back), so the
+agent reaching it only adds a file to be pseudonymised. The Hub's drop zone stops propagation so a
+file dropped there never reaches the composer's own drop (which would attach it to a message).
+
 **1.6.0 — drop folder, lighter strict mode, shield per conversation (`depot.js`, `vault.js`, `confidential.js`).**
 `depot.js`: `depotDir(root)` = `DEPOT_DIR` or `<parent of the workspace>/Depot_confidentiel` (outside the
 Drive-synced workspace on purpose). `tick(root)` (every 15 s from hub-routes `startHub`, skipped while the
