@@ -68,6 +68,38 @@ body {
   font-family: "Inter", "SF Pro Text", -apple-system, BlinkMacSystemFont, "Segoe UI Variable", "Segoe UI", Roboto, system-ui, sans-serif;
   font-size: 15px; letter-spacing: -0.005em; background: var(--bg); color: var(--text);
 }
+/* ── Décor gréco-romain (mêmes motifs que les thèmes HA « Soufassistant ») ──
+   decor/*.svg are white masks exported from /config/soufassistant_theme
+   (export_app.py); colour and strength come from the tokens below.
+   ::before = architect's grid + Athena engraving + meander frieze (--decor-b),
+   ::after = the burst of rays (--decor-a). Fixed, behind everything, no events,
+   kept faint because conversation text sits directly on --bg. */
+:root, html[data-theme="dark"] { --decor-a: var(--accent); --decor-b: #c9a86a; --decor-a-op: .16; --decor-b-op: .13; }
+html[data-theme="light"] { --decor-a: var(--accent); --decor-b: var(--accent); --decor-a-op: .13; --decor-b-op: .09; }
+html[data-theme="signal"] { --decor-a: #ffffff; --decor-b: #ffffff; --decor-a-op: .18; --decor-b-op: .14; }
+body {
+  background-image:
+    radial-gradient(1100px 760px at 92% 4%, color-mix(in srgb, var(--decor-a) 9%, transparent), transparent 62%),
+    radial-gradient(900px 700px at -4% 104%, color-mix(in srgb, var(--decor-b) 7%, transparent), transparent 60%);
+  background-attachment: fixed;
+}
+body::before, body::after { content: ""; position: fixed; inset: 0; z-index: -1; pointer-events: none; }
+body::before {
+  background: var(--decor-b); opacity: var(--decor-b-op);
+  -webkit-mask: url("decor/frise.svg") left bottom / auto 10px repeat-x,
+                url("decor/gravure.svg") right max(-12vw, -160px) top 7vh / min(86vh, 920px) no-repeat,
+                url("decor/motif.svg") 0 0 / 120px 120px repeat;
+          mask: url("decor/frise.svg") left bottom / auto 10px repeat-x,
+                url("decor/gravure.svg") right max(-12vw, -160px) top 7vh / min(86vh, 920px) no-repeat,
+                url("decor/motif.svg") 0 0 / 120px 120px repeat;
+}
+body::after {
+  background: var(--decor-a); opacity: var(--decor-a-op);
+  -webkit-mask: url("decor/rayons.svg") right -46vh top -50vh / 150vh no-repeat;
+          mask: url("decor/rayons.svg") right -46vh top -50vh / 150vh no-repeat;
+}
+@media (max-width: 699px) { body::before { opacity: calc(var(--decor-b-op) * .7); } }
+@media print { body::before, body::after { display: none; } }
 ::selection { background: var(--accent-ring); color: var(--text); }
 :focus-visible { outline: 1.5px solid var(--accent); outline-offset: 2px; }
 * { scrollbar-width: thin; scrollbar-color: var(--border-strong) transparent; }

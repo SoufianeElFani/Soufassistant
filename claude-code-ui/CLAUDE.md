@@ -1091,6 +1091,15 @@ pruned, PDF regenerated from the masked sibling .docx), `particularize`
 (real version + PDF in `reels/`), `reel` download. The anonymize report only
 ever names masked paths.
 
+**1.6.2 — background decor.** `theme.css` (after the base `body` rule, which
+would otherwise reset `background-image`) paints radial glows on `body` and two
+fixed `z-index: -1` pseudo-elements: `body::before` (grid + engraving + frieze,
+`--decor-b`) and `body::after` (rays, `--decor-a`), each a colour masked by
+`frontend/decor/*.svg`. Those SVGs are white masks generated on the HA side by
+`/config/soufassistant_theme/export_app.py` — regenerate rather than edit. Per
+theme tokens: `--decor-a/-b` and `--decor-a-op/-b-op`. Nothing in the app may
+give `html` a background, or the decor ends up behind it.
+
 **1.2.0 — identity, icons, phone layout.** `frontend/js/icons.js` is the one
 icon set (`icon()`, `setIcon()` keeps a button's other children, `toolIcon()`
 / `toolLabel()` for tool rows, `LOGO()`); fonts are bundled in

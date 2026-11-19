@@ -1,3 +1,9 @@
+## 1.6.2
+**A Greco-Roman background, the same as the Home Assistant themes.**
+- The background of the app is no longer a flat colour. A fine architect's grid, a burst of rays with a ring of Greek meanders, an engraved Athena medallion and a meander frieze sit behind everything, in the colours of each theme: aqua and antique gold on Ink, petrol on Paper, white on Signal.
+- **Readability first.** The decor is fixed, catches no clicks and stays faint, because the conversation text sits directly on the background. It is lighter on phones and hidden when printing.
+- The motifs are white masks (`frontend/decor/*.svg`) exported from the generator of the Home Assistant themes, so both always share one identity.
+
 ## 1.6.1
 **Drop confidential files from anywhere.**
 - **Hub › Confidentiel › Dépôt confidentiel › Déposer des fichiers…** (or drag files onto the dashed area) sends real documents straight into `Depot_confidentiel`. This works wherever Home Assistant is reachable, for example from the office through the Tailscale address, not only through the Samba share at home. They are then handled like a file copied there: pseudonymised on Home Assistant, original to the vault, check, then moved to `Confidentiel`.
