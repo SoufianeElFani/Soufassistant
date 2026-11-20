@@ -7,6 +7,8 @@
  *   Connectors  Gmail + Google Calendar (your own OAuth client), the browser agent
  *   Apps        apps published from Cowork projects, always online
  *   Shared      read-only links to a conversation or a file, and revoking them
+ *   WhatsApp    the assistant over WhatsApp: setup guide, the relay in Home Assistant,
+ *               Meta's keys, the household members allowed and their profile
  *
  * Everything goes through the REST routes in server/lib/hub-routes.js.
  * shareFile() / shareConversation() are also used by the viewer and Sessions.
@@ -20,7 +22,7 @@ import { secretField, reveal } from './confidential.js';
 import { showToast } from './toast.js';
 import { listAgentsCache } from './toolbox.js';
 
-const TABS = [['confidential', 'Confidentiel'], ['agents', 'Agents'], ['memory', 'Memory'], ['projects', 'Projects'], ['connectors', 'Connectors'], ['apps', 'Apps'], ['shared', 'Shared']];
+const TABS = [['confidential', 'Confidentiel'], ['agents', 'Agents'], ['memory', 'Memory'], ['projects', 'Projects'], ['connectors', 'Connectors'], ['apps', 'Apps'], ['shared', 'Shared'], ['whatsapp', 'WhatsApp']];
 let tab = 'agents';
 let apps = [];
 
@@ -87,7 +89,7 @@ function render() {
     tabsEl.appendChild(b);
   }
   body.innerHTML = '';
-  ({ confidential: renderConfidential, agents: renderAgents, memory: renderMemory, projects: renderProjects, connectors: renderConnectors, apps: renderApps, shared: renderShared })[tab]();
+  ({ confidential: renderConfidential, agents: renderAgents, memory: renderMemory, projects: renderProjects, connectors: renderConnectors, apps: renderApps, shared: renderShared, whatsapp: renderWhatsApp })[tab]();
 }
 const note = (t) => el('div', 'usage-note hub-note', t);
 const row = (title, sub, actions = [], onclick) => {
@@ -177,9 +179,20 @@ async function renderMemory() {
   cb.onchange = () => localStorage.setItem('suggestSkills', cb.checked ? 'on' : 'off');
   sug.append(cb, document.createTextNode(' After a long task, offer to save it as a skill'));
   bar.appendChild(sug);
+  const rev = el('label', 'doc-check hub-check');
+  const rcb = el('input');
+  rcb.type = 'checkbox';
+  rcb.disabled = true;
+  rev.append(rcb, document.createTextNode(' Every few exchanges, re-read the conversation and remember what matters'));
+  rev.title = 'A short automatic pass saves lasting preferences and decisions — never from a confidential conversation.';
+  rcb.onchange = async () => { const r = await api('/api/memory/review', { enabled: rcb.checked }); if (!r.ok) showToast(r.error || 'Could not save.', { kind: 'error' }); };
+  bar.appendChild(rev);
   body.appendChild(bar);
-  const m = await api('/api/memory');
+  const [m, rv] = await Promise.all([api('/api/memory'), api('/api/memory/review')]);
   if (tab !== 'memory') return;
+  rcb.checked = rv.enabled !== false;
+  rcb.disabled = false;
+  if (rv.every) rev.lastChild.textContent = ` Every ${rv.every} exchanges, re-read the conversation and remember what matters`;
   if (m.dangling?.length) {
     const d = el('div', 'hub-warn', `The index points at ${m.dangling.length} missing memor${m.dangling.length > 1 ? 'ies' : 'y'} (${m.dangling.join(', ')}).`);
     d.appendChild(button('Clean up', 'Remove those lines from the index', async () => { await api('/api/memory/clean', {}); render(); }));
@@ -670,4 +683,127 @@ async function renderConfidential() {
   body.appendChild(note('Mots en majuscule que l\'alerte avant envoi ne propose plus de protéger (produits, sigles techniques…). Une ligne par mot.'));
   const ig = area((v.ignored || []).join('\n'), 4);
   body.append(ig, button('Enregistrer', null, async () => { await api('/api/vault/ignore', { list: ig.value.split('\n') }); showToast('Liste enregistrée.'); }));
+}
+
+// ── WhatsApp ──
+const PROFILE_LABEL = { owner: 'Propriétaire — tout l\'assistant', family: 'Famille — la maison seulement' };
+const step = (n, html) => { const d = el('div', 'usage-note hub-note'); d.innerHTML = `<b>${n}.</b> ${html}`; return d; };
+const esc = (t) => String(t ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
+const copyBtn = (value, what) => button('Copier', `Copier ${what}`, () => copy(value).then(() => showToast(`${what[0].toUpperCase()}${what.slice(1)} copié.`)), 'find-nav');
+
+async function renderWhatsApp() {
+  const w = await api('/api/whatsapp');
+  if (tab !== 'whatsapp') return;
+  if (w.ok === false) { body.appendChild(note(w.error || 'Indisponible.')); return; }
+  body.appendChild(note('Écrire à l\'assistant depuis WhatsApp — texte, vocal, photo, position — toi et ta famille. Chaque personne a sa conversation ; les actions sensibles (serrure, alarme, garage) demandent un Oui / Non dans le chat. Rien de confidentiel ne passe par là : WhatsApp transite par Meta.'));
+
+  const r = w.relay || {};
+  const state = [
+    r.active ? '✅ Relais Home Assistant actif' : r.installed ? '⏳ Relais installé — redémarrer Home Assistant' : '⚪ Relais Home Assistant à installer',
+    w.configured ? '✅ Clés Meta enregistrées' : '⚪ Clés Meta à saisir',
+    w.contacts.length ? `✅ ${w.contacts.length} personne(s)` : '⚪ Personnes à ajouter',
+  ];
+  body.appendChild(el('div', 'usage-section-title', 'État'));
+  body.appendChild(note(state.join(' · ')));
+  const on = el('label', 'doc-check hub-check hub-note');
+  const onCb = el('input');
+  onCb.type = 'checkbox';
+  onCb.checked = w.enabled;
+  onCb.onchange = async () => { await api('/api/whatsapp/config', { enabled: onCb.checked }); showToast(onCb.checked ? 'WhatsApp activé.' : 'WhatsApp en pause : les messages sont ignorés.'); };
+  on.append(onCb, document.createTextNode(' Répondre aux messages WhatsApp'));
+  body.appendChild(on);
+
+  // 1. The relay
+  body.appendChild(el('div', 'usage-section-title', '1. Relais dans Home Assistant'));
+  body.appendChild(note('Meta ne peut joindre que Home Assistant (ton adresse publique Tailscale Funnel). Une petite intégration lui transmet les messages, sans rien garder ni connaître de secret : elle s\'installe dans /config/custom_components et ajoute deux lignes à configuration.yaml, puis Home Assistant redémarre (≈ 1 min).'));
+  const rb = el('div', 'hub-bar');
+  rb.appendChild(button(r.installed ? (r.outdated ? 'Mettre à jour le relais' : 'Réinstaller le relais') : 'Installer le relais', null, async () => {
+    const x = await api('/api/whatsapp/relay/install', {});
+    showToast(x.ok ? `Relais installé${x.yamlAdded ? ' (configuration.yaml complété)' : ''}. Redémarre Home Assistant pour l'activer.` : (x.error || 'Échec.'), x.ok ? {} : { kind: 'error' });
+    render();
+  }));
+  if (r.installed && !r.active || r.outdated) {
+    rb.appendChild(button('Redémarrer Home Assistant', 'Vérifie la configuration puis redémarre', async () => {
+      if (!await confirmAction({ title: 'Redémarrer Home Assistant ?', body: 'La configuration est vérifiée d\'abord. Home Assistant (et cette page) sera indisponible environ une minute.', confirm: 'Redémarrer', cancel: 'Plus tard' })) return;
+      const x = await api('/api/whatsapp/relay/restart', {});
+      showToast(x.ok ? 'Home Assistant redémarre…' : (x.error || 'Échec.'), x.ok ? {} : { kind: 'error', timeout: 15000 });
+    }));
+  }
+  body.appendChild(rb);
+
+  // 2. Meta
+  body.appendChild(el('div', 'usage-section-title', '2. L\'app WhatsApp chez Meta (gratuit, une fois)'));
+  const pub = input(w.publicUrl, 'https://homeassistant.xxxx.ts.net');
+  body.appendChild(field('Adresse publique de Home Assistant', pub));
+  body.appendChild(step(1, 'Sur <a href="https://developers.facebook.com/apps" target="_blank" rel="noopener">developers.facebook.com › Mes apps</a> : <i>Créer une app</i> › cas d\'usage « Autre » › type « Entreprise ». Dans l\'app, ajoute le produit <b>WhatsApp</b> : Meta crée un compte WhatsApp Business et un <b>numéro de test gratuit</b>.'));
+  body.appendChild(step(2, '<i>WhatsApp › Configuration de l\'API</i> : copie l\'<b>identifiant du numéro de téléphone</b> (Phone number ID). Dans « À », ajoute ton numéro et celui de ta femme (chacun reçoit un code sur WhatsApp) — 5 numéros au maximum.'));
+  body.appendChild(step(3, 'Jeton permanent : <a href="https://business.facebook.com/settings/system-users" target="_blank" rel="noopener">business.facebook.com › Paramètres › Utilisateurs système</a> › <i>Ajouter</i> (rôle Admin) › <i>Assigner des éléments</i> : l\'app et le compte WhatsApp (contrôle total) › <i>Générer un jeton</i> : expiration « Jamais », autorisations <b>whatsapp_business_messaging</b> et <b>whatsapp_business_management</b>. (Le jeton temporaire de la page API expire en 24 h.)'));
+  body.appendChild(step(4, '<i>Paramètres de l\'app › Général</i> : affiche et copie la <b>clé secrète</b>. Colle le tout ici puis <i>Enregistrer</i>.'));
+  const phoneId = input(w.phoneNumberId, '123456789012345');
+  const token = input('', w.hasToken ? '•••••• (enregistré — coller pour remplacer)' : 'EAAG…', 'password');
+  const secret = input('', w.hasSecret ? '•••••• (enregistrée — coller pour remplacer)' : '32 caractères', 'password');
+  body.append(field('Identifiant du numéro (Phone number ID)', phoneId), field('Jeton d\'accès permanent', token), field('Clé secrète de l\'app (App secret)', secret));
+  const save = el('div', 'hub-bar');
+  save.appendChild(button('Enregistrer', null, async () => {
+    const x = await api('/api/whatsapp/config', { publicUrl: pub.value, phoneNumberId: phoneId.value, accessToken: token.value, appSecret: secret.value });
+    showToast(x.ok ? 'Enregistré.' : (x.error || 'Échec.'), x.ok ? {} : { kind: 'error' });
+    if (x.ok) render();
+  }));
+  save.appendChild(button('Tester', 'Vérifie le jeton et le numéro auprès de Meta', async () => {
+    const x = await api('/api/whatsapp/test', {});
+    showToast(x.ok ? `Meta répond : numéro ${x.number || '?'}${x.name ? ` (${x.name})` : ''}.` : (x.error || 'Échec.'), x.ok ? {} : { kind: 'error', timeout: 15000 });
+  }));
+  if (w.configured) save.appendChild(button('Oublier les clés', null, async () => {
+    if (await confirmAction({ title: 'Oublier les clés Meta ?', body: 'Les messages ne seront plus traités. Les personnes restent dans la liste.', confirm: 'Oublier', cancel: 'Garder' })) { await api('/api/whatsapp/forget', {}); render(); }
+  }));
+  body.appendChild(save);
+  body.appendChild(step(5, `<i>WhatsApp › Configuration › Webhook</i> › <i>Modifier</i> : <b>URL de rappel</b> ${w.webhookUrl ? `<code>${esc(w.webhookUrl)}</code>` : '(enregistre d\'abord l\'adresse publique)'} et <b>jeton de vérification</b> <code>${esc(w.verifyToken)}</code> › <i>Vérifier et enregistrer</i> (le relais doit être actif). Puis, dans les champs du webhook, abonne-toi à <b>messages</b>.`));
+  const cp = el('div', 'hub-bar');
+  if (w.webhookUrl) cp.appendChild(copyBtn(w.webhookUrl, 'l\'URL de rappel'));
+  cp.appendChild(copyBtn(w.verifyToken, 'le jeton de vérification'));
+  body.appendChild(cp);
+
+  // 3. People
+  body.appendChild(el('div', 'usage-section-title', '3. Qui peut écrire à l\'assistant'));
+  body.appendChild(note('Les autres numéros sont ignorés. « Famille » : consulter et piloter la maison, chercher sur le web ; ni fichiers, ni tes instructions, ni ta mémoire (une mémoire à part). Une personne doit avoir écrit au bot dans les dernières 24 h pour qu\'il puisse lui envoyer un message de lui-même (règle WhatsApp).'));
+  const people = (w.contacts || []).map((c) => ({ ...c }));
+  const list = el('div');
+  const draw = () => {
+    list.innerHTML = '';
+    people.forEach((c, i) => {
+      const f = el('div', 'scheduled-form hub-form');
+      const name = input(c.name, 'Prénom');
+      const num = input(c.number, '+32 470 12 34 56');
+      const prof = select(Object.entries(PROFILE_LABEL), c.profile || 'family');
+      const person = input(c.person || '', 'person.prenom');
+      name.oninput = () => { c.name = name.value; };
+      num.oninput = () => { c.number = num.value; };
+      prof.onchange = () => { c.profile = prof.value; };
+      person.oninput = () => { c.person = person.value.trim(); };
+      const r2 = el('div', 'hub-row2 hub-row2-wide');
+      r2.append(field('Prénom', name), field('Numéro WhatsApp', num));
+      const r3 = el('div', 'hub-row2 hub-row2-wide');
+      r3.append(field('Profil', prof), field('Personne dans HA', person));
+      const acts = el('div', 'hub-bar');
+      if (c.lastInboundAt) acts.appendChild(el('span', 'skill-desc', `Dernier message : ${when(c.lastInboundAt)}`));
+      if (w.configured && w.contacts.some((x) => x.number === c.number)) acts.appendChild(button('Envoyer un bonjour', 'Message de test (seulement si cette personne a écrit au bot dans les 24 h)', async () => {
+        const x = await api('/api/whatsapp/test', { to: c.number });
+        showToast(x.ok ? `Envoyé à ${c.name}.` : (x.error || 'Échec.'), x.ok ? {} : { kind: 'error', timeout: 15000 });
+      }));
+      acts.appendChild(button('🗑', 'Retirer', () => { people.splice(i, 1); draw(); }, 'find-nav'));
+      f.append(r2, r3, acts);
+      list.appendChild(f);
+    });
+  };
+  draw();
+  body.appendChild(list);
+  const pb = el('div', 'hub-bar');
+  pb.appendChild(button('+ Ajouter une personne', null, () => { if (people.length >= 5) { showToast('5 personnes au maximum (numéro de test de Meta).', { kind: 'error' }); return; } people.push({ name: '', number: '', profile: people.length ? 'family' : 'owner', person: '' }); draw(); }));
+  pb.appendChild(button('Enregistrer les personnes', null, async () => {
+    const x = await api('/api/whatsapp/contacts', { contacts: people });
+    showToast(x.ok ? 'Personnes enregistrées.' : (x.error || 'Échec.'), x.ok ? {} : { kind: 'error' });
+    if (x.ok) render();
+  }));
+  body.appendChild(pb);
+  body.appendChild(note('Dans WhatsApp : enregistre le numéro de test comme contact « Soufassistant » et écris-lui « /aide ». /nouveau repart de zéro, /stop arrête.'));
 }

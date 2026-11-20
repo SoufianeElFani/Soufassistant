@@ -6,6 +6,8 @@
  *   browser_*                         browser.js (when Chromium is installed)
  *   gmail_* / calendar_*              google.js (when Google is connected)
  *   publish_app / list_published_apps apps.js
+ *   search_conversations / read_conversation   past conversations (session-tools.js)
+ *   send_whatsapp / send_whatsapp_file          a household member (whatsapp.js, when set up)
  *
  * `allowed` lists the ones that run without asking (they only read, or only
  * write a picture into the workspace); everything else goes through the run's
@@ -18,6 +20,11 @@ import { imageTools } from './image-gen.js';
 import { browserTools, browserAvailable, BROWSER_READ_TOOLS } from './browser.js';
 import { googleTools, googleConnected, GOOGLE_READ_TOOLS } from './google.js';
 import { publishApp, listApps } from './apps.js';
+import { decoratedSessions, searchSessions, sessionToMarkdown } from './session-tools.js';
+import { parseSession } from './sessions.js';
+import { isAliasLike, protectedRoots } from './vault.js';
+import { resolveInWorkspace, workspaceRoot } from './workspace.js';
+import * as wa from './whatsapp.js';
 
 const full = (name) => `mcp__${IMAGE_SERVER}__${name}`;
 
@@ -33,6 +40,68 @@ function appTools() {
       }),
     tool('list_published_apps', 'The apps already published (name, slug, project, kind, running).', {},
       async () => ({ content: [{ type: 'text', text: listApps().map((a) => `- ${a.name} → apps/${a.slug}/ (${a.kind}, project "${a.project}"${a.kind === 'server' ? `, ${a.running ? 'running' : 'stopped'}` : ''})`).join('\n') || 'None yet.' }] })),
+  ];
+}
+
+const text = (t) => ({ content: [{ type: 'text', text: t }] });
+const fail = (t) => ({ isError: true, content: [{ type: 'text', text: t }] });
+/** A conversation held under the confidential shield: its pseudonyms stay where they are. */
+const looksConfidential = (items) => items.some((it) => (it.kind === 'user' || it.kind === 'text') && isAliasLike(it.text || ''));
+
+/** Recall across conversations (Hermes Agent's session search), read-only. */
+export function recallTools(ctx = {}) {
+  return [
+    tool('search_conversations', 'Search the user\'s past conversations with you (every mode, WhatsApp included) for a word or phrase — to recall what was decided, said or done before ("last time", "as we said", "the X we set up"). Returns matching conversations, newest first, with a snippet. Then read_conversation for the whole of one.',
+      { query: z.string().min(2).max(200), limit: z.number().int().min(1).max(20).optional() },
+      async ({ query, limit = 8 }) => {
+        const own = ctx.key?.();
+        const hits = searchSessions(query, { limit: 40 })
+          .filter((h) => h.id !== own && !looksConfidential(parseSession(h.id)))
+          .slice(0, limit);
+        if (!hits.length) return text(`No past conversation mentions "${query}".`);
+        return text(hits.map((h) => `- ${h.id} · ${h.updatedAt ? new Date(h.updatedAt).toISOString().slice(0, 10) : '?'} · ${h.title} (${h.hits} hit${h.hits === 1 ? '' : 's'})\n  ${h.snippet}`).join('\n'));
+      }),
+    tool('read_conversation', 'Read one past conversation found with search_conversations: its prompts and replies as Markdown (tool calls shortened). Long ones are cut; pass `from_end` to read the end instead.',
+      { id: z.string().min(8).max(80), max_chars: z.number().int().min(1000).max(60000).optional(), from_end: z.boolean().optional() },
+      async ({ id, max_chars = 15000, from_end = false }) => {
+        const s = decoratedSessions().find((x) => x.id === id);
+        if (!s) return fail('No such conversation.');
+        const items = parseSession(id);
+        if (looksConfidential(items)) return fail('That conversation was held in confidential mode: it is not readable from here.');
+        const md = sessionToMarkdown(s.title, items);
+        if (md.length <= max_chars) return text(md);
+        return text(from_end ? `[…cut: the first ${md.length - max_chars} characters]\n${md.slice(-max_chars)}` : `${md.slice(0, max_chars)}\n[…cut: ${md.length - max_chars} more characters; read with from_end for the end]`);
+      }),
+  ];
+}
+
+/** Sending to a household member over WhatsApp (only to the contacts set up in Hub › WhatsApp). */
+function whatsappTools() {
+  const names = wa.contacts().map((c) => c.name).join(', ');
+  const recipient = (to) => {
+    const c = wa.resolveRecipient(to);
+    if (!c) throw new Error(`"${to}" is not one of the WhatsApp contacts (${names}).`);
+    return c;
+  };
+  const why = (e) => fail(`Not sent: ${e.message}`);
+  return [
+    tool('send_whatsapp', `Send a WhatsApp message to a household member (${names}) — e.g. "préviens Maysa que j'arrive". It reaches them only if they wrote to the assistant in the last 24 hours (WhatsApp's rule); otherwise say so. Never send anything confidential.`,
+      { to: z.string().min(1).max(40), text: z.string().min(1).max(3000) },
+      async ({ to, text: body }) => {
+        try { const c = recipient(to); await wa.sendText(c.number, body); return text(`Sent to ${c.name}.`); } catch (e) { return why(e); }
+      }),
+    tool('send_whatsapp_file', `Send a workspace file (PDF, Word, Excel, picture…) to a household member (${names}) over WhatsApp. \`path\` is relative to the workspace; never a file from a Confidentiel folder.`,
+      { to: z.string().min(1).max(40), path: z.string().min(1).max(400), caption: z.string().max(1000).optional() },
+      async ({ to, path: rel, caption = '' }) => {
+        try {
+          const c = recipient(to);
+          const abs = resolveInWorkspace(rel);
+          if (!abs) throw new Error('that path is not in the workspace.');
+          if (protectedRoots(workspaceRoot()).some((r) => abs === r || abs.startsWith(r + '/')) || /(^|\/)(Confidentiel|Depot_confidentiel)(\/|$)/.test(rel)) throw new Error('confidential files never go over WhatsApp.');
+          await wa.sendFile(c.number, abs, caption);
+          return text(`Sent ${rel} to ${c.name}.`);
+        } catch (e) { return why(e); }
+      }),
   ];
 }
 
@@ -52,5 +121,8 @@ export function internalTools(ctx) {
     allowed.push(...GOOGLE_READ_TOOLS.map(full));
   }
   if (!ctx.chat) tools.push(...appTools());
+  tools.push(...recallTools(ctx));
+  allowed.push(full('search_conversations'), full('read_conversation'));
+  if (wa.whatsappReady() && wa.contacts().length && !ctx.noWhatsapp) tools.push(...whatsappTools());
   return { server: createSdkMcpServer({ name: IMAGE_SERVER, version: '1.0.0', tools }), allowed, names: tools.map((t) => t.name) };
 }

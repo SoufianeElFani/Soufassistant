@@ -249,6 +249,11 @@ export function handleServerMessage(msg) {
       skillSuggestionCard(msg);
       break;
 
+    // memory-review.js saved something a conversation taught (Hub › Memory).
+    case 'memory_reviewed':
+      showToast(`🧠 Remembered: ${(msg.titles || []).slice(0, 3).join(', ')}${(msg.titles || []).length > 3 ? '…' : ''}`, { kind: 'ok' });
+      break;
+
     case 'workspace_result':
       applyWorkspaceResult(msg);
       break;

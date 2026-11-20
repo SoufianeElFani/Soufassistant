@@ -1843,3 +1843,5 @@ body.artifact-resizing iframe { pointer-events: none; }
 .skill-suggest { border-color: var(--accent); }
 .skill-suggest-text { font-size: 13px; color: var(--text); }
 .skill-suggest-actions { display: flex; gap: 6px; }
+.hub-row2-wide { grid-template-columns: 1fr 1fr; }
+.hub-note code { font-size: 11px; word-break: break-all; }

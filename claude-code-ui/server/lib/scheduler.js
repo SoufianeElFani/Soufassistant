@@ -15,7 +15,8 @@
  * panel — it just doesn't interrupt whatever is on screen while it happens.
  * The result reaches the user through the same Home Assistant notification
  * path as everything else in notify.js, plus a one-line summary kept on the
- * entry itself for the Scheduled panel.
+ * entry itself for the Scheduled panel — and, when the entry names a WhatsApp
+ * contact (`deliver`), the whole reply as a WhatsApp message (whatsapp.js).
  *
  * Only one run — scheduled or interactive — proceeds at a time: a tick that
  * lands while the chat is busy simply tries again next tick; nothing queues.
@@ -38,6 +39,7 @@ import { ADDON_CONFIGS_HOOKS } from './permissions.js';
 import { MCP_FREE_SETTINGS } from './mcp.js';
 import { notify } from './notify.js';
 import { isValidCronExpr, matchesCron } from './cron.js';
+import * as wa from './whatsapp.js';
 
 export const MAX_SCHEDULED = 20;
 export const scheduledState = { tasks: [] };
@@ -75,11 +77,14 @@ export function upsert(input) {
   if (!prompt) throw new Error('A prompt is required.');
   if (!isValidCronExpr(cron)) throw new Error('Invalid schedule — expects 5 fields: minute hour day-of-month month day-of-week.');
   const enabled = input?.enabled !== false;
+  // '' = the Home Assistant notification only; else a WhatsApp contact's number
+  const deliver = input?.deliver ? (wa.findContact(input.deliver)?.number || null) : '';
+  if (deliver === null) throw new Error('That WhatsApp contact does not exist (Hub › WhatsApp).');
 
   if (input?.id) {
     const existing = scheduledState.tasks.find((t) => t.id === input.id);
     if (!existing) throw new Error('Unknown scheduled task.');
-    Object.assign(existing, { name, cron, prompt, enabled });
+    Object.assign(existing, { name, cron, prompt, enabled, deliver });
     save();
     broadcastList();
     return publicEntry(existing);
@@ -88,7 +93,7 @@ export function upsert(input) {
     throw new Error(`You already have ${MAX_SCHEDULED} scheduled tasks — delete one first.`);
   }
   const entry = {
-    id: randomUUID(), name, cron, prompt, enabled,
+    id: randomUUID(), name, cron, prompt, enabled, deliver,
     createdAt: Date.now(), lastRunAt: null, lastStatus: null, lastSummary: '', lastSessionId: null,
   };
   scheduledState.tasks.push(entry);
@@ -189,6 +194,15 @@ async function fireEntry(entry, { manual = false } = {}) {
     title: status === 'success' ? `Scheduled task finished: ${entry.name}` : `Scheduled task failed: ${entry.name}`,
     message: entry.lastSummary,
   });
+  if (entry.deliver && status === 'success' && text.trim()) {
+    try { await wa.sendText(entry.deliver, `🗓 *${entry.name}*\n\n${text.trim()}`); }
+    catch (e) {
+      log('WARN', `scheduled task "${entry.name}": WhatsApp delivery failed: ${e.message}`);
+      entry.lastSummary = `${entry.lastSummary.slice(0, 200)} — WhatsApp : ${e.message}`.slice(0, 300);
+      save();
+      broadcastList();
+    }
+  }
   log('INFO', `scheduled task "${entry.name}" ${status} in ${Math.round((Date.now() - entry.lastRunAt) / 1000)}s`);
   return true;
 }

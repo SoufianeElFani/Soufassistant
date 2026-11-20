@@ -67,6 +67,8 @@ loads the persisted state, and listens. Everything with behaviour lives in
 | `cron.js` | the pure 5-field cron matcher `scheduler.js` is built on |
 | `team.js` | the Team panel's state, fed by both the UI and the `team-notes` CLI via `/internal/team` |
 | `internal.js` | the loopback guard in front of `/internal/*` routes |
+| `whatsapp.js`, `whatsapp-relay.js`, `whatsapp-bridge.js`, `whatsapp-policy.js` | the assistant over WhatsApp: settings and Graph API, the Home Assistant relay, the conversations, the per-profile tool policy (see **WhatsApp** below) |
+| `memory-review.js` | every few turns, a forked unattended pass saves what a conversation taught into the auto-memory |
 
 Rules that keep it readable: **no top-level side effects** beyond pure
 constants (the composition root does the starting); anything genuinely shared
@@ -1279,6 +1281,82 @@ showing the 5-hour session % (coloured: normal < 75 % ≤ warn < 90 % ≤ high).
 2. **This conversation** — `S.usage`, the per-session totals accumulated from
    `result` events (`connection.js`'s `result` case, `transcript.js`'s
    `renderHistory`), resetting on New chat.
+
+## WhatsApp
+
+The assistant answers WhatsApp messages from the household (Hermes Agent's
+messaging gateway, done with Meta's Cloud API and its **free test number**,
+which may talk to up to five numbers verified in Meta's console).
+
+- **The path in.** Meta must reach a public HTTPS URL. The app sits behind
+  ingress, but Home Assistant itself is public (Tailscale Funnel). So
+  `whatsapp-relay.js` installs a small custom integration, `soufassistant_relay`
+  (embedded as a string, `RELAY_PY`), into `/config/custom_components`, and
+  appends `soufassistant_relay: {target: http://<app hostname>:7681}` to
+  `configuration.yaml`. It registers an unauthenticated view at
+  `/api/soufassistant/whatsapp` that forwards GET and POST unchanged, signature
+  header included, to this app's `/whatsapp/webhook`. The relay holds no secret.
+  The app checks `X-Hub-Signature-256` (HMAC-SHA256 of the raw body with the app
+  secret) and answers Meta's `hub.challenge` with its own verify token.
+  `?ping=1` on the view is how the Hub learns that the relay is loaded. Home
+  Assistant needs one restart after the install; the Hub offers it after a
+  config check.
+- **Settings** live in `CONNECTORS_DIR/whatsapp.json` (mode 600): phone number id,
+  permanent System User token, app secret, verify token, public URL, contacts
+  `{number, name, profile, person}`. `status()` never returns a secret.
+  `WHATSAPP_GRAPH_URL` points the Graph calls at a fake under test.
+- **Conversations** (`whatsapp-bridge.js`). Each run is its own SDK query (like
+  `scheduler.js`), never `runQuery`, so it does not touch the conversation on
+  screen.
+  - There is one session per number, in `/data/whatsapp-sessions.json`. It is
+    resumed, and a new one starts after 24 h idle or on `/nouveau`. The session
+    is titled `📱 <name> · …`.
+  - Messages are handled in order per person, and Meta's redeliveries are
+    deduplicated by message id.
+  - A message arriving mid-turn is pushed into the run's input channel. The
+    channel closes once `results > pushed`.
+  - The reply is the turn's top-level assistant text, sent at `result`.
+  - Voice notes (Ogg Opus) go through `opusdec --rate 16000` → `wavToPcm` →
+    `stt.transcribe`. Pictures and documents are saved to `UPLOAD_DIR`, and that
+    person may always `Read` what they sent.
+- **Policy** (`whatsapp-policy.js`, pure). `classify()` returns
+  `allow | ask | deny` per profile. A Bash command is recognised only if it is
+  one plain command with no shell operator outside single quotes. `ha-tools`
+  read commands and everyday service domains are allowed. Sensitive domains
+  (`lock`, `alarm_control_panel`, `siren`, `homeassistant`, …) and sensitive
+  entities (garage, portail, …) are always `ask`. `ask` sends Oui / Non reply
+  buttons and waits for the person's next message: a button, or "oui"/"non"
+  typed by hand. It times out after 30 min to deny. `AskUserQuestion` becomes
+  buttons (≤3 options) or a numbered list.
+  - **`owner`**: default setting sources, so CLAUDE.md, memory and skills load,
+    plus the app's tools.
+  - **`family`**: `settingSources: []`, its own `autoMemoryDirectory`
+    (`~/.claude/whatsapp-memory/<number>`), only the homeassistant-config
+    plugin, and file-writing tools and subagents disallowed.
+  - **Both** get `ADDON_CONFIGS_HOOKS` (vault + other apps' configs), plus
+    `confidentialFence` (the Confidentiel roots and the drop folder).
+- **Outbound.** A scheduled task's optional `deliver` (a contact number) sends
+  its whole reply. `send_whatsapp` / `send_whatsapp_file` (internal-tools.js)
+  are offered whenever WhatsApp is set up, and are never auto-allowed. A
+  free-form message only reaches someone who wrote in the last 24 h (error
+  131047, explained by `explainError`).
+
+## Memory review and recall
+
+- **`memory-review.js`.** After a successful non-chat, non-confidential turn
+  (`run-query.js`) or an owner WhatsApp turn, the conversation's turn counter
+  grows. Every `REVIEW_EVERY` (6) turns, a pass runs with `resume` +
+  `forkSession: true` + `persistSession: false`: the original transcript gets
+  nothing, and the Sessions panel gets no entry. Its `canUseTool` (`memoryOnly`)
+  allows only Read/Write/Edit/Glob inside the memory folder. Facts that changed
+  are broadcast as `memory_reviewed` (a toast). The setting is in
+  `/data/memory-review.json`, toggled in Hub › Memory.
+- **`search_conversations` / `read_conversation`** (internal-tools.js,
+  auto-allowed) wrap `searchSessions` / `sessionToMarkdown`. They skip the
+  current conversation and any conversation whose text holds pseudonyms
+  (`vault.isAliasLike`), since the shield itself is only known to the browser.
+- The workspace prompt (`modes.js`) asks Claude to offer to fix a skill that
+  proved wrong, and points it at `search_conversations`.
 
 ## Notifications
 

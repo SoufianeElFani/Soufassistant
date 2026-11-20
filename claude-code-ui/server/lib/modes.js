@@ -129,6 +129,10 @@ export function workspacePrompt(root, activeProjectName) {
     'download there — not in /config — in the matching sub-folder.',
     activeProjectName ? `The current Cowork project is "${activeProjectName}".` : '',
     'Files written there appear in the artifact viewer next to the chat.',
+    // Skills that improve with use (Hermes Agent's learning loop).
+    'When a skill you followed turned out wrong, incomplete or out of date for this task, say so at the end and',
+    'offer to correct its SKILL.md (only the user\'s own skills in ~/.claude/skills can be edited).',
+    'To recall earlier work ("last time", "as we decided"), search_conversations finds past conversations.',
   ].filter(Boolean).join(' ');
 }
 

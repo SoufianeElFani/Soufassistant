@@ -7,6 +7,7 @@
  */
 import { registerPanel } from './panels.js';
 import { S } from './state.js';
+import { wsBase } from './dom.js';
 import { confirmAction } from './confirm.js';
 import {
   scheduledBtn, scheduledPanel, scheduledListEl, scheduledNewBtn, scheduledForm,
@@ -48,7 +49,7 @@ export function renderScheduled() {
     const meta = document.createElement('div');
     meta.className = 'session-time';
     const statusTxt = t.lastStatus ? `${STATUS_LABEL[t.lastStatus] || t.lastStatus} · ${relTime(t.lastRunAt)}` : 'never run';
-    meta.textContent = `${t.cron} — ${statusTxt}`;
+    meta.textContent = `${t.cron} — ${statusTxt}${t.deliver ? ' · 📱 WhatsApp' : ''}`;
     main.append(title, meta);
     if (t.lastSummary) {
       const summary = document.createElement('div');
@@ -91,7 +92,28 @@ export function renderScheduled() {
   }
 }
 
+// Where the result goes besides the Home Assistant notification: a WhatsApp
+// contact (Hub › WhatsApp), offered only once someone is set up there.
+const deliverLabel = document.createElement('label');
+deliverLabel.className = 'scheduled-form-label hidden';
+deliverLabel.textContent = 'Also send the reply on WhatsApp to';
+const deliverSelect = document.createElement('select');
+deliverSelect.className = 'perm-mode-select hub-select';
+deliverLabel.appendChild(deliverSelect);
+scheduledFormError.before(deliverLabel);
+
+async function fillDeliver(current) {
+  deliverSelect.innerHTML = '';
+  deliverSelect.appendChild(new Option('Nobody (notification only)', ''));
+  let contacts = [];
+  try { contacts = (await (await fetch(`${wsBase}/api/whatsapp/recipients`, { cache: 'no-store' })).json()).contacts || []; } catch {}
+  for (const c of contacts) deliverSelect.appendChild(new Option(c.name, c.number));
+  deliverSelect.value = contacts.some((c) => c.number === current) ? current : '';
+  deliverLabel.classList.toggle('hidden', !contacts.length);
+}
+
 function openForm(entry) {
+  fillDeliver(entry?.deliver || '');
   S.scheduledEditingId = entry?.id || null;
   scheduledNameInput.value = entry?.name || '';
   scheduledCronInput.value = entry?.cron || '';
@@ -136,7 +158,7 @@ scheduledForm.onsubmit = (e) => {
     scheduledFormError.classList.remove('hidden');
     return;
   }
-  send({ type: 'set_scheduled', task: { id: S.scheduledEditingId || undefined, name, cron, prompt, enabled: true } });
+  send({ type: 'set_scheduled', task: { id: S.scheduledEditingId || undefined, name, cron, prompt, enabled: true, deliver: deliverSelect.value } });
   closeForm();
 };
 

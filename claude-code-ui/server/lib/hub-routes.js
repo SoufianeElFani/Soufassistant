@@ -9,6 +9,7 @@ import path from 'path';
 import { broadcast } from './broadcast.js';
 import { workspaceRoot, resolveInWorkspace, projectDir, listWorkspaceEntries } from './workspace.js';
 import * as memory from './memory.js';
+import * as memoryReview from './memory-review.js';
 import * as agents from './agents.js';
 import * as knowledge from './knowledge.js';
 import * as google from './google.js';
@@ -51,6 +52,8 @@ export function registerHubRoutes(app) {
   app.post('/api/memory', json, wrap((req) => memory.saveFact(req.body || {})));
   app.post('/api/memory/delete', json, wrap((req) => memory.deleteFact(req.body?.file)));
   app.post('/api/memory/clean', json, wrap(() => memory.cleanDangling()));
+  app.get('/api/memory/review', wrap(() => ({ ok: true, enabled: memoryReview.reviewSettings.enabled, every: memoryReview.REVIEW_EVERY })));
+  app.post('/api/memory/review', json, wrap((req) => memoryReview.setEnabled(req.body?.enabled)));
 
   // ── Agents ──
   const agentsChanged = (r) => { if (r.ok) broadcast(agents.agentsMessage()); return r; };

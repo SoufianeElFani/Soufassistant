@@ -30,6 +30,8 @@
  *   scheduler.js      persisted cron-like prompts, ticked and fired unattended
  *   team.js            the Team panel's state, fed by the UI and the team-notes CLI
  *   internal.js       the loopback guard in front of /internal/* routes
+ *   whatsapp*.js      the assistant over WhatsApp (settings, relay, conversations, policy)
+ *   memory-review.js  saving what a conversation taught, every few turns
  */
 import { createServer } from 'http';
 import path from 'path';
@@ -66,6 +68,8 @@ import { transcribe, sttAvailable } from './lib/stt.js';
 import { synthesize, ttsEngine } from './lib/tts.js';
 import { attach } from './lib/ws-protocol.js';
 import { registerHubRoutes, startHub } from './lib/hub-routes.js';
+import { registerWhatsAppRoutes, load as loadWhatsApp } from './lib/whatsapp-bridge.js';
+import * as memoryReview from './lib/memory-review.js';
 import { runQuery } from './lib/run-query.js';
 import * as autoContinue from './lib/auto-continue.js';
 import * as notifier from './lib/notify.js';
@@ -152,6 +156,8 @@ app.post('/api/workspace-binary', express.raw({ type: 'application/octet-stream'
 });
 
 registerHubRoutes(app);
+// WhatsApp (whatsapp-bridge.js): Meta's webhook, relayed by Home Assistant, and Hub › WhatsApp.
+registerWhatsAppRoutes(app);
 
 // Live previews of an app running in a Cowork project (previews.js): only the
 // preview port range, only to localhost.
@@ -322,6 +328,8 @@ notifier.load();
 tasks.load();
 scheduler.load();
 team.load();
+loadWhatsApp();
+memoryReview.load();
 cleanupUploads();          // drop attachments older than a week
 refreshHaLinks();          // populate entity/automation link targets
 planUsage.startPolling();  // plan limits for the Usage panel while a tab is open

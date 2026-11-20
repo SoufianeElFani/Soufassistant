@@ -38,6 +38,7 @@ import { makeInputChannel } from './input-channel.js';
 import { notify } from './notify.js';
 import * as autoContinue from './auto-continue.js';
 import { refreshPlanUsage } from './plan-usage.js';
+import { afterRun as reviewMemory } from './memory-review.js';
 import { modeOptions, normalizeMode, coworkWriteGuard, rememberSessionMode, sessionModeMap, VOICE_PROMPT, researchPrompt, AUTONOMOUS_PROMPT } from './modes.js';
 import { workspaceRoot, activeProject, projectDir } from './workspace.js';
 import { internalTools } from './internal-tools.js';
@@ -779,6 +780,11 @@ export async function runQuery(ws, { text, permissionMode, model, effort, mode, 
     if (resultSeen && !failed && !aborted && !limitHit && runMode !== 'chat' && run.toolUses >= SKILL_SUGGEST_STEPS
       && ![...run.writtenPaths].some((p) => /\/skills\/[^/]+\/SKILL\.md$/.test(p))) {
       emit(run, { type: 'skill_suggestion', key: run.key, sessionId: run.sessionId, steps: run.toolUses });
+    }
+    // Memory review (memory-review.js): every few turns, what this conversation
+    // taught is saved for the next ones — never from a confidential one.
+    if (resultSeen && !failed && !aborted && !limitHit && runMode !== 'chat' && !autonomous) {
+      reviewMemory({ sessionId: run.sessionId, turns: 1 + (run.queuedInputs || 0), confidential: run.confidential });
     }
 
     // What this reply wrote to the workspace — remembered with the
