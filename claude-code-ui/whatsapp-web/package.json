@@ -1,0 +1,12 @@
+{
+  "name": "soufassistant-whatsapp-web",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "WhatsApp as a linked device (Baileys), run by Node 22 beside the app server (Node 18). Not imported by the server: spawned by server/lib/whatsapp-web.js.",
+  "dependencies": {
+    "@whiskeysockets/baileys": "7.0.0-rc14",
+    "pino": "^9.6.0",
+    "qrcode": "^1.5.4"
+  }
+}

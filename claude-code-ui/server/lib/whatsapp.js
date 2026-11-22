@@ -16,21 +16,31 @@
  * The conversations themselves are whatsapp-bridge.js; how Meta reaches this
  * app (through Home Assistant, the only thing the internet sees) is
  * whatsapp-relay.js. The helpers marked "pure" are unit-tested.
+ *
+ *   transport      'cloud' (Meta's Cloud API, the fields above) or 'web': the
+ *                  bot's number linked by QR code (whatsapp-web.js, no Meta
+ *                  account). Every send below goes the chosen way; reply buttons
+ *                  become a numbered list on 'web' (applyButtonReply maps "1" back).
  */
 import { chmodSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
 import { createHmac, randomBytes, timingSafeEqual } from 'crypto';
 import path from 'path';
 import { CONNECTORS_DIR } from './config.js';
 import { log } from './log.js';
+import * as web from './whatsapp-web.js';
 
 export const GRAPH_URL = process.env.WHATSAPP_GRAPH_URL || 'https://graph.facebook.com/v23.0';
 export const MAX_CONTACTS = 5;          // what Meta's test number allows
+export const MAX_CONTACTS_WEB = 20;     // a linked number has no such list
+export const TRANSPORTS = ['cloud', 'web'];
 export const TEXT_LIMIT = 3900;         // WhatsApp's cap is 4096; leave room for "(1/3)"
 export const PROFILES = ['owner', 'family'];
 
 const FILE = () => path.join(CONNECTORS_DIR, 'whatsapp.json');
 
 export function readConfig() { try { return JSON.parse(readFileSync(FILE(), 'utf8')); } catch { return {}; } }
+export const isWeb = () => readConfig().transport === 'web';
+export const maxContacts = () => (isWeb() ? MAX_CONTACTS_WEB : MAX_CONTACTS);
 function writeConfig(d) {
   mkdirSync(CONNECTORS_DIR, { recursive: true });
   writeFileSync(FILE(), JSON.stringify(d, null, 2));
@@ -46,12 +56,19 @@ export function verifyToken() {
   return d.verifyToken;
 }
 
-export const whatsappReady = () => { const d = readConfig(); return !!(d.enabled !== false && d.phoneNumberId && d.accessToken && d.appSecret); };
+export const whatsappReady = () => {
+  const d = readConfig();
+  if (d.enabled === false) return false;
+  return d.transport === 'web' ? web.linked() : !!(d.phoneNumberId && d.accessToken && d.appSecret);
+};
 
 /** What the Hub shows: never a secret. */
 export function status() {
   const d = readConfig();
   return {
+    transport: d.transport === 'web' ? 'web' : 'cloud',
+    web: web.status(),
+    maxContacts: maxContacts(),
     configured: !!(d.phoneNumberId && d.accessToken && d.appSecret),
     enabled: d.enabled !== false,
     phoneNumberId: d.phoneNumberId || '',
@@ -80,13 +97,17 @@ export function setConfig(input = {}) {
     d.publicUrl = u;
   }
   if (input.enabled !== undefined) d.enabled = !!input.enabled;
+  if (input.transport !== undefined) {
+    if (!TRANSPORTS.includes(input.transport)) return { ok: false, error: 'Mode de connexion inconnu.' };
+    d.transport = input.transport;
+  }
   writeConfig(d);
   return { ok: true };
 }
 
 export function forget() {
   const d = readConfig();
-  writeConfig({ verifyToken: d.verifyToken, contacts: d.contacts || [], publicUrl: d.publicUrl || '' });
+  writeConfig({ verifyToken: d.verifyToken, contacts: d.contacts || [], publicUrl: d.publicUrl || '', ...(d.transport ? { transport: d.transport } : {}) });
   return { ok: true };
 }
 
@@ -130,7 +151,8 @@ export function setContacts(list) {
     const person = /^person\.[a-z0-9_]+$/.test(String(c?.person || '')) ? c.person : '';
     out.push({ number, name, profile, person });
   }
-  if (out.length > MAX_CONTACTS) return { ok: false, error: `${MAX_CONTACTS} numéros au maximum (limite du numéro de test de Meta).` };
+  const max = maxContacts();
+  if (out.length > max) return { ok: false, error: max === MAX_CONTACTS ? `${max} numéros au maximum (limite du numéro de test de Meta).` : `${max} numéros au maximum.` };
   const d = readConfig();
   d.contacts = out;
   writeConfig(d);
@@ -271,6 +293,7 @@ const phone = () => readConfig().phoneNumberId;
 
 export async function sendText(to, text) {
   const parts = chunkText(toWhatsApp(text));
+  if (isWeb()) { for (const body of parts) await web.sendText(to, body); return parts.length; }
   for (const body of parts) {
     await graph(`${phone()}/messages`, { body: { messaging_product: 'whatsapp', recipient_type: 'individual', to, type: 'text', text: { body, preview_url: false } } });
   }
@@ -279,6 +302,13 @@ export async function sendText(to, text) {
 
 /** Up to three reply buttons: [{ id, title }]. */
 export async function sendButtons(to, text, buttons) {
+  if (isWeb()) {
+    // a personal account cannot send buttons: a numbered list, mapped back by applyButtonReply
+    const list = buttons.slice(0, 3);
+    webButtons.set(to, list);
+    await sendText(to, `${text}\n\n${list.map((b, i) => `${i + 1}. ${b.title}`).join('\n')}\n\nRéponds par le numéro.`);
+    return;
+  }
   const body = chunkText(toWhatsApp(text), 1000)[0] || '…';
   await graph(`${phone()}/messages`, {
     body: {
@@ -290,6 +320,7 @@ export async function sendButtons(to, text, buttons) {
 
 /** The blue ticks, and "typing…" while the reply is being written. */
 export async function markRead(messageId) {
+  if (isWeb()) return web.markRead(messageId);
   try {
     await graph(`${phone()}/messages`, { body: { messaging_product: 'whatsapp', status: 'read', message_id: messageId, typing_indicator: { type: 'text' } } });
   } catch (e) { log('INFO', `whatsapp: mark read failed: ${e.message}`); }
@@ -297,6 +328,10 @@ export async function markRead(messageId) {
 
 /** A voice note or a picture someone sent: { buf, mime }. */
 export async function downloadMedia(mediaId) {
+  if (isWeb()) {
+    if (!mediaId) throw new Error('fichier non reçu');
+    return { buf: web.takeMedia(mediaId), mime: '' };
+  }
   const meta = await graph(encodeURIComponent(mediaId), { method: 'GET' });
   if (!meta.url) throw new Error('Média introuvable.');
   const d = readConfig();
@@ -316,6 +351,7 @@ export async function sendFile(to, abs, caption = '') {
   const mime = mimeFor(name);
   const buf = readFileSync(abs);
   if (buf.length > 90 * 1024 * 1024) throw new Error('Fichier trop gros pour WhatsApp (100 Mo).');
+  if (isWeb()) return web.sendFile(to, abs, { name, mime, caption: caption.slice(0, 1000) });
   const form = new FormData();
   form.append('messaging_product', 'whatsapp');
   form.append('type', mime);
@@ -328,8 +364,37 @@ export async function sendFile(to, abs, caption = '') {
 
 /** Test button: is the token good, and which number is it? */
 export async function checkNumber() {
+  if (isWeb()) {
+    const w = web.status();
+    return w.state === 'open' ? { ok: true, number: w.me ? `+${w.me}` : '', name: '' } : { ok: false, error: 'WhatsApp n\'est pas connecté : scanne le QR code dans Hub › WhatsApp.' };
+  }
   try {
     const r = await graph(`${phone()}?fields=display_phone_number,verified_name,quality_rating`, { method: 'GET' });
     return { ok: true, number: r.display_phone_number || '', name: r.verified_name || '' };
   } catch (e) { return { ok: false, error: e.message }; }
+}
+
+// ── Linked device ('web') ────────────────────────────────────────────────────
+
+const webButtons = new Map();   // number → the buttons last sent as a numbered list
+
+/**
+ * Pure. A typed answer to a numbered list of buttons ("2", or the title
+ * itself) becomes the button reply the bridge waits for; anything else is
+ * left as it is.
+ */
+export function applyButtonReply(m, buttons) {
+  if (!buttons?.length || m?.type !== 'text') return m;
+  const t = String(m.text || '').trim();
+  const n = /^\d$/.test(t) ? Number(t) : 0;
+  const b = (n >= 1 && n <= buttons.length) ? buttons[n - 1] : buttons.find((x) => x.title.toLowerCase() === t.toLowerCase());
+  return b ? { ...m, type: 'button', buttonId: b.id, text: b.title } : m;
+}
+
+/** A message from the linked number, in the shape parseWebhook gives. */
+export function fromWeb(m) {
+  const buttons = webButtons.get(m.from);
+  const out = applyButtonReply({ ...m, mediaId: m.mediaPath || null }, buttons);
+  if (buttons && m.type === 'text') webButtons.delete(m.from);
+  return out;
 }

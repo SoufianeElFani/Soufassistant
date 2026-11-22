@@ -4,8 +4,9 @@
  *
  * Meta → Home Assistant (whatsapp-relay.js) → POST /whatsapp/webhook here. The
  * call is checked against Meta's signature (the app secret), acknowledged at
- * once (Meta retries anything slow), then each message is handled in order per
- * person:
+ * once (Meta retries anything slow). Or, with a number linked by QR code, the
+ * messages come from whatsapp-web.js instead. Each message is handled in order
+ * per person:
  *
  *   - only the numbers listed in Hub › WhatsApp are answered; others are ignored
  *   - one conversation per person, resumed across messages (a fresh one after
@@ -53,6 +54,7 @@ import { transcribe } from './stt.js';
 import { afterRun as reviewMemory } from './memory-review.js';
 import * as wa from './whatsapp.js';
 import * as relay from './whatsapp-relay.js';
+import * as web from './whatsapp-web.js';
 import { classify, yesNo } from './whatsapp-policy.js';
 
 const execFileP = promisify(execFile);
@@ -69,6 +71,11 @@ const seen = [];                    // message ids already handled (Meta redeliv
 export function load() {
   try { if (existsSync(SESSIONS_FILE())) sessions = JSON.parse(readFileSync(SESSIONS_FILE(), 'utf8')) || {}; }
   catch (e) { log('WARN', `whatsapp: sessions unreadable: ${e.message}`); }
+  web.onMessage((m) => {
+    if (!wa.isWeb() || wa.readConfig().enabled === false) return;
+    handleMessages([wa.fromWeb(m)]).catch((e) => log('ERROR', `whatsapp: ${e?.message || e}`));
+  });
+  if (wa.isWeb() && web.linked()) web.start();
 }
 function save() { try { writeFileAtomic(SESSIONS_FILE(), JSON.stringify(sessions)); } catch (e) { log('WARN', `whatsapp: ${e.message}`); } }
 const sess = (n) => (sessions[n] ||= {});
@@ -384,7 +391,8 @@ async function toPrompt(contact, conv, m) {
   }
   if (m.type === 'image' || m.type === 'document') {
     try {
-      const { buf, mime } = await wa.downloadMedia(m.mediaId);
+      const { buf, mime: got } = await wa.downloadMedia(m.mediaId);
+      const mime = got || m.mime || '';
       const ext = (m.filename && path.extname(m.filename)) || (/png/.test(mime) ? '.png' : /pdf/.test(mime) ? '.pdf' : /webp/.test(mime) ? '.webp' : '.jpg');
       const safe = (m.filename || `whatsapp${ext}`).replace(/[^A-Za-z0-9._-]/g, '_').slice(-60);
       mkdirSync(UPLOAD_DIR, { recursive: true });
@@ -435,6 +443,10 @@ async function onMessage(contact, m) {
 export async function handleWebhook(body) {
   const { messages, failures } = wa.parseWebhook(body);
   for (const f of failures) log('WARN', `whatsapp: delivery to ${masked(f.to)} failed: ${wa.explainError(f.code, f.title)}`);
+  return handleMessages(messages);
+}
+
+export async function handleMessages(messages) {
   for (const m of messages) {
     if (!m.id || seen.includes(m.id)) continue;
     seen.push(m.id);
@@ -485,6 +497,18 @@ export function registerWhatsAppRoutes(app) {
   app.post('/api/whatsapp/config', json, wrap((req) => wa.setConfig(req.body || {})));
   app.post('/api/whatsapp/contacts', json, wrap((req) => wa.setContacts(req.body?.contacts)));
   app.post('/api/whatsapp/forget', json, wrap(() => wa.forget()));
+  // the linked-device way: show a QR code, unlink
+  app.post('/api/whatsapp/web/start', json, wrap(() => {
+    const r = wa.setConfig({ transport: 'web' });
+    return r.ok ? { ok: true, web: web.start() } : r;
+  }));
+  app.post('/api/whatsapp/web/logout', json, wrap(() => web.logout()));
+  app.post('/api/whatsapp/transport', json, wrap((req) => {
+    const r = wa.setConfig({ transport: req.body?.transport });
+    if (r.ok && req.body?.transport === 'cloud') web.stop();
+    if (r.ok && req.body?.transport === 'web' && web.linked()) web.start();
+    return r;
+  }));
   app.post('/api/whatsapp/relay/install', json, wrap(() => relay.install()));
   app.post('/api/whatsapp/relay/restart', json, wrap(() => relay.restartHomeAssistant()));
   app.post('/api/whatsapp/test', json, wrap(async (req) => {

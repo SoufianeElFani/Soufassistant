@@ -67,7 +67,7 @@ loads the persisted state, and listens. Everything with behaviour lives in
 | `cron.js` | the pure 5-field cron matcher `scheduler.js` is built on |
 | `team.js` | the Team panel's state, fed by both the UI and the `team-notes` CLI via `/internal/team` |
 | `internal.js` | the loopback guard in front of `/internal/*` routes |
-| `whatsapp.js`, `whatsapp-relay.js`, `whatsapp-bridge.js`, `whatsapp-policy.js` | the assistant over WhatsApp: settings and Graph API, the Home Assistant relay, the conversations, the per-profile tool policy (see **WhatsApp** below) |
+| `whatsapp.js`, `whatsapp-relay.js`, `whatsapp-bridge.js`, `whatsapp-policy.js`, `whatsapp-web.js` | the assistant over WhatsApp: settings and Graph API, the Home Assistant relay, the conversations, the per-profile tool policy, the linked-device sidecar (see **WhatsApp** below) |
 | `memory-review.js` | every few turns, a forked unattended pass saves what a conversation taught into the auto-memory |
 
 Rules that keep it readable: **no top-level side effects** beyond pure
@@ -1340,6 +1340,24 @@ which may talk to up to five numbers verified in Meta's console).
   are offered whenever WhatsApp is set up, and are never auto-allowed. A
   free-form message only reaches someone who wrote in the last 24 h (error
   131047, explained by `explainError`).
+
+- **Linked device (`transport: 'web'`, 1.8.0).** Instead of Meta's Cloud API,
+  the bot's number is linked by QR code, as Hermes Agent does.
+  `whatsapp-web/sidecar.mjs` (Baileys, pinned) needs Node 20+, so it runs under
+  `/opt/node22`, which the Dockerfile downloads, as a child of the server.
+  `whatsapp-web.js` spawns it and talks to it in JSON lines (`state`,
+  `message`, `reply`, `log` out; `send`, `file`, `read`, `logout` in). It
+  restarts it with backoff, and its login lives in `DATA_DIR/whatsapp-web-auth`.
+  - Every sender in `whatsapp.js` branches on `isWeb()`.
+  - `sendButtons` becomes a numbered list, and `fromWeb` → `applyButtonReply`
+    maps a typed "1" or "Oui" back to the button id the bridge waits for.
+  - Received media is saved by the sidecar in `DATA_DIR/whatsapp-web-media`.
+    `mediaId` is that path, and `takeMedia` reads it once and then deletes it.
+  - The sidecar drops groups, statuses, channels and its own messages, and
+    resolves LIDs to phone numbers. The bridge still decides who is answered.
+  - No 24 h window, and `MAX_CONTACTS_WEB` (20).
+  - Tests: `test/helpers/fake-wa-sidecar.mjs` stands in for Baileys, selected
+    through `WHATSAPP_NODE` / `WHATSAPP_SIDECAR`.
 
 ## Memory review and recall
 

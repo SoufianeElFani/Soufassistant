@@ -85,7 +85,7 @@ function whatsappTools() {
   };
   const why = (e) => fail(`Not sent: ${e.message}`);
   return [
-    tool('send_whatsapp', `Send a WhatsApp message to a household member (${names}) — e.g. "préviens Maysa que j'arrive". It reaches them only if they wrote to the assistant in the last 24 hours (WhatsApp's rule); otherwise say so. Never send anything confidential.`,
+    tool('send_whatsapp', `Send a WhatsApp message to a household member (${names}) — e.g. "préviens Maysa que j'arrive". ${wa.isWeb() ? '' : 'It reaches them only if they wrote to the assistant in the last 24 hours (WhatsApp\'s rule); otherwise say so. '}Never send anything confidential.`,
       { to: z.string().min(1).max(40), text: z.string().min(1).max(3000) },
       async ({ to, text: body }) => {
         try { const c = recipient(to); await wa.sendText(c.number, body); return text(`Sent to ${c.name}.`); } catch (e) { return why(e); }

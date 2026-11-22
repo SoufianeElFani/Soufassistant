@@ -697,8 +697,13 @@ async function renderWhatsApp() {
   if (w.ok === false) { body.appendChild(note(w.error || 'Indisponible.')); return; }
   body.appendChild(note('Écrire à l\'assistant depuis WhatsApp — texte, vocal, photo, position — toi et ta famille. Chaque personne a sa conversation ; les actions sensibles (serrure, alarme, garage) demandent un Oui / Non dans le chat. Rien de confidentiel ne passe par là : WhatsApp transite par Meta.'));
 
+  const webMode = w.transport === 'web';
+  const ws = w.web || {};
   const r = w.relay || {};
-  const state = [
+  const state = webMode ? [
+    ws.state === 'open' ? `✅ Connecté${ws.me ? ` (+${ws.me})` : ''}` : ws.state === 'qr' ? '⏳ QR code à scanner' : ws.linked ? '⏳ Connexion…' : '⚪ Numéro à lier',
+    w.contacts.length ? `✅ ${w.contacts.length} personne(s)` : '⚪ Personnes à ajouter',
+  ] : [
     r.active ? '✅ Relais Home Assistant actif' : r.installed ? '⏳ Relais installé — redémarrer Home Assistant' : '⚪ Relais Home Assistant à installer',
     w.configured ? '✅ Clés Meta enregistrées' : '⚪ Clés Meta à saisir',
     w.contacts.length ? `✅ ${w.contacts.length} personne(s)` : '⚪ Personnes à ajouter',
@@ -713,6 +718,58 @@ async function renderWhatsApp() {
   on.append(onCb, document.createTextNode(' Répondre aux messages WhatsApp'));
   body.appendChild(on);
 
+  body.appendChild(el('div', 'usage-section-title', 'Mode de connexion'));
+  const mode = select([['web', 'Numéro lié par QR code — sans compte Meta'], ['cloud', 'API Cloud de Meta — numéro de test, webhook']], webMode ? 'web' : 'cloud');
+  mode.onchange = async () => { const x = await api('/api/whatsapp/transport', { transport: mode.value }); if (!x.ok) showToast(x.error || 'Échec.', { kind: 'error' }); render(); };
+  body.appendChild(field('Comment l\'assistant est relié à WhatsApp', mode));
+  if (webMode) renderWhatsAppWeb(w, ws);
+  else renderWhatsAppCloud(w, r);
+  renderWhatsAppPeople(w, webMode);
+}
+
+function renderWhatsAppWeb(w, ws) {
+  body.appendChild(el('div', 'usage-section-title', '1. Lier le numéro de l\'assistant'));
+  body.appendChild(note('Comme WhatsApp Web : le numéro de l\'assistant est lié une fois en scannant un QR code. Prends un numéro à part (une carte SIM prépayée suffit, installée dans un vieux téléphone avec WhatsApp) : c\'est une connexion non officielle, et WhatsApp peut bannir un numéro qui l\'utilise. Ton numéro et celui de ta famille lui écrivent ensuite comme à un contact.'));
+  if (ws.available === false) body.appendChild(note('⚠️ Le composant WhatsApp manque dans cette version de l\'app.'));
+  if (ws.state === 'qr' && ws.qr) {
+    body.appendChild(step(1, 'Sur le téléphone du numéro de l\'assistant : WhatsApp › <i>Réglages</i> › <i>Appareils connectés</i> › <i>Connecter un appareil</i>, puis scanne :'));
+    const img = el('img', 'hub-qr');
+    img.src = ws.qr;
+    img.alt = 'QR code WhatsApp';
+    img.style.cssText = 'display:block;width:260px;height:260px;margin:8px 0;background:#fff;border-radius:8px';
+    body.appendChild(img);
+  } else if (ws.state === 'open') {
+    const ok = note('');
+    ok.innerHTML = `✅ Lié et connecté${ws.me ? ` : <b>+${esc(ws.me)}</b>` : ''}. Enregistre ce numéro comme contact « Soufassistant » sur ton téléphone.`;
+    body.appendChild(ok);
+  } else if (ws.state === 'starting' || (ws.linked && ws.state !== 'error')) {
+    body.appendChild(note('⏳ Connexion à WhatsApp…'));
+  } else if (ws.error) {
+    body.appendChild(note(`⚠️ ${ws.error}`));
+  }
+  const bar = el('div', 'hub-bar');
+  if (!ws.linked && ws.state !== 'qr' && ws.state !== 'starting') bar.appendChild(button('Afficher le QR code', null, async () => {
+    const x = await api('/api/whatsapp/web/start', {});
+    if (!x.ok) showToast(x.error || 'Échec.', { kind: 'error' });
+    render();
+  }));
+  if (ws.linked || ws.state === 'qr') bar.appendChild(button(ws.linked ? 'Délier ce numéro' : 'Annuler', null, async () => {
+    if (ws.linked && !await confirmAction({ title: 'Délier le numéro ?', body: 'L\'assistant ne recevra plus de messages WhatsApp jusqu\'à un nouveau scan.', confirm: 'Délier', cancel: 'Garder' })) return;
+    await api('/api/whatsapp/web/logout', {});
+    render();
+  }));
+  if (ws.state === 'open') bar.appendChild(button('Tester', 'Vérifie la connexion', async () => {
+    const x = await api('/api/whatsapp/test', {});
+    showToast(x.ok ? `Connecté : ${x.number || '?'}.` : (x.error || 'Échec.'), x.ok ? {} : { kind: 'error', timeout: 15000 });
+  }));
+  body.appendChild(bar);
+  // follow the pairing live; nothing to type on this part of the page meanwhile
+  if (['qr', 'starting', 'closed'].includes(ws.state) || (ws.linked && ws.state !== 'open')) {
+    setTimeout(() => { if (tab === 'whatsapp' && !body.querySelector('.hub-form input:focus')) render(); }, 3000);
+  }
+}
+
+function renderWhatsAppCloud(w, r) {
   // 1. The relay
   body.appendChild(el('div', 'usage-section-title', '1. Relais dans Home Assistant'));
   body.appendChild(note('Meta ne peut joindre que Home Assistant (ton adresse publique Tailscale Funnel). Une petite intégration lui transmet les messages, sans rien garder ni connaître de secret : elle s\'installe dans /config/custom_components et ajoute deux lignes à configuration.yaml, puis Home Assistant redémarre (≈ 1 min).'));
@@ -762,10 +819,12 @@ async function renderWhatsApp() {
   if (w.webhookUrl) cp.appendChild(copyBtn(w.webhookUrl, 'l\'URL de rappel'));
   cp.appendChild(copyBtn(w.verifyToken, 'le jeton de vérification'));
   body.appendChild(cp);
+}
 
-  // 3. People
-  body.appendChild(el('div', 'usage-section-title', '3. Qui peut écrire à l\'assistant'));
-  body.appendChild(note('Les autres numéros sont ignorés. « Famille » : consulter et piloter la maison, chercher sur le web ; ni fichiers, ni tes instructions, ni ta mémoire (une mémoire à part). Une personne doit avoir écrit au bot dans les dernières 24 h pour qu\'il puisse lui envoyer un message de lui-même (règle WhatsApp).'));
+function renderWhatsAppPeople(w, webMode) {
+  const max = w.maxContacts || 5;
+  body.appendChild(el('div', 'usage-section-title', `${webMode ? 2 : 3}. Qui peut écrire à l'assistant`));
+  body.appendChild(note(`Les autres numéros sont ignorés. « Famille » : consulter et piloter la maison, chercher sur le web ; ni fichiers, ni tes instructions, ni ta mémoire (une mémoire à part).${webMode ? '' : ' Une personne doit avoir écrit au bot dans les dernières 24 h pour qu\'il puisse lui envoyer un message de lui-même (règle WhatsApp).'}`));
   const people = (w.contacts || []).map((c) => ({ ...c }));
   const list = el('div');
   const draw = () => {
@@ -786,7 +845,7 @@ async function renderWhatsApp() {
       r3.append(field('Profil', prof), field('Personne dans HA', person));
       const acts = el('div', 'hub-bar');
       if (c.lastInboundAt) acts.appendChild(el('span', 'skill-desc', `Dernier message : ${when(c.lastInboundAt)}`));
-      if (w.configured && w.contacts.some((x) => x.number === c.number)) acts.appendChild(button('Envoyer un bonjour', 'Message de test (seulement si cette personne a écrit au bot dans les 24 h)', async () => {
+      if ((webMode ? w.web?.state === 'open' : w.configured) && w.contacts.some((x) => x.number === c.number)) acts.appendChild(button('Envoyer un bonjour', webMode ? 'Message de test' : 'Message de test (seulement si cette personne a écrit au bot dans les 24 h)', async () => {
         const x = await api('/api/whatsapp/test', { to: c.number });
         showToast(x.ok ? `Envoyé à ${c.name}.` : (x.error || 'Échec.'), x.ok ? {} : { kind: 'error', timeout: 15000 });
       }));
@@ -798,12 +857,12 @@ async function renderWhatsApp() {
   draw();
   body.appendChild(list);
   const pb = el('div', 'hub-bar');
-  pb.appendChild(button('+ Ajouter une personne', null, () => { if (people.length >= 5) { showToast('5 personnes au maximum (numéro de test de Meta).', { kind: 'error' }); return; } people.push({ name: '', number: '', profile: people.length ? 'family' : 'owner', person: '' }); draw(); }));
+  pb.appendChild(button('+ Ajouter une personne', null, () => { if (people.length >= max) { showToast(`${max} personnes au maximum${webMode ? '' : ' (numéro de test de Meta)'}.`, { kind: 'error' }); return; } people.push({ name: '', number: '', profile: people.length ? 'family' : 'owner', person: '' }); draw(); }));
   pb.appendChild(button('Enregistrer les personnes', null, async () => {
     const x = await api('/api/whatsapp/contacts', { contacts: people });
     showToast(x.ok ? 'Personnes enregistrées.' : (x.error || 'Échec.'), x.ok ? {} : { kind: 'error' });
     if (x.ok) render();
   }));
   body.appendChild(pb);
-  body.appendChild(note('Dans WhatsApp : enregistre le numéro de test comme contact « Soufassistant » et écris-lui « /aide ». /nouveau repart de zéro, /stop arrête.'));
+  body.appendChild(note(`Dans WhatsApp : enregistre le numéro ${webMode ? 'de l\'assistant' : 'de test'} comme contact « Soufassistant » et écris-lui « /aide ». /nouveau repart de zéro, /stop arrête.`));
 }

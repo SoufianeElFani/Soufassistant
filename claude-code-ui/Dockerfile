@@ -66,6 +66,25 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends opus-tools \
     && rm -rf /var/lib/apt/lists/*
 
+# WhatsApp as a linked device (QR code, no Meta account): Baileys needs Node 20+
+# while the server runs on Debian's Node 18, so a private Node 22 runs only the
+# sidecar (whatsapp-web/sidecar.mjs, spawned by server/lib/whatsapp-web.js).
+ARG NODE22_VERSION=22.23.5
+RUN case "${BUILD_ARCH}" in \
+    aarch64) NODE_ARCH="arm64" ;; \
+    amd64)   NODE_ARCH="x64" ;; \
+    *) echo "ERROR: Unsupported arch ${BUILD_ARCH}" && exit 1 ;; \
+    esac \
+    && mkdir -p /opt/node22 \
+    && curl -fsSL "https://nodejs.org/dist/v${NODE22_VERSION}/node-v${NODE22_VERSION}-linux-${NODE_ARCH}.tar.gz" \
+       | tar -xz -C /opt/node22 --strip-components=1 \
+    && rm -rf /opt/node22/include /opt/node22/share \
+    && /opt/node22/bin/node --version
+COPY whatsapp-web/package.json /opt/whatsapp-web/package.json
+RUN cd /opt/whatsapp-web \
+    && PATH=/opt/node22/bin:$PATH npm install --omit=dev --no-audit --no-fund \
+    && PATH=/opt/node22/bin:$PATH npm cache clean --force
+
 # uv — used to provision a standalone Python 3.12 for the optional ESPHome venv
 # (Debian bookworm ships 3.11, but ESPHome needs >=3.12) and by the debug
 # /diag/uvx endpoint. Debian has no `uv` apt package; install the wheel.
@@ -102,6 +121,7 @@ WORKDIR /config
 ARG SCRIPTS_VER=32
 COPY server/index.js /opt/server/index.js
 COPY server/lib/ /opt/server/lib/
+COPY whatsapp-web/sidecar.mjs /opt/whatsapp-web/sidecar.mjs
 COPY frontend/ /opt/frontend/
 COPY plugins/ /opt/plugins/
 COPY scripts/ /opt/scripts/

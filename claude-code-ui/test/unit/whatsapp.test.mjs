@@ -230,6 +230,36 @@ describe('bridge helpers', () => {
   });
 });
 
+describe('linked device (1.8.0)', () => {
+  const buttons = [{ id: 'perm:ab12:allow', title: 'Oui' }, { id: 'perm:ab12:deny', title: 'Non' }];
+  const text = (t) => ({ id: 'x', from: '32470123456', type: 'text', text: t });
+  test('a number or a title answers a numbered list of buttons', () => {
+    assert.deepEqual(wa.applyButtonReply(text('1'), buttons), { ...text('1'), type: 'button', buttonId: 'perm:ab12:allow', text: 'Oui' });
+    assert.equal(wa.applyButtonReply(text(' 2 '), buttons).buttonId, 'perm:ab12:deny');
+    assert.equal(wa.applyButtonReply(text('non'), buttons).buttonId, 'perm:ab12:deny');
+  });
+  test('anything else is left as it is', () => {
+    assert.deepEqual(wa.applyButtonReply(text('3'), buttons), text('3'));
+    assert.deepEqual(wa.applyButtonReply(text('ouvre le garage'), buttons), text('ouvre le garage'));
+    assert.deepEqual(wa.applyButtonReply(text('1'), undefined), text('1'));
+    assert.deepEqual(wa.applyButtonReply({ type: 'audio', text: '' }, buttons), { type: 'audio', text: '' });
+  });
+  test('a sidecar message gets the shape parseWebhook gives', () => {
+    const m = wa.fromWeb({ id: 'y', from: '32470123456', type: 'audio', mediaPath: '/data/whatsapp-web-media/y.ogg', voice: true });
+    assert.equal(m.mediaId, '/data/whatsapp-web-media/y.ogg');
+    assert.equal(wa.fromWeb({ id: 'z', from: '32470123456', type: 'text', text: 'hi' }).mediaId, null);
+  });
+  test('the transport is chosen and checked', () => {
+    assert.equal(wa.setConfig({ transport: 'pigeon' }).ok, false);
+    assert.equal(wa.setConfig({ transport: 'web' }).ok, true);
+    assert.equal(wa.status().transport, 'web');
+    assert.equal(wa.maxContacts(), 20);
+    assert.equal(wa.whatsappReady(), false, 'nothing linked yet');
+    assert.equal(wa.setConfig({ transport: 'cloud' }).ok, true);
+    assert.equal(wa.maxContacts(), 5);
+  });
+});
+
 describe('memory review', () => {
   test('only the memory folder', () => {
     const dir = '/data/home/.claude/projects/-config/memory';

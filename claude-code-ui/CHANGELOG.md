@@ -1,3 +1,11 @@
+## 1.8.0
+**WhatsApp without Meta: link the assistant's number with a QR code, as Hermes Agent does.**
+- **Hub › WhatsApp › Mode de connexion** now offers two ways. *Numéro lié par QR code* needs no Meta Business account, app, token, webhook or relay: the assistant's number is linked once from WhatsApp › Linked devices, like WhatsApp Web. *API Cloud de Meta* is the 1.7.0 setup, unchanged.
+- Everything else works the same way: one conversation per person, owner and family profiles, voice notes, photos, locations, scheduled tasks, `send_whatsapp`. Sensitive actions and questions arrive as a numbered list (« 1. Oui / 2. Non ») instead of buttons, because a personal account cannot send buttons. Answer with the number or the word.
+- No 24-hour window and no five-number limit (up to 20 people).
+- **Use a number of its own** (a prepaid SIM in an old phone is enough). This is an unofficial client, and WhatsApp may ban a number that uses it.
+- The connection (Baileys) needs Node 20+, so it runs in its own process with a private Node 22 (`/opt/node22`) beside the server, which stays on Node 18. If that process crashes, it is restarted on its own and the app keeps running. The login is kept in `/data/whatsapp-web-auth`. Unlinking from the Hub or from the phone removes it.
+
 ## 1.7.0
 **Soufassistant on WhatsApp, for you and your family, plus three things that bring it closer to Hermes Agent.**
 - **WhatsApp.** Write or send a voice note, a photo or a location to the assistant from WhatsApp, as you would to a person: "j'arrive dans 20 minutes", "le garage est fermé ?", "allume le salon". Each person has their own conversation, resumed from one message to the next (a fresh one after a day of silence, or with `/nouveau`; `/stop` stops it). Voice notes are transcribed by the Whisper app on Home Assistant. Long replies are split, and Markdown becomes WhatsApp's own formatting.
