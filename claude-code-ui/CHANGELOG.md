@@ -2,6 +2,7 @@
 **Confidential mode: English and Dutch words are no longer flagged as unknown terms.**
 - The pre-send check now reads every message with the French, English and Dutch dictionaries together, whatever its language. Before, Dutch was used only for a message detected as Dutch, so « vergadering », « offerte » or « overleg » in a French message showed up as unknown terms.
 - Trade-off: a lowercase name that is also a Dutch word (« fortis », « delhaize ») is no longer caught by this check. Capitalised names, e-mails and the vault are still checked as before.
+- Fixed a rare case where a file dropped in the confidential drop folder was skipped for one pass, when its timestamp was a fraction of a millisecond ahead of the clock.
 
 ## 1.8.0
 **WhatsApp without Meta: link the assistant's number with a QR code, as Hermes Agent does.**

@@ -131,7 +131,7 @@ export async function tick(root) {
     for (const d of pending().values()) if (!existsSync(path.join(dir, d.rel))) { vault.depotSet(d.rel, null); changed = true; }
     for (const rel of listFiles(dir)) {
       if (pending().has(rel)) continue;
-      if (Date.now() - statSync(path.join(dir, rel)).mtimeMs < STABLE_MS) continue;
+      if (STABLE_MS > 0 && Date.now() - statSync(path.join(dir, rel)).mtimeMs < STABLE_MS) continue;   // 0: no wait (an mtime a hair ahead of the clock is not "still being written")
       try { await ingest(dir, rel); } catch (e) { log('WARN', `dépôt: ${rel}: ${e.message}`); continue; }
       changed = true;
     }
