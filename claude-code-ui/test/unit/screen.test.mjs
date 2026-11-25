@@ -25,13 +25,14 @@ const names = (t) => V.suspects(t).unknown.map((x) => x.real);
 describe('lowercase names (dictionaries)', { skip }, () => {
   before(async () => { await L.ready(); });
   test('a client in lowercase in a French sentence is flagged; French and English words are not', () => {
-    const n = names('Le client travaille pour fortis et pour engie, la réunion de maintenance préventive est demain.');
-    assert.ok(n.includes('fortis') && n.includes('engie'), n.join('|'));
+    const n = names('Le client travaille pour proximus et pour engie, la réunion de maintenance préventive est demain.');
+    assert.ok(n.includes('proximus') && n.includes('engie'), n.join('|'));
     assert.ok(!n.some((w) => /client|travaille|réunion|maintenance|préventive|demain/.test(w)), n.join('|'));
   });
-  test('the language of the message chooses the lists (a Latin word known in Dutch is still flagged in French)', () => {
-    assert.deepEqual(L.languages('le client est pour nous et vous'), ['fr', 'en']);
-    assert.equal(L.isWord('fortis', ['fr', 'en']), false);
+  test('English and Dutch words are known whatever the language of the message', () => {
+    assert.deepEqual(L.LANGS, ['fr', 'en', 'nl']);
+    const n = names('Le planning de la vergadering : on fait un overleg sur la offerte, deadline vrijdag, voir le meeting et la workload.');
+    assert.ok(!n.some((w) => /planning|vergadering|overleg|offerte|deadline|vrijdag|meeting|workload/.test(w)), n.join('|'));
   });
   test('accents, elisions, code and links are not flagged', () => {
     const n = names("La reunion de l'entreprise : voir `npm run build` et https://exemple.org/xyzzy");

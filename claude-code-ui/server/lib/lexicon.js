@@ -5,10 +5,12 @@
  * sur Home Assistant ; le texte n'est jamais envoyé pour être analysé.
  *
  * Listes : /usr/share/dict (paquets wfrench, wamerican, wbritish, wdutch — dans
- * l'image de l'app). La langue du message (mots-outils) choisit les listes : un
- * texte français est lu avec le français + l'anglais (le jargon technique), pas
- * avec le néerlandais, qui connaît trop de mots latins. Sans listes : rien n'est
- * signalé par cette voie (les autres contrôles restent).
+ * l'image de l'app). Depuis 1.8.1, tout message est lu avec les trois langues
+ * (français, anglais, néerlandais), quelle que soit sa langue : l'utilisateur les
+ * pratique toutes et un mot anglais ou néerlandais n'est pas un terme inconnu.
+ * Revers assumé : un nom en minuscules qui est aussi un mot néerlandais (« fortis »)
+ * n'est plus signalé par cette voie. Sans listes : rien n'est signalé par cette
+ * voie (les autres contrôles restent).
  */
 import { existsSync, readFileSync } from 'fs';
 
@@ -54,25 +56,11 @@ export function ready() {
 const loadSets = () => sets || {};
 export const lexiconAvailable = () => Object.keys(loadSets()).length > 0;   // false until ready() resolved
 
-const STOP = {
-  fr: 'le la les des une est et que qui pour dans pas sur avec vous nous je il elle ce cette sont mais aux du au ou où ne se leur nos vos été être avoir fait'.split(' '),
-  en: 'the and is are you that this with for not have be will from your we our they them was were has had would could should'.split(' '),
-  nl: 'het een en van is dat niet met voor zijn op te ik je wij u ze maar ook naar bij wordt worden heeft hebben deze dit'.split(' '),
-};
-/** The languages of a text, by function words: the dominant one, plus English (jargon). */
-export function languages(text) {
-  const words = String(text).toLowerCase().match(/\p{L}+/gu) || [];
-  const score = Object.fromEntries(Object.entries(STOP).map(([l, sw]) => [l, words.filter((w) => sw.includes(w)).length]));
-  const best = Object.entries(score).sort((a, b) => b[1] - a[1]);
-  if (!best[0][1]) return ['fr', 'en', 'nl'];
-  const langs = best.filter(([, n]) => n >= Math.max(2, best[0][1] * 0.35)).map(([l]) => l);
-  if (!langs.length) langs.push(best[0][0]);
-  if (!langs.includes('en')) langs.push('en');
-  return langs;
-}
+/** The languages every message is checked against (1.8.1: always all three). */
+export const LANGS = Object.freeze(['fr', 'en', 'nl']);
 
 /** Is `w` a word of one of these languages (any form, with or without its accents)? */
-export function isWord(w, langs) {
+export function isWord(w, langs = LANGS) {
   const s = loadSets();
   const lw = String(w).toLowerCase().replace(/’/g, "'");
   const forms = [lw, strip(lw)];
@@ -90,7 +78,7 @@ export function isWord(w, langs) {
 }
 
 /**
- * The lowercase words of `text` that no dictionary of its languages knows.
+ * The lowercase words of `text` that no dictionary (French, English, Dutch) knows.
  * Capitalised words, acronyms, numbers, e-mails, URLs and code are handled elsewhere.
  * `skip(word)` → true for words the vault already knows, ignores or exempts.
  * → [{ real, index }]
@@ -100,14 +88,13 @@ export function unknownWords(text, skip = () => false) {
   const t = String(text)
     .replace(/```[\s\S]*?```|`[^`\n]*`/g, (m) => ' '.repeat(m.length))                       // code
     .replace(/\b(?:https?:\/\/|www\.)\S+|[\w.+-]+@[\w-]+(?:\.[\w-]+)+/gi, (m) => ' '.repeat(m.length));   // links, e-mails
-  const langs = languages(t);
   const out = [];
   const seen = new Set();
   for (const m of t.matchAll(/(?<![\p{L}\p{N}_/@.-])\p{Ll}[\p{L}'’-]*\p{L}(?![\p{L}\p{N}_@])/gu)) {
     const w = m[0].replace(/[-'’]+$/, '');
     if (w.length < 3 || seen.has(w.toLowerCase())) continue;
     seen.add(w.toLowerCase());
-    if (skip(w) || isWord(w, langs)) continue;
+    if (skip(w) || isWord(w)) continue;
     out.push({ real: w, index: m.index });
   }
   return out;

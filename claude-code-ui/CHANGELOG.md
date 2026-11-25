@@ -1,3 +1,8 @@
+## 1.8.1
+**Confidential mode: English and Dutch words are no longer flagged as unknown terms.**
+- The pre-send check now reads every message with the French, English and Dutch dictionaries together, whatever its language. Before, Dutch was used only for a message detected as Dutch, so « vergadering », « offerte » or « overleg » in a French message showed up as unknown terms.
+- Trade-off: a lowercase name that is also a Dutch word (« fortis », « delhaize ») is no longer caught by this check. Capitalised names, e-mails and the vault are still checked as before.
+
 ## 1.8.0
 **WhatsApp without Meta: link the assistant's number with a QR code, as Hermes Agent does.**
 - **Hub › WhatsApp › Mode de connexion** now offers two ways. *Numéro lié par QR code* needs no Meta Business account, app, token, webhook or relay: the assistant's number is linked once from WhatsApp › Linked devices, like WhatsApp Web. *API Cloud de Meta* is the 1.7.0 setup, unchanged.
